@@ -398,7 +398,7 @@ int sls_send_cmd(const char *cmd)
 	}
 	int pid = sls_read_pid();
 	if (0 >= pid) {
-    	printf("sls_send_cmd failed, pid is invalid.\n", pid);
+    	printf("sls_send_cmd failed, pid is invalid (%d).\n", pid);
         return SLS_OK;
 	}
 
