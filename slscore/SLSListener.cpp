@@ -25,6 +25,8 @@
 
 #include <errno.h>
 #include <string.h>
+#include <fstream>
+#include <sstream>
 #include <vector>
 
 #include "SLSListener.hpp"
@@ -259,6 +261,108 @@ int CSLSListener::init_conf_app()
 
 }
 
+int CSLSListener::load_users(const char *path)
+{
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::load_users, cannot open '%s': %s.",
+                this, path, strerror(errno));
+        return SLS_ERROR;
+    }
+
+    m_users.clear();
+    std::string line;
+    int lineno = 0, loaded = 0;
+    while (std::getline(f, line)) {
+        lineno++;
+        std::string::size_type hash = line.find('#');
+        if (hash != std::string::npos) line = line.substr(0, hash);
+
+        std::istringstream iss(line);
+        std::string name, pub, play;
+        if (!(iss >> name)) continue;              // blank / whitespace-only line
+        if (!(iss >> pub) || !(iss >> play)) {
+            sls_log(SLS_LOG_WARNING,
+                    "[%p]CSLSListener::load_users, %s:%d malformed "
+                    "(expected 'name publish_pass play_pass'); skipping.",
+                    this, path, lineno);
+            continue;
+        }
+        if (pub  == "-") pub.clear();
+        if (play == "-") play.clear();
+
+        sls_user_cred_t cred;
+        cred.publish_pass = pub;
+        cred.play_pass    = play;
+        m_users[name]     = cred;
+        loaded++;
+    }
+    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::load_users, loaded %d user(s) from '%s'.",
+            this, loaded, path);
+    return SLS_OK;
+}
+
+int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
+                                  const struct sockaddr *peeraddr, const char *streamid)
+{
+    CSLSListener *self = static_cast<CSLSListener*>(opaq);
+
+    if (!streamid || !*streamid) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, empty streamid; rejecting.", self);
+        return -1;
+    }
+
+    // Expect streamid of the form "domain/app/stream".
+    const char *slash1 = strchr(streamid, '/');
+    const char *slash2 = slash1 ? strchr(slash1 + 1, '/') : NULL;
+    if (!slash1 || !slash2) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, malformed streamid '%s'; rejecting.",
+                self, streamid);
+        return -1;
+    }
+    std::string app(slash1 + 1, slash2 - slash1 - 1);
+    std::string stream(slash2 + 1);
+
+    std::map<std::string, sls_user_cred_t>::iterator it = self->m_users.find(stream);
+    if (it == self->m_users.end()) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
+                self, stream.c_str());
+        return -1;
+    }
+
+    // Match the app token against every app block's app_publisher/app_player
+    // to decide which passphrase column applies.
+    sls_conf_server_t *cs = (sls_conf_server_t *)self->m_conf;
+    const std::string *pass = NULL;
+    const char *direction = NULL;
+    for (sls_conf_app_t *ca = (sls_conf_app_t *)cs->child; ca;
+         ca = (sls_conf_app_t *)ca->sibling) {
+        if (app == ca->app_publisher) { pass = &it->second.publish_pass; direction = "publish"; break; }
+        if (app == ca->app_player)    { pass = &it->second.play_pass;    direction = "play";    break; }
+    }
+    if (!pass) {
+        sls_log(SLS_LOG_INFO,
+                "[%p]CSLSListener::listen_callback, app '%s' matches no app_publisher/app_player for user '%s'; rejecting.",
+                self, app.c_str(), stream.c_str());
+        return -1;
+    }
+
+    if (!pass->empty()) {
+        if (srt_setsockflag(ns, SRTO_PASSPHRASE, pass->c_str(), (int)pass->length()) < 0) {
+            sls_log(SLS_LOG_ERROR,
+                    "[%p]CSLSListener::listen_callback, SRTO_PASSPHRASE for user '%s' (%s) failed: %s.",
+                    self, stream.c_str(), direction, srt_getlasterror_str());
+            return -1;
+        }
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, encrypted).",
+                self, stream.c_str(), direction);
+    } else {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, plaintext).",
+                self, stream.c_str(), direction);
+    }
+    return 0;
+}
+
 int CSLSListener::start()
 {
 	int ret = 0;
@@ -289,6 +393,23 @@ int CSLSListener::start()
         m_srt->libsrt_set_latency(latency);
     }
 
+    const char *user_file  = ((sls_conf_server_t*)m_conf)->user_file;
+    const char *passphrase = ((sls_conf_server_t*)m_conf)->srt_passphrase;
+    if (user_file && *user_file) {
+        if (SLS_OK != load_users(user_file)) {
+            return SLS_ERROR;
+        }
+        if (passphrase && *passphrase) {
+            sls_log(SLS_LOG_WARNING,
+                    "[%p]CSLSListener::start, user_file='%s' is set; ignoring listener-wide srt_passphrase. "
+                    "Per-user passphrases will be applied by the listen callback.",
+                    this, user_file);
+        }
+    } else if (passphrase && *passphrase) {
+        int pbkeylen = ((sls_conf_server_t*)m_conf)->srt_pbkeylen;
+        m_srt->libsrt_set_passphrase(passphrase, pbkeylen);
+    }
+
     m_port = ((sls_conf_server_t*)m_conf)->listen;
     ret = m_srt->libsrt_setup(m_port);
     if (SLS_OK != ret) {
@@ -302,6 +423,16 @@ int CSLSListener::start()
     if (SLS_OK != ret) {
         sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_listen failure.", this);
         return ret;
+    }
+
+    if (!m_users.empty()) {
+        if (srt_listen_callback(m_srt->libsrt_get_fd(), listen_callback, this) < 0) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, srt_listen_callback failed: %s.",
+                    this, srt_getlasterror_str());
+            return SLS_ERROR;
+        }
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, per-user auth active (%zu user(s) loaded).",
+                this, m_users.size());
     }
 
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, m_list_role=%p.", this, m_list_role);
@@ -382,7 +513,7 @@ int CSLSListener::handler()
             this, peer_name, peer_port, host_name, app_name, stream_name);
 
     // app exist?
-    sprintf(key_app, "%s/%s", host_name, app_name);
+    snprintf(key_app, sizeof(key_app), "%s/%s", host_name, app_name);
 
     std::string app_uplive = "";
     sls_conf_app_t * ca = NULL;
@@ -393,7 +524,7 @@ int CSLSListener::handler()
     //3.is player?
     app_uplive = m_map_publisher->get_uplive(key_app);
     if (app_uplive.length() > 0) {
-        sprintf(key_stream_name, "%s/%s", app_uplive.c_str(), stream_name);
+        snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
         CSLSRole * pub = m_map_publisher->get_publisher(key_stream_name);
         if (NULL == pub) {
         	//*
@@ -462,7 +593,7 @@ int CSLSListener::handler()
 		player->set_srt(srt);
 		player->set_map_data(key_stream_name, m_map_data);
 		//stat info
-	    sprintf(tmp, SLS_PLAYER_STAT_INFO_BASE,
+	    snprintf(tmp, sizeof(tmp), SLS_PLAYER_STAT_INFO_BASE,
 	    		m_port, player->get_role_name(), app_uplive.c_str(), stream_name, sid, peer_name, peer_port, cur_time);
 	    std::string stat_info = std::string(tmp);
 	    player->set_stat_info_base(stat_info);
@@ -477,7 +608,7 @@ int CSLSListener::handler()
 
     //4. is publisher?
     app_uplive = key_app;
-	sprintf(key_stream_name, "%s/%s", app_uplive.c_str(), stream_name);
+	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
     ca = (sls_conf_app_t *)m_map_publisher->get_ca(app_uplive);
 	if (NULL == ca) {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s',but no sls_conf_app_t info.",
@@ -502,13 +633,13 @@ int CSLSListener::handler()
 	pub->init();
 	pub->set_idle_streams_timeout(m_idle_streams_timeout_role);
 	//stat info
-    sprintf(tmp, SLS_PUBLISHER_STAT_INFO_BASE,
+    snprintf(tmp, sizeof(tmp), SLS_PUBLISHER_STAT_INFO_BASE,
     		m_port, pub->get_role_name(), app_uplive.c_str(), stream_name, sid, peer_name, peer_port, cur_time);
     std::string stat_info = std::string(tmp);
     pub->set_stat_info_base(stat_info);
     pub->set_http_url(m_http_url_role);
     //set hls record path
-    sprintf(tmp, "%s/%d/%s",
+    snprintf(tmp, sizeof(tmp), "%s/%d/%s",
             m_record_hls_path_prefix, m_port, key_stream_name);
     pub->set_record_hls_path(tmp);
 
@@ -568,7 +699,7 @@ std::string   CSLSListener::get_stat_info()
 	    char tmp[STR_MAX_LEN] = {0};
 	    char cur_time[STR_DATE_TIME_LEN] = {0};
 	    sls_gettime_default_string(cur_time);
-	    sprintf(tmp, SLS_SERVER_STAT_INFO_BASE, m_port, m_role_name, cur_time);
+	    snprintf(tmp, sizeof(tmp), SLS_SERVER_STAT_INFO_BASE, m_port, m_role_name, cur_time);
 	    m_stat_info = std::string(tmp);
 	}
 	return m_stat_info;

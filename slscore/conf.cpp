@@ -86,6 +86,13 @@ const char * sls_conf_set_string(const char *v, sls_conf_cmd_t *cmd, void *conf)
     char  * np;
     int     len = strlen(v);
 
+    // Strip a single pair of surrounding quotes (single or double) so
+    // users can naturally write string values as "quoted strings".
+    if (len >= 2 && (v[0] == '"' || v[0] == '\'') && v[len - 1] == v[0]) {
+        v   += 1;
+        len -= 2;
+    }
+
     if (len < cmd->min || len > cmd->max)
         return SLS_CONF_OUT_RANGE;
 

@@ -90,7 +90,7 @@ int  CHttpClient::open(const char *url, const char *method, int interval)
 		goto FUNC_END;
 	}
 	if (NULL != method && strlen(method) > 0) {
-		sprintf(m_http_method, method);
+		snprintf(m_http_method, sizeof(m_http_method), "%s", method);
 	}
 
 	m_interval = interval;
@@ -505,14 +505,14 @@ int CHttpClient::write_http_header(int data_len)
             this, m_http_method);
 		return SLS_ERROR;
 	}
-	sprintf(data, "%s %s HTTP/1.1\r\n", m_http_method, m_uri);
+	snprintf(data, sizeof(data), "%s %s HTTP/1.1\r\n", m_http_method, m_uri);
 	http_header = std::string(data);
 
 	http_header += std::string(HTTP_REQUEST_HEADER_ACCEPT);
 	http_header += std::string(HTTP_REQUEST_HEADER_USER_AGENT);
 	http_header += std::string(HTTP_REQUEST_HEADER_CONTENT_TYPE);
 
-	sprintf(data, "Host: %s\r\n", m_remote_host);
+	snprintf(data, sizeof(data), "Host: %s\r\n", m_remote_host);
 	http_header += std::string(data);
 
 	if (data_len > 0) {

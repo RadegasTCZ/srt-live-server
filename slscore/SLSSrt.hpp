@@ -119,6 +119,7 @@ public :
     int  libsrt_getpeeraddr(char * peer_name, int& port);
 
     void libsrt_set_latency(int latency);
+    void libsrt_set_passphrase(const char *passphrase, int pbkeylen);
 
 
     static int  libsrt_neterrno();
@@ -132,6 +133,8 @@ protected:
 
 private:
     static bool m_inited;
+    char m_passphrase[128];
+    int  m_pbkeylen;
 };
 
 
