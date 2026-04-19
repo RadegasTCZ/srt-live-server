@@ -315,7 +315,7 @@ void CSLSRole::close_hls_file()
         int vod_fd = 0;
         vod_fd = ::open(m_record_hls_vod_filename, O_RDONLY, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IXOTH);
         sls_log(SLS_LOG_INFO, "[%p]CSLSRole::close_hls_file, prepare open '%s', fd=%d.", this, m_record_hls_vod_filename, vod_fd);
-        sprintf(m_record_hls_vod_filename, "%s/vod.m3u8", m_record_hls_path);
+        snprintf(m_record_hls_vod_filename, sizeof(m_record_hls_vod_filename), "%s/vod.m3u8", m_record_hls_path);
         struct stat stat_file;
         if (0 == stat(m_record_hls_vod_filename, &stat_file)) {
             m_record_hls_vod_fd = ::open(m_record_hls_vod_filename, O_WRONLY|O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IXOTH);
@@ -380,10 +380,10 @@ void CSLSRole::check_hls_file()
          m_record_hls_ts_fd = 0;
 
          char ts_item[URL_MAX_LEN] = {0};
-         sprintf(ts_item, "#EXTINF:%0.3f,\n%s\n", d, m_record_hls_ts_filename);
+         snprintf(ts_item, sizeof(ts_item), "#EXTINF:%0.3f,\n%s\n", d, m_record_hls_ts_filename);
          //update vod file
          if (0 == m_record_hls_vod_fd) {
-             sprintf(m_record_hls_vod_filename, "%s/vod-%lld.m3u8.extinfo", m_record_hls_path, cur_tm_ms/1000);
+             snprintf(m_record_hls_vod_filename, sizeof(m_record_hls_vod_filename), "%s/vod-%lld.m3u8.extinfo", m_record_hls_path, (long long)(cur_tm_ms/1000));
              struct stat stat_file;
              if (0 == stat(m_record_hls_vod_filename, &stat_file)) {
                  m_record_hls_vod_fd = ::open(m_record_hls_vod_filename, O_WRONLY|O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IXOTH);
@@ -397,8 +397,8 @@ void CSLSRole::check_hls_file()
          }
     }
     char full_ts_name[URL_MAX_LEN] = {0};
-    sprintf(m_record_hls_ts_filename, "%lld.ts", cur_tm_ms/1000);
-    sprintf(full_ts_name, "%s/%s", m_record_hls_path, m_record_hls_ts_filename);
+    snprintf(m_record_hls_ts_filename, sizeof(m_record_hls_ts_filename), "%lld.ts", (long long)(cur_tm_ms/1000));
+    snprintf(full_ts_name, sizeof(full_ts_name), "%s/%s", m_record_hls_path, m_record_hls_ts_filename);
     m_record_hls_ts_fd = ::open(full_ts_name, O_WRONLY|O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IXOTH);
     sls_log(SLS_LOG_INFO, "[%p]CSLSRole::check_hls_file, create ts file='%s', fd=%d.", this, full_ts_name, m_record_hls_ts_fd);
     if (m_record_hls_ts_fd) {
@@ -603,7 +603,7 @@ int  CSLSRole::on_connect()
 	if (strlen(m_peer_ip) == 0) {
 		get_peer_info(m_peer_ip, m_peer_port);
 	}
-	sprintf(on_event_url, "%s?on_event=on_connect&role_name=%s&srt_url=%s&remote_ip=%s&remote_port=%d",
+	snprintf(on_event_url, sizeof(on_event_url), "%s?on_event=on_connect&role_name=%s&srt_url=%s&remote_ip=%s&remote_port=%d",
 			m_http_url, m_role_name, get_streamid(), m_peer_ip, m_peer_port);
 
 	return m_http_client->open(on_event_url);
@@ -625,7 +625,7 @@ int  CSLSRole::on_close()
 	if (strlen(m_peer_ip) == 0) {
 		get_peer_info(m_peer_ip, m_peer_port);
 	}
-	sprintf(on_event_url, "%s?on_event=on_close&role_name=%s&srt_url=%s&remote_ip=%s&remote_port=%d",
+	snprintf(on_event_url, sizeof(on_event_url), "%s?on_event=on_close&role_name=%s&srt_url=%s&remote_ip=%s&remote_port=%d",
 			m_http_url, m_role_name, get_streamid(), m_peer_ip, m_peer_port);
 
 	int ret = m_http_client->open(on_event_url);

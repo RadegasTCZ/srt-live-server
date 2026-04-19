@@ -52,6 +52,9 @@ CSLSSrt::CSLSSrt()
     memset(m_peer_name, 0, sizeof(m_peer_name));
     m_peer_port = 0;
 
+    m_passphrase[0] = '\0';
+    m_pbkeylen = 0;
+
 }
 CSLSSrt::~CSLSSrt()
 {
@@ -123,8 +126,8 @@ SRTS_NONEXIST:
     printf("--------srt error--------\n");
     std::map<int, std::string>::iterator it;
     for(it=map_error.begin(); it!=map_error.end(); ++it) {
-        sprintf(szBuf, "%d: %s\n", it->first, it->second.c_str());
-        printf(szBuf);
+        snprintf(szBuf, sizeof(szBuf), "%d: %s\n", it->first, it->second.c_str());
+        printf("%s", szBuf);
     }
     printf("----------end------------\n");
     map_error.clear();
@@ -147,6 +150,16 @@ void CSLSSrt::libsrt_set_context(SRTContext *sc)
 void CSLSSrt::libsrt_set_latency(int latency)
 {
     m_sc.latency = latency;
+}
+
+void CSLSSrt::libsrt_set_passphrase(const char *passphrase, int pbkeylen)
+{
+    if (passphrase && *passphrase) {
+        snprintf(m_passphrase, sizeof(m_passphrase), "%s", passphrase);
+    } else {
+        m_passphrase[0] = '\0';
+    }
+    m_pbkeylen = pbkeylen;
 }
 
 int CSLSSrt::libsrt_setup(int port)
@@ -173,7 +186,7 @@ int CSLSSrt::libsrt_setup(int port)
         return ret;
     }
 
-    fd = srt_socket(ai->ai_family, ai->ai_socktype, 0);
+    fd = srt_create_socket();
     if (fd < 0) {
         ret = libsrt_neterrno();
         freeaddrinfo(ai);
@@ -202,6 +215,27 @@ int CSLSSrt::libsrt_setup(int port)
     if (s->reuse) {
         if (srt_setsockopt(fd, SOL_SOCKET, SRTO_REUSEADDR, &s->reuse, sizeof(s->reuse)))
             sls_log(SLS_LOG_WARNING, "[%p]CSLSSrt::libsrt_setup, setsockopt(SRTO_REUSEADDR) failed.", this);
+    }
+
+    if (m_passphrase[0] != '\0') {
+        if (m_pbkeylen > 0) {
+            if (srt_setsockopt(fd, 0, SRTO_PBKEYLEN, &m_pbkeylen, sizeof(m_pbkeylen)) < 0) {
+                sls_log(SLS_LOG_ERROR, "[%p]CSLSSrt::libsrt_setup, setsockopt(SRTO_PBKEYLEN=%d) failed: %s.",
+                        this, m_pbkeylen, srt_getlasterror_str());
+                srt_close(fd);
+                freeaddrinfo(ai);
+                return libsrt_neterrno();
+            }
+        }
+        if (srt_setsockopt(fd, 0, SRTO_PASSPHRASE, m_passphrase, strlen(m_passphrase)) < 0) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSSrt::libsrt_setup, setsockopt(SRTO_PASSPHRASE) failed: %s.",
+                    this, srt_getlasterror_str());
+            srt_close(fd);
+            freeaddrinfo(ai);
+            return libsrt_neterrno();
+        }
+        sls_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_setup, SRT encryption enabled (pbkeylen=%d).",
+                this, m_pbkeylen);
     }
 
     ret = srt_bind(fd, ai->ai_addr, ai->ai_addrlen);

@@ -220,7 +220,7 @@ int CSLSRelay::open(const char * srt_url) {
         return SLS_ERROR;
     }
 
-    SRTSOCKET fd = srt_socket(AF_INET, SOCK_DGRAM, 0);
+    SRTSOCKET fd = srt_create_socket();
 
     int status = srt_setsockopt(fd, 0, SRTO_SNDSYN, &no, sizeof no); // for async write
     if (status == SRT_ERROR) {

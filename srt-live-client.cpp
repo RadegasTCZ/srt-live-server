@@ -151,7 +151,7 @@ int main(int argc, char* argv[])
 	{
 		//printf log info
 		int64_t kb = sls_client.get_bitrate() ;
-	    printf("\rsrt live client, cur bitrate=%lld(kb)", kb);
+	    printf("\rsrt live client, cur bitrate=%lld(kb)", (long long)kb);
 
 		int ret = sls_client.handler();
 		if ( ret > 0) {
