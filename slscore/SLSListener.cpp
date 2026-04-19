@@ -25,6 +25,8 @@
 
 #include <errno.h>
 #include <string.h>
+#include <fstream>
+#include <sstream>
 #include <vector>
 
 #include "SLSListener.hpp"
@@ -259,6 +261,108 @@ int CSLSListener::init_conf_app()
 
 }
 
+int CSLSListener::load_users(const char *path)
+{
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::load_users, cannot open '%s': %s.",
+                this, path, strerror(errno));
+        return SLS_ERROR;
+    }
+
+    m_users.clear();
+    std::string line;
+    int lineno = 0, loaded = 0;
+    while (std::getline(f, line)) {
+        lineno++;
+        std::string::size_type hash = line.find('#');
+        if (hash != std::string::npos) line = line.substr(0, hash);
+
+        std::istringstream iss(line);
+        std::string name, pub, play;
+        if (!(iss >> name)) continue;              // blank / whitespace-only line
+        if (!(iss >> pub) || !(iss >> play)) {
+            sls_log(SLS_LOG_WARNING,
+                    "[%p]CSLSListener::load_users, %s:%d malformed "
+                    "(expected 'name publish_pass play_pass'); skipping.",
+                    this, path, lineno);
+            continue;
+        }
+        if (pub  == "-") pub.clear();
+        if (play == "-") play.clear();
+
+        sls_user_cred_t cred;
+        cred.publish_pass = pub;
+        cred.play_pass    = play;
+        m_users[name]     = cred;
+        loaded++;
+    }
+    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::load_users, loaded %d user(s) from '%s'.",
+            this, loaded, path);
+    return SLS_OK;
+}
+
+int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
+                                  const struct sockaddr *peeraddr, const char *streamid)
+{
+    CSLSListener *self = static_cast<CSLSListener*>(opaq);
+
+    if (!streamid || !*streamid) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, empty streamid; rejecting.", self);
+        return -1;
+    }
+
+    // Expect streamid of the form "domain/app/stream".
+    const char *slash1 = strchr(streamid, '/');
+    const char *slash2 = slash1 ? strchr(slash1 + 1, '/') : NULL;
+    if (!slash1 || !slash2) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, malformed streamid '%s'; rejecting.",
+                self, streamid);
+        return -1;
+    }
+    std::string app(slash1 + 1, slash2 - slash1 - 1);
+    std::string stream(slash2 + 1);
+
+    std::map<std::string, sls_user_cred_t>::iterator it = self->m_users.find(stream);
+    if (it == self->m_users.end()) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
+                self, stream.c_str());
+        return -1;
+    }
+
+    // Match the app token against every app block's app_publisher/app_player
+    // to decide which passphrase column applies.
+    sls_conf_server_t *cs = (sls_conf_server_t *)self->m_conf;
+    const std::string *pass = NULL;
+    const char *direction = NULL;
+    for (sls_conf_app_t *ca = (sls_conf_app_t *)cs->child; ca;
+         ca = (sls_conf_app_t *)ca->sibling) {
+        if (app == ca->app_publisher) { pass = &it->second.publish_pass; direction = "publish"; break; }
+        if (app == ca->app_player)    { pass = &it->second.play_pass;    direction = "play";    break; }
+    }
+    if (!pass) {
+        sls_log(SLS_LOG_INFO,
+                "[%p]CSLSListener::listen_callback, app '%s' matches no app_publisher/app_player for user '%s'; rejecting.",
+                self, app.c_str(), stream.c_str());
+        return -1;
+    }
+
+    if (!pass->empty()) {
+        if (srt_setsockflag(ns, SRTO_PASSPHRASE, pass->c_str(), (int)pass->length()) < 0) {
+            sls_log(SLS_LOG_ERROR,
+                    "[%p]CSLSListener::listen_callback, SRTO_PASSPHRASE for user '%s' (%s) failed: %s.",
+                    self, stream.c_str(), direction, srt_getlasterror_str());
+            return -1;
+        }
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, encrypted).",
+                self, stream.c_str(), direction);
+    } else {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, plaintext).",
+                self, stream.c_str(), direction);
+    }
+    return 0;
+}
+
 int CSLSListener::start()
 {
 	int ret = 0;
@@ -289,8 +393,19 @@ int CSLSListener::start()
         m_srt->libsrt_set_latency(latency);
     }
 
+    const char *user_file  = ((sls_conf_server_t*)m_conf)->user_file;
     const char *passphrase = ((sls_conf_server_t*)m_conf)->srt_passphrase;
-    if (passphrase && *passphrase) {
+    if (user_file && *user_file) {
+        if (SLS_OK != load_users(user_file)) {
+            return SLS_ERROR;
+        }
+        if (passphrase && *passphrase) {
+            sls_log(SLS_LOG_WARNING,
+                    "[%p]CSLSListener::start, user_file='%s' is set; ignoring listener-wide srt_passphrase. "
+                    "Per-user passphrases will be applied by the listen callback.",
+                    this, user_file);
+        }
+    } else if (passphrase && *passphrase) {
         int pbkeylen = ((sls_conf_server_t*)m_conf)->srt_pbkeylen;
         m_srt->libsrt_set_passphrase(passphrase, pbkeylen);
     }
@@ -308,6 +423,16 @@ int CSLSListener::start()
     if (SLS_OK != ret) {
         sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_listen failure.", this);
         return ret;
+    }
+
+    if (!m_users.empty()) {
+        if (srt_listen_callback(m_srt->libsrt_get_fd(), listen_callback, this) < 0) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, srt_listen_callback failed: %s.",
+                    this, srt_getlasterror_str());
+            return SLS_ERROR;
+        }
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, per-user auth active (%zu user(s) loaded).",
+                this, m_users.size());
     }
 
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, m_list_role=%p.", this, m_list_role);
