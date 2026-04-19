@@ -173,7 +173,7 @@ int CSLSSrt::libsrt_setup(int port)
         return ret;
     }
 
-    fd = srt_socket(ai->ai_family, ai->ai_socktype, 0);
+    fd = srt_create_socket();
     if (fd < 0) {
         ret = libsrt_neterrno();
         freeaddrinfo(ai);
