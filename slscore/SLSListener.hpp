@@ -29,6 +29,9 @@
 #include <map>
 #include <string>
 
+#include <sys/socket.h>
+#include <srt/srt.h>
+
 #include "SLSRole.hpp"
 #include "SLSRoleList.hpp"
 #include "SLSPublisher.hpp"
@@ -50,6 +53,7 @@ int              idle_streams_timeout;//unit s; -1: unlimited
 char             on_event_url[URL_MAX_LEN];
 char             srt_passphrase[STR_MAX_LEN];
 int              srt_pbkeylen;
+char             user_file[URL_MAX_LEN];
 SLS_CONF_DYNAMIC_DECLARE_END
 
 /**
@@ -65,7 +69,18 @@ SLS_SET_CONF(server, int,    idle_streams_timeout, "players idle timeout when no
 SLS_SET_CONF(server, string, on_event_url,         "on connect/close http url", 1,    URL_MAX_LEN-1),
 SLS_SET_CONF(server, string, srt_passphrase,       "listener-wide SRT passphrase; empty = no encryption", 0,  STR_MAX_LEN-1),
 SLS_SET_CONF(server, int,    srt_pbkeylen,         "SRT AES key length: 0=libsrt default, 16/24/32 = AES-128/192/256", 0, 32),
+SLS_SET_CONF(server, string, user_file,            "path to per-user passphrase file (grant/revoke via edit + reload)", 0, URL_MAX_LEN-1),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
+
+/**
+ * Per-stream credentials loaded from user_file.
+ * Empty publish_pass  => publishers may push that stream in plaintext.
+ * Empty play_pass     => players may pull that stream in plaintext.
+ */
+struct sls_user_cred_t {
+    std::string publish_pass;
+    std::string play_pass;
+};
 
 
 /**
@@ -107,9 +122,13 @@ private:
     char                m_http_url_role[URL_MAX_LEN];
     char                m_record_hls_path_prefix[URL_MAX_LEN];
 
+    std::map<std::string, sls_user_cred_t> m_users;
+
     int  init_conf_app();
+    int  load_users(const char *path);
 
-
+    static int listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
+                               const struct sockaddr *peeraddr, const char *streamid);
 };
 
 
