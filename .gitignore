@@ -1,3 +1,8 @@
 logs
 obj
 bin
+
+# Local, user-specific credentials file. Copy sls-users.conf.example
+# to sls-users.conf and edit with real passphrases; this keeps them
+# out of commits.
+sls-users.conf

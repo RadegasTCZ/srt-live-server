@@ -1,0 +1,28 @@
+# Per-stream credentials for SLS. Consumed via the `user_file` directive.
+#
+# USAGE:
+#   1. Copy this file:  cp sls-users.conf.example sls-users.conf
+#   2. Edit sls-users.conf with real passphrases (see the format below).
+#   3. sls-users.conf is .gitignore'd so local edits stay out of commits.
+#   4. Point `user_file` in your SLS config at sls-users.conf.
+#
+# FORMAT (one user per line, whitespace-separated):
+#   <stream_name>  <publish_pass>  <play_pass>
+#
+# A passphrase of "-" means "no passphrase for that direction; plaintext
+# connection allowed." Stream names not listed here are rejected at the
+# SRT handshake stage.
+#
+# Passphrases must be 10-79 printable ASCII characters (libsrt limit).
+#
+# The three examples below illustrate every combination:
+#   - alice:       fully private -- encrypted push AND encrypted pull.
+#   - bob_public:  authenticated streamer, open (plaintext) viewers.
+#   - carol_open:  anyone can push, viewers need the key. (Unusual.)
+#
+# All placeholder values contain "EXAMPLE" and are NOT safe to deploy.
+#
+# name         publish_pass                   play_pass
+alice          alice-publish-EXAMPLE-key      alice-play-EXAMPLE-key
+bob_public     bob-publish-EXAMPLE-key        -
+carol_open     -                              carol-play-EXAMPLE-key
