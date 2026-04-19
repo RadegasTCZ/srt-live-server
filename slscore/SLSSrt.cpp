@@ -123,8 +123,8 @@ SRTS_NONEXIST:
     printf("--------srt error--------\n");
     std::map<int, std::string>::iterator it;
     for(it=map_error.begin(); it!=map_error.end(); ++it) {
-        sprintf(szBuf, "%d: %s\n", it->first, it->second.c_str());
-        printf(szBuf);
+        snprintf(szBuf, sizeof(szBuf), "%d: %s\n", it->first, it->second.c_str());
+        printf("%s", szBuf);
     }
     printf("----------end------------\n");
     map_error.clear();

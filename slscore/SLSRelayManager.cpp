@@ -132,7 +132,7 @@ int CSLSRelayManager::connect_hash()
 	std::string url = get_hash_url();
 	char szURL[1024] = {0};
 	const char *szTmp = url.c_str();
-	sprintf(szURL, "srt://%s/%s", szTmp, m_stream_name);
+	snprintf(szURL, sizeof(szURL), "srt://%s/%s", szTmp, m_stream_name);
 	int ret = connect(szURL);
 	if (SLS_OK != ret) {
 	    sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::connect_hash, faild, connect szURL=%s, m_stream_name=%s.",
