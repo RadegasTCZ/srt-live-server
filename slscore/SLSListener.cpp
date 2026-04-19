@@ -289,6 +289,12 @@ int CSLSListener::start()
         m_srt->libsrt_set_latency(latency);
     }
 
+    const char *passphrase = ((sls_conf_server_t*)m_conf)->srt_passphrase;
+    if (passphrase && *passphrase) {
+        int pbkeylen = ((sls_conf_server_t*)m_conf)->srt_pbkeylen;
+        m_srt->libsrt_set_passphrase(passphrase, pbkeylen);
+    }
+
     m_port = ((sls_conf_server_t*)m_conf)->listen;
     ret = m_srt->libsrt_setup(m_port);
     if (SLS_OK != ret) {

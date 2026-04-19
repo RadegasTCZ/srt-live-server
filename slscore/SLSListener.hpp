@@ -48,6 +48,8 @@ int              backlog;
 int              latency;
 int              idle_streams_timeout;//unit s; -1: unlimited
 char             on_event_url[URL_MAX_LEN];
+char             srt_passphrase[STR_MAX_LEN];
+int              srt_pbkeylen;
 SLS_CONF_DYNAMIC_DECLARE_END
 
 /**
@@ -61,6 +63,8 @@ SLS_SET_CONF(server, int,    backlog,              "how many sockets may be allo
 SLS_SET_CONF(server, int,    latency,              "latency.", 1, 300),
 SLS_SET_CONF(server, int,    idle_streams_timeout, "players idle timeout when no publisher" , -1, 86400),
 SLS_SET_CONF(server, string, on_event_url,         "on connect/close http url", 1,    URL_MAX_LEN-1),
+SLS_SET_CONF(server, string, srt_passphrase,       "listener-wide SRT passphrase; empty = no encryption", 0,  STR_MAX_LEN-1),
+SLS_SET_CONF(server, int,    srt_pbkeylen,         "SRT AES key length: 0=libsrt default, 16/24/32 = AES-128/192/256", 0, 32),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 
