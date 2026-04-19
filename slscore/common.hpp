@@ -117,7 +117,7 @@ std::string sls_find_string(std::vector<std::string> &src, std::string &dst);
 #define INVALID_DTS_PTS -1
 #define MAX_PES_PAYLOAD 200 * 1024
 
-typedef struct ts_info {
+struct ts_info {
     int      es_pid;
     int64_t  dts;
     int64_t  pts;
