@@ -509,6 +509,13 @@ int CSLSListener::handler()
     	delete srt;
     	return client_count;
     }
+    if (!sls_is_safe_name(host_name) || !sls_is_safe_name(app_name) || !sls_is_safe_name(stream_name)) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], refused: sid='%s' contains unsafe characters in host/app/stream.",
+                this, peer_name, peer_port, sid);
+        srt->libsrt_close();
+        delete srt;
+        return client_count;
+    }
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, [%s:%d], sid '%s/%s/%s'",
             this, peer_name, peer_port, host_name, app_name, stream_name);
 
