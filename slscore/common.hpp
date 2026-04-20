@@ -92,6 +92,7 @@ void    sls_gettime_fmt(char *dst, int64_t cur_time_sec, char *fmt);
 void    sls_gettime_default_string(char *cur_time);
 char  * sls_strupper(char * str);
 void    sls_remove_marks(char *s);
+bool    sls_is_safe_name(const char *s);
 
 uint32_t sls_hash_key(const char *data, int len);
 int      sls_gethostbyname(const char *hostname, char *ip);
