@@ -34,19 +34,22 @@ using namespace std;
 #include "HttpClient.hpp"
 
 /*
- * ctrl + c controller
+ * Signal handlers. Only async-signal-safe operations are allowed here
+ * (POSIX.1-2008 §2.4.3); printf is not on the safe list and neither is
+ * a plain bool write. Store flags as volatile sig_atomic_t and let the
+ * main loop observe them and log.
  */
-static bool b_exit = 0;
+static volatile sig_atomic_t b_exit = 0;
 static void ctrl_c_handler(int s){
-    printf("\ncaught signal %d, exit.\n",s);
-    b_exit = true;
+    (void)s;
+    b_exit = 1;
 }
 
 
-static bool b_reload = 0;
+static volatile sig_atomic_t b_reload = 0;
 static void reload_handler(int s){
-    printf("\ncaught signal %d, reload.\n",s);
-    b_reload = true;
+    (void)s;
+    b_reload = 1;
 }
 
 /**
@@ -214,7 +217,7 @@ int main(int argc, char* argv[])
 
 		if (b_reload) {
             //reload
-    		b_reload = false;
+    		b_reload = 0;
 	    	sls_log(SLS_LOG_INFO, "reload srt live server...");
 		    ret = sls_manager->reload();
             if (ret != SLS_OK) {

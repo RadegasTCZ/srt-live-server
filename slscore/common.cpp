@@ -333,6 +333,41 @@ void sls_remove_marks(char * s) {
     }
 }
 
+// Accept a streamid component (host / app / stream name) only if it's safe
+// to use as a path segment and map key. Rejects empty, path separators,
+// control chars, and bare "." / "..". Callers must reject the connection
+// on false — these names flow into filesystem paths (HLS recording).
+bool sls_is_safe_name(const char *s)
+{
+    if (!s || !*s)
+        return false;
+    if (s[0] == '.' && (s[1] == 0 || (s[1] == '.' && s[2] == 0)))
+        return false;
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        if (*p == '/' || *p == '\\')
+            return false;
+        if (*p < 0x20 || *p == 0x7f)
+            return false;
+    }
+    return true;
+}
+
+// SRT caps SRTO_PASSPHRASE at 10-79 printable bytes. A zero-length value
+// means "no encryption for this direction" and is accepted as such.
+// Anything between 1 and 9 bytes (or >79) is silently truncated or rejected
+// by libsrt at handshake time -- validate up-front so operators get a clear
+// error instead of mysterious handshake failures.
+bool sls_is_valid_passphrase_len(size_t len)
+{
+    return len == 0 || (len >= 10 && len <= 79);
+}
+
+// SRTO_PBKEYLEN accepts 0 (libsrt default), 16, 24, or 32.
+bool sls_is_valid_pbkeylen(int pbkeylen)
+{
+    return pbkeylen == 0 || pbkeylen == 16 || pbkeylen == 24 || pbkeylen == 32;
+}
+
 static char pid_path_name[] = "/tmp/sls";
 static char pid_file_name[] = "/tmp/sls/pid.txt";
 int sls_read_pid()
