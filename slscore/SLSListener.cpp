@@ -291,6 +291,21 @@ int CSLSListener::load_users(const char *path)
         if (pub  == "-") pub.clear();
         if (play == "-") play.clear();
 
+        if (!sls_is_valid_passphrase_len(pub.length())) {
+            sls_log(SLS_LOG_WARNING,
+                    "[%p]CSLSListener::load_users, %s:%d publish_pass length %zu out of range "
+                    "(SRT requires 10-79 bytes, or '-' for plaintext); skipping user '%s'.",
+                    this, path, lineno, pub.length(), name.c_str());
+            continue;
+        }
+        if (!sls_is_valid_passphrase_len(play.length())) {
+            sls_log(SLS_LOG_WARNING,
+                    "[%p]CSLSListener::load_users, %s:%d play_pass length %zu out of range "
+                    "(SRT requires 10-79 bytes, or '-' for plaintext); skipping user '%s'.",
+                    this, path, lineno, play.length(), name.c_str());
+            continue;
+        }
+
         sls_user_cred_t cred;
         cred.publish_pass = pub;
         cred.play_pass    = play;
@@ -395,6 +410,20 @@ int CSLSListener::start()
 
     const char *user_file  = ((sls_conf_server_t*)m_conf)->user_file;
     const char *passphrase = ((sls_conf_server_t*)m_conf)->srt_passphrase;
+    int         pbkeylen   = ((sls_conf_server_t*)m_conf)->srt_pbkeylen;
+    if (!sls_is_valid_pbkeylen(pbkeylen)) {
+        sls_log(SLS_LOG_ERROR,
+                "[%p]CSLSListener::start, srt_pbkeylen=%d is invalid (allowed: 0, 16, 24, 32).",
+                this, pbkeylen);
+        return SLS_ERROR;
+    }
+    if (passphrase && *passphrase && !sls_is_valid_passphrase_len(strlen(passphrase))) {
+        sls_log(SLS_LOG_ERROR,
+                "[%p]CSLSListener::start, srt_passphrase length %zu is out of range "
+                "(SRT requires 10-79 bytes).",
+                this, strlen(passphrase));
+        return SLS_ERROR;
+    }
     if (user_file && *user_file) {
         if (SLS_OK != load_users(user_file)) {
             return SLS_ERROR;
@@ -406,7 +435,6 @@ int CSLSListener::start()
                     this, user_file);
         }
     } else if (passphrase && *passphrase) {
-        int pbkeylen = ((sls_conf_server_t*)m_conf)->srt_pbkeylen;
         m_srt->libsrt_set_passphrase(passphrase, pbkeylen);
     }
 

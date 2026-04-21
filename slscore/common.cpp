@@ -352,6 +352,22 @@ bool sls_is_safe_name(const char *s)
     return true;
 }
 
+// SRT caps SRTO_PASSPHRASE at 10-79 printable bytes. A zero-length value
+// means "no encryption for this direction" and is accepted as such.
+// Anything between 1 and 9 bytes (or >79) is silently truncated or rejected
+// by libsrt at handshake time -- validate up-front so operators get a clear
+// error instead of mysterious handshake failures.
+bool sls_is_valid_passphrase_len(size_t len)
+{
+    return len == 0 || (len >= 10 && len <= 79);
+}
+
+// SRTO_PBKEYLEN accepts 0 (libsrt default), 16, 24, or 32.
+bool sls_is_valid_pbkeylen(int pbkeylen)
+{
+    return pbkeylen == 0 || pbkeylen == 16 || pbkeylen == 24 || pbkeylen == 32;
+}
+
 static char pid_path_name[] = "/tmp/sls";
 static char pid_file_name[] = "/tmp/sls/pid.txt";
 int sls_read_pid()
