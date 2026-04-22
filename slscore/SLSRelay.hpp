@@ -93,7 +93,7 @@ protected:
     CSLSMapPublisher  *m_map_publisher;
     void              *m_relay_manager;
 
-    int          parse_url(char* url, char * ip, int& port, char * streamid);
+    int          parse_url(char* url, char * ip, size_t ip_size, int& port, char * streamid, size_t streamid_size);
 
 };
 

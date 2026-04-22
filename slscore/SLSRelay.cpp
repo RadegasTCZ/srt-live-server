@@ -86,7 +86,7 @@ void *CSLSRelay::get_relay_manager()
 	return m_relay_manager;
 }
 
-int CSLSRelay::parse_url(char* url, char *host_name, int& port, char * streamid)
+int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int& port, char * streamid, size_t streamid_size)
 {
     //
     if (strlen(url) == 0) {
@@ -94,7 +94,7 @@ int CSLSRelay::parse_url(char* url, char *host_name, int& port, char * streamid)
     			this, url);
         return SLS_ERROR;
     }
-    sprintf(m_url, "%s", url);
+    snprintf(m_url, sizeof(m_url), "%s", url);
 
 	char * p = url;
     //protocal
@@ -116,7 +116,7 @@ int CSLSRelay::parse_url(char* url, char *host_name, int& port, char * streamid)
     char * p_tmp = strchr(p, ':');
     if (p_tmp) {
         p_tmp[0] = 0x00;
-        strcpy(host_name, p);
+        snprintf(host_name, host_name_size, "%s", p);
         p = p_tmp + 1;
     }
     else {
@@ -177,11 +177,11 @@ int CSLSRelay::parse_url(char* url, char *host_name, int& port, char * streamid)
 			return SLS_ERROR;
 		}
 		p = p_tmp + 1;
-	    strcpy(streamid, p);
+	    snprintf(streamid, streamid_size, "%s", p);
     } else {
     	p_tmp = m_url + strlen("srt://");
 		p_tmp = strchr(p, '/');
-    	sprintf(streamid, "%s%s", host_name, p_tmp);
+    	snprintf(streamid, streamid_size, "%s%s", host_name, p_tmp);
     }
     return SLS_OK;
 
@@ -198,8 +198,8 @@ int CSLSRelay::open(const char * srt_url) {
     char url[1024] = {0};
     int latency = 10;
 
-    strcpy(m_url, srt_url);
-    strcpy(url, srt_url);
+    snprintf(m_url, sizeof(m_url), "%s", srt_url);
+    snprintf(url, sizeof(url), "%s", srt_url);
 
     //init listener
     if (NULL != m_srt)
@@ -209,7 +209,7 @@ int CSLSRelay::open(const char * srt_url) {
     }
 
     //parse url
-    if (SLS_OK != parse_url(url, host_name, server_port, streamid)){
+    if (SLS_OK != parse_url(url, host_name, sizeof(host_name), server_port, streamid, sizeof(streamid))){
         return SLS_ERROR;
     }
 	sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::open, parse_url ok, url='%s'.", this, m_url);
@@ -274,7 +274,7 @@ int CSLSRelay::open(const char * srt_url) {
     }
     m_srt = new CSLSSrt();
     m_srt->libsrt_set_fd(fd);
-    strcpy(m_server_ip, server_ip);
+    snprintf(m_server_ip, sizeof(m_server_ip), "%s", server_ip);
     m_server_port = server_port;
     return status;
 }
@@ -298,7 +298,7 @@ char *CSLSRelay::get_url()
 
 int CSLSRelay::get_peer_info(char *peer_name, int &peer_port)
 {
-	strcpy(peer_name, m_server_ip);
+	snprintf(peer_name, IP_MAX_LEN, "%s", m_server_ip);
 	peer_port = m_server_port;
 	return SLS_OK;
 }

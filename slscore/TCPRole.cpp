@@ -134,7 +134,7 @@ int CTCPRole::connect(char *host, int port)
 	}
 
     sls_log(SLS_LOG_INFO, "[%p]CTCPRole::connect, ok, m_fd=%d, host=%s, port==%d.", this, m_fd, host, port);
-    strcpy(m_remote_host, host);
+    snprintf(m_remote_host, sizeof(m_remote_host), "%s", host);
     m_remote_port = port;
 	return SLS_OK;
 }

@@ -74,8 +74,8 @@ void CSLSRelayManager::set_relay_conf(SLS_RELAY_INFO *sri)
 
 void CSLSRelayManager::set_relay_info(const char *app_uplive, const char *stream_name)
 {
-	strcpy(m_app_uplive, app_uplive);
-	strcpy(m_stream_name, stream_name);
+	snprintf(m_app_uplive, sizeof(m_app_uplive), "%s", app_uplive);
+	snprintf(m_stream_name, sizeof(m_stream_name), "%s", stream_name);
 }
 
 void CSLSRelayManager::set_listen_port(int port)
@@ -106,7 +106,7 @@ int CSLSRelayManager::connect(const char *url)
         int  relay_peer_port = 0;
         cur_relay->get_peer_info(relay_peer_name, relay_peer_port);
         cur_relay->get_stat_base(stat_base);
-	    sprintf(tmp, stat_base,
+	    snprintf(tmp, sizeof(tmp), stat_base,
 	    		m_listen_port, cur_relay->get_role_name(), m_app_uplive, m_stream_name, url, relay_peer_name, relay_peer_port, cur_time);
 	    std::string stat_info = std::string(tmp);
 	    cur_relay->set_stat_info_base(stat_info);

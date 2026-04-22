@@ -110,7 +110,7 @@ public :
     int  libsrt_getsockopt(SRT_SOCKOPT optname, const char * optnamestr, void * optval, int * optlen);
     int  libsrt_setsockopt(SRT_SOCKOPT optname, const char * optnamestr, const void * optval, int optlen);
 
-    int  libsrt_split_sid(char *sid, char *host, char *app, char *name);
+    int  libsrt_split_sid(char *sid, char *host, size_t host_size, char *app, size_t app_size, char *name, size_t name_size);
 
     int  libsrt_add_to_epoll(int eid, bool write);
     int  libsrt_remove_from_epoll();

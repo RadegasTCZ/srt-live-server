@@ -26,6 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
+#include <limits.h>
 #include <iostream>
 #include <fstream>
 
@@ -67,16 +69,22 @@ sls_conf_cmd_t * sls_conf_find(const char *n, sls_conf_cmd_t *cmd, int size)
 const char * sls_conf_set_int(const char *v, sls_conf_cmd_t *cmd, void *conf)
 {
     char  * p = (char *)conf;
-    int     v1;
     int   * np;
-    char  * value;
+    char  * end;
+    long    lv;
 
     np = (int *) (p + cmd->offset);
 
-    v1 = atoi(v);
-    if (v1 < cmd->min || v1 > cmd->max)
+    if (v == NULL || *v == '\0')
+        return SLS_CONF_WRONG_TYPE;
+
+    errno = 0;
+    lv = strtol(v, &end, 10);
+    if (end == v || *end != '\0' || errno == ERANGE || lv < INT_MIN || lv > INT_MAX)
+        return SLS_CONF_WRONG_TYPE;
+    if (lv < cmd->min || lv > cmd->max)
         return SLS_CONF_OUT_RANGE;
-    *np = v1;
+    *np = (int)lv;
     return SLS_CONF_OK;
 }
 
@@ -105,13 +113,19 @@ const char * sls_conf_set_string(const char *v, sls_conf_cmd_t *cmd, void *conf)
 const char * sls_conf_set_double(const char *v, sls_conf_cmd_t *cmd, void *conf)
 {
     char   * p = (char *)conf;
-    double   v1;
     double * np;
-    char   * value;
+    char   * end;
+    double   v1;
 
     np = (double *) (p + cmd->offset);
 
-    v1 = atof(v);
+    if (v == NULL || *v == '\0')
+        return SLS_CONF_WRONG_TYPE;
+
+    errno = 0;
+    v1 = strtod(v, &end);
+    if (end == v || *end != '\0' || errno == ERANGE)
+        return SLS_CONF_WRONG_TYPE;
     if (v1 < cmd->min || v1 > cmd->max)
         return SLS_CONF_OUT_RANGE;
     *np = v1;
@@ -405,7 +419,7 @@ int sls_parse_argv(int argc, char * argv[], sls_opt_t * sls_opt, sls_conf_cmd_t 
 
     //special for '-h'
     if (argc == 2) {
-        strcpy(temp, argv[1]);
+        snprintf(temp, sizeof(temp), "%s", argv[1]);
         sls_remove_marks(temp);
         if (strcmp(temp, "-h") == 0) {
             printf("option help info:\n");
@@ -422,7 +436,7 @@ int sls_parse_argv(int argc, char * argv[], sls_opt_t * sls_opt, sls_conf_cmd_t 
         return SLS_ERROR;
     }
     while (i < argc) {
-        strcpy(temp, argv[i]);
+        snprintf(temp, sizeof(temp), "%s", argv[i]);
         len = strlen(temp);
         if (len ==0) {
         	printf("wrong parameter, is ''.");
@@ -435,7 +449,7 @@ int sls_parse_argv(int argc, char * argv[], sls_opt_t * sls_opt, sls_conf_cmd_t 
             ret = SLS_ERROR;
             return ret;
         }
-        strcpy(opt_name, temp + 1);
+        snprintf(opt_name, sizeof(opt_name), "%s", temp + 1);
 
         sls_conf_cmd_t * it = sls_conf_find(opt_name, conf_cmd_opt, cmd_size);
         if (!it) {
@@ -444,7 +458,11 @@ int sls_parse_argv(int argc, char * argv[], sls_opt_t * sls_opt, sls_conf_cmd_t 
             return ret;
         }
         i ++;
-        strcpy(opt_value, argv[i++]);
+        if (i >= argc) {
+            printf("missing value for parameter '-%s'.\n", opt_name);
+            return SLS_ERROR;
+        }
+        snprintf(opt_value, sizeof(opt_value), "%s", argv[i++]);
         sls_remove_marks(opt_value);
         const char * r = it->set(opt_value, it, sls_opt);
         if (r != SLS_CONF_OK) {
