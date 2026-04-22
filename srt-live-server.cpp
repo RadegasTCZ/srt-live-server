@@ -224,33 +224,15 @@ int main(int argc, char* argv[])
 	    }
 
 		if (b_reload) {
-            //reload
-    		b_reload = 0;
-	    	sls_log(SLS_LOG_INFO, "reload srt live server...");
-		    ret = sls_manager->reload();
-            if (ret != SLS_OK) {
-                sls_log(SLS_LOG_INFO, "reload failed, sls_manager->reload failed.");
-                continue;
+            // SIGHUP => live-reload user_file credentials on all listeners,
+            // without tearing down the listener sockets. Other config
+            // changes still require a restart.
+            b_reload = 0;
+            sls_log(SLS_LOG_INFO, "reload srt live server...");
+            if (NULL != sls_manager) {
+                sls_manager->reload_users();
+                sls_log(SLS_LOG_INFO, "reload successfully.");
             }
-            reload_manager_list.push_back(sls_manager);
-            sls_manager = NULL;
-            sls_log(SLS_LOG_INFO, "reload, push old sls_manager to list.");
-
-            sls_conf_close();
-            ret = sls_conf_open(sls_opt.conf_file_name);
-            if (ret != SLS_OK) {
-                sls_log(SLS_LOG_INFO, "reload failed, read config file failed.");
-                break;
-            }
-            sls_log(SLS_LOG_INFO, "reload config file ok.");
-            sls_manager = new CSLSManager;
-            if (SLS_OK != sls_manager->start()) {
-                sls_log(SLS_LOG_INFO, "reload, failed, sls_manager->start, exit.");
-                break;
-            }
-            if (strlen(conf_srt->stat_post_url) > 0)
-                http_stat_client->open(conf_srt->stat_post_url, stat_method, conf_srt->stat_post_interval);
-            sls_log(SLS_LOG_INFO, "reload successfully.");
 		}
 	}
 

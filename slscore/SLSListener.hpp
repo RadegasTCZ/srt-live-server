@@ -39,6 +39,7 @@
 #include "SLSRecycleArray.hpp"
 #include "SLSMapPublisher.hpp"
 #include "SLSMapRelay.hpp"
+#include "SLSLock.hpp"
 
 /**
  * server conf
@@ -122,6 +123,7 @@ private:
     char                m_http_url_role[URL_MAX_LEN];
     char                m_record_hls_path_prefix[URL_MAX_LEN];
 
+    CSLSRWLock                             m_users_lock;
     std::map<std::string, sls_user_cred_t> m_users;
 
     int  init_conf_app();
@@ -129,6 +131,12 @@ private:
 
     static int listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
                                const struct sockaddr *peeraddr, const char *streamid);
+
+public:
+    // Re-read the user_file configured for this listener and swap it into
+    // m_users under a write lock. Safe to call from the main thread while
+    // listen_callback is firing on SRT's internal thread.
+    int reload_users();
 };
 
 

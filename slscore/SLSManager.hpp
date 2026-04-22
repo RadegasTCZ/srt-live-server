@@ -81,6 +81,7 @@ public :
     int  start();
     int  stop();
     int  reload();
+    int  reload_users();
     int  single_thread_handler();
     int  check_invalid();
     bool is_single_thread();
