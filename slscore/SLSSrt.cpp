@@ -343,16 +343,25 @@ int CSLSSrt::libsrt_socket_nonblock(int enable)
     return srt_setsockopt(m_sc.fd, 0, SRTO_RCVSYN, &enable, sizeof(enable));
 }
 
-int CSLSSrt::libsrt_split_sid(char *sid, char *host, char *app, char *name)
+int CSLSSrt::libsrt_split_sid(char *sid, char *host, size_t host_size, char *app, size_t app_size, char *name, size_t name_size)
 {
-    int i = 0;
     char *p, *p1 ;
     p1 = sid;
+
+    if (host_size == 0 || app_size == 0 || name_size == 0) {
+        return -1;
+    }
+    host[0] = '\0';
+    app[0]  = '\0';
+    name[0] = '\0';
 
     //host
     p = strchr(p1, '/');
     if (p) {
-        strncpy(host, (const char *)p1, p - p1);
+        size_t chunk = (size_t)(p - p1);
+        if (chunk >= host_size) chunk = host_size - 1;
+        memcpy(host, p1, chunk);
+        host[chunk] = '\0';
         p1 = p+1;
     } else {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSSrt::libsrt_split_sid, sid='%s' is not as host/app/name.", this, sid);
@@ -361,14 +370,17 @@ int CSLSSrt::libsrt_split_sid(char *sid, char *host, char *app, char *name)
     //app
     p = strchr(p1, '/');
     if (p) {
-        strncpy(app, (const char *)p1, p - p1);
+        size_t chunk = (size_t)(p - p1);
+        if (chunk >= app_size) chunk = app_size - 1;
+        memcpy(app, p1, chunk);
+        app[chunk] = '\0';
         p1 = p+1;
     } else {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSSrt::libsrt_split_sid, sid='%s' is not as host/app/name.", this, sid);
         return -1;
     }
 
-    strcpy(name, (const char *)p1);
+    snprintf(name, name_size, "%s", p1);
 
     return 0;
 }
@@ -456,12 +468,12 @@ int CSLSSrt::libsrt_getpeeraddr(char * peer_name, int& port)
             inet_ntop(AF_INET, &peer_addr.sin_addr, m_peer_name, sizeof(m_peer_name));
             m_peer_port = ntohs(peer_addr.sin_port);
 
-            strcpy(peer_name, m_peer_name);
+            snprintf(peer_name, IP_MAX_LEN, "%s", m_peer_name);
             port = m_peer_port;
             ret = SLS_OK;
         }
     } else {
-        strcpy(peer_name, m_peer_name);
+        snprintf(peer_name, IP_MAX_LEN, "%s", m_peer_name);
         port = m_peer_port;
         ret = SLS_OK;
     }

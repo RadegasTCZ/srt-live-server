@@ -143,7 +143,7 @@ void CSLSListener::set_map_pusher(CSLSMapRelay *map_pusher)
 void CSLSListener::set_record_hls_path_prefix(char *path)
 {
     if (path != NULL && strlen(path) > 0) {
-        strcpy(m_record_hls_path_prefix, path);
+        snprintf(m_record_hls_path_prefix, sizeof(m_record_hls_path_prefix), "%s", path);
     }
 }
 
@@ -175,7 +175,7 @@ int CSLSListener::init_conf_app()
 
     m_back_log                   = conf_server->backlog;
     m_idle_streams_timeout_role  = conf_server->idle_streams_timeout;
-    strcpy(m_http_url_role, conf_server->on_event_url);
+    snprintf(m_http_url_role, sizeof(m_http_url_role), "%s", conf_server->on_event_url);
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::init_conf_app, m_back_log=%d, m_idle_streams_timeout=%d.",
             this, m_back_log, m_idle_streams_timeout_role);
 
@@ -531,7 +531,7 @@ int CSLSListener::handler()
     	return client_count;
     }
 
-    if (0 != srt->libsrt_split_sid(sid, host_name, app_name, stream_name)) {
+    if (0 != srt->libsrt_split_sid(sid, host_name, sizeof(host_name), app_name, sizeof(app_name), stream_name, sizeof(stream_name))) {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], parse sid='%s' failed.", this, peer_name, peer_port, sid);
     	srt->libsrt_close();
     	delete srt;

@@ -80,7 +80,7 @@ int  CHttpClient::open(const char *url, const char *method, int interval)
 {
     m_begin_tm_ms = sls_gettime_ms();
     int ret = SLS_OK;
-	strcpy(m_url, url);
+	snprintf(m_url, sizeof(m_url), "%s", url);
 	if (NULL == m_url) {
         sls_log(SLS_LOG_INFO, "[%p]CHttpClient::open, failed, m_url is NULL.", this);
 		goto FUNC_END;
@@ -441,7 +441,7 @@ int CHttpClient::parse_url()
     }
 
     char url[1024] = {0};
-    strcpy(url, m_url);
+    snprintf(url, sizeof(url), "%s", m_url);
 
     char *p = url;
     //protocal
@@ -462,7 +462,7 @@ int CHttpClient::parse_url()
     char *p_tmp = strchr(p, ':');
     if (p_tmp) {
         p_tmp[0] = 0x00;
-        strcpy(m_remote_host, p);
+        snprintf(m_remote_host, sizeof(m_remote_host), "%s", p);
         p = p_tmp + 1;
         p_tmp = strchr(p, '/');
         if (p_tmp) {
@@ -481,7 +481,7 @@ int CHttpClient::parse_url()
         p_tmp = strchr(p, '/');
         if (p_tmp){
             p_tmp[0] = 0x00;
-            strcpy(m_remote_host, p);
+            snprintf(m_remote_host, sizeof(m_remote_host), "%s", p);
             p_tmp[0] = '/';
             p = p_tmp;
 		}else{
@@ -491,7 +491,7 @@ int CHttpClient::parse_url()
         }
     }
     if (NULL != p)
-        strcpy(m_uri, p);
+        snprintf(m_uri, sizeof(m_uri), "%s", p);
     return SLS_OK;
 }
 
@@ -516,7 +516,7 @@ int CHttpClient::write_http_header(int data_len)
 	http_header += std::string(data);
 
 	if (data_len > 0) {
-	    sprintf(data, "Content-Length: %d\r\n", data_len);
+	    snprintf(data, sizeof(data), "Content-Length: %d\r\n", data_len);
 	    http_header += std::string(data);
 	}
 

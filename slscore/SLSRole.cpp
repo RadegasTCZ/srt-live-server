@@ -259,7 +259,7 @@ void CSLSRole::set_conf(sls_conf_base_t * conf)
 void CSLSRole::set_map_data(char *map_key, CSLSMapData *map_data)
 {
 	if (NULL != map_key) {
-        strcpy(m_map_data_key, map_key);
+        snprintf(m_map_data_key, sizeof(m_map_data_key), "%s", map_key);
         m_map_data     = map_data;
 	} else {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSRole::set_map_data, failed, map_key is null.", this);
@@ -289,7 +289,7 @@ bool CSLSRole::check_idle_streams_duration(int64_t cur_time_ms)
 void CSLSRole::set_record_hls_path(const char *hls_path)
 {
     if (hls_path && strlen(hls_path) > 0) {
-        strcpy(m_record_hls_path, hls_path);
+        snprintf(m_record_hls_path, sizeof(m_record_hls_path), "%s", hls_path);
     }
 }
 
@@ -583,7 +583,7 @@ void  CSLSRole::set_http_url(const char *http_url)
 	if (NULL == http_url || strlen(http_url) == 0) {
 	    return ;
 	}
-	strcpy(m_http_url, http_url);
+	snprintf(m_http_url, sizeof(m_http_url), "%s", http_url);
 	if (NULL == m_http_client) {
 		m_http_client = new CHttpClient;
 		m_http_passed = false;
