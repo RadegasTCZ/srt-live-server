@@ -35,7 +35,9 @@
 #include <ctime>
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <netdb.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,6 +49,7 @@
 
 
 #include "common.hpp"
+#include "SLSLog.hpp"
 
 
 /**
@@ -452,6 +455,74 @@ int sls_send_cmd(const char *cmd)
     	kill(pid, SIGINT);
         return SLS_OK;
     }
+    return SLS_OK;
+}
+
+int sls_drop_privileges(const char *user, const char *group)
+{
+    bool want_user  = (user  != NULL && user[0]  != '\0');
+    bool want_group = (group != NULL && group[0] != '\0');
+
+    if (!want_user && !want_group) {
+        return SLS_OK;
+    }
+
+    if (want_group && !want_user) {
+        sls_log(SLS_LOG_FATAL, "sls_drop_privileges: 'group' set without 'user'. Configure both or neither.");
+        return SLS_ERROR;
+    }
+
+    if (geteuid() != 0) {
+        sls_log(SLS_LOG_WARNING, "sls_drop_privileges: not running as root, ignoring user='%s' group='%s'.",
+                user ? user : "", group ? group : "");
+        return SLS_OK;
+    }
+
+    errno = 0;
+    struct passwd *pw = getpwnam(user);
+    if (!pw) {
+        sls_log(SLS_LOG_FATAL, "sls_drop_privileges: user '%s' not found (errno=%d).", user, errno);
+        return SLS_ERROR;
+    }
+    uid_t target_uid = pw->pw_uid;
+    gid_t target_gid = pw->pw_gid;
+
+    if (want_group) {
+        errno = 0;
+        struct group *gr = getgrnam(group);
+        if (!gr) {
+            sls_log(SLS_LOG_FATAL, "sls_drop_privileges: group '%s' not found (errno=%d).", group, errno);
+            return SLS_ERROR;
+        }
+        target_gid = gr->gr_gid;
+    }
+
+    if (initgroups(user, target_gid) != 0) {
+        sls_log(SLS_LOG_FATAL, "sls_drop_privileges: initgroups('%s', %d) failed: %s.",
+                user, (int)target_gid, strerror(errno));
+        return SLS_ERROR;
+    }
+
+    if (setgid(target_gid) != 0) {
+        sls_log(SLS_LOG_FATAL, "sls_drop_privileges: setgid(%d) failed: %s.",
+                (int)target_gid, strerror(errno));
+        return SLS_ERROR;
+    }
+
+    if (setuid(target_uid) != 0) {
+        sls_log(SLS_LOG_FATAL, "sls_drop_privileges: setuid(%d) failed: %s.",
+                (int)target_uid, strerror(errno));
+        return SLS_ERROR;
+    }
+
+    // Paranoia: make sure the drop was irreversible.
+    if (target_uid != 0 && setuid(0) == 0) {
+        sls_log(SLS_LOG_FATAL, "sls_drop_privileges: privilege drop did not stick; setuid(0) succeeded.");
+        return SLS_ERROR;
+    }
+
+    sls_log(SLS_LOG_INFO, "sls_drop_privileges: dropped to uid=%d gid=%d (user='%s', group='%s').",
+            (int)target_uid, (int)target_gid, user, want_group ? group : "(from passwd)");
     return SLS_OK;
 }
 

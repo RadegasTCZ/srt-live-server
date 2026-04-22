@@ -158,6 +158,14 @@ int main(int argc, char* argv[])
     }
 
     conf_srt = (sls_conf_srt_t *)sls_conf_get_root_conf();
+
+    // Drop privileges after listeners have bound (so :<1024 ports still work
+    // if the admin configured one) but before we start handling traffic.
+    if (SLS_OK != sls_drop_privileges(conf_srt->user, conf_srt->group)) {
+        sls_log(SLS_LOG_INFO, "sls_drop_privileges failed, EXIT!");
+        goto EXIT_PROC;
+    }
+
     if (strlen(conf_srt->stat_post_url) > 0)
         http_stat_client->open(conf_srt->stat_post_url, stat_method, conf_srt->stat_post_interval);
 

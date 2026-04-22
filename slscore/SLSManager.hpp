@@ -47,6 +47,8 @@ int              worker_connections;
 char             stat_post_url[URL_MAX_LEN];
 int              stat_post_interval;
 char             record_hls_path_prefix[URL_MAX_LEN];
+char             user[SHORT_STR_MAX_LEN];
+char             group[SHORT_STR_MAX_LEN];
 SLS_CONF_DYNAMIC_DECLARE_END
 
 
@@ -61,6 +63,8 @@ SLS_SET_CONF(srt, int,    worker_connections,          "", 1, 1024),
 SLS_SET_CONF(srt, string, stat_post_url,               "statistic info post url", 1, URL_MAX_LEN-1),
 SLS_SET_CONF(srt, int,    stat_post_interval,          "interval of statistic info post.", 1, 60),
 SLS_SET_CONF(srt, string, record_hls_path_prefix,      "hls path prefix", 1, URL_MAX_LEN-1),
+SLS_SET_CONF(srt, string, user,                        "drop privileges to this user after bind", 1, SHORT_STR_MAX_LEN-1),
+SLS_SET_CONF(srt, string, group,                       "drop privileges to this group after bind (defaults to user's primary group)", 1, SHORT_STR_MAX_LEN-1),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 
