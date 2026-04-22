@@ -270,7 +270,9 @@ int CSLSListener::load_users(const char *path)
         return SLS_ERROR;
     }
 
-    m_users.clear();
+    // Parse into a staging map, then swap under the write lock so
+    // listen_callback never observes a half-loaded m_users.
+    std::map<std::string, sls_user_cred_t> staging;
     std::string line;
     int lineno = 0, loaded = 0;
     while (std::getline(f, line)) {
@@ -309,12 +311,30 @@ int CSLSListener::load_users(const char *path)
         sls_user_cred_t cred;
         cred.publish_pass = pub;
         cred.play_pass    = play;
-        m_users[name]     = cred;
+        staging[name]     = cred;
         loaded++;
     }
+
+    {
+        CSLSLock lock(&m_users_lock, 1); // write lock
+        m_users.swap(staging);
+    }
+
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::load_users, loaded %d user(s) from '%s'.",
             this, loaded, path);
     return SLS_OK;
+}
+
+int CSLSListener::reload_users()
+{
+    if (!m_conf) {
+        return SLS_OK;
+    }
+    const char *path = ((sls_conf_server_t*)m_conf)->user_file;
+    if (!path || !*path) {
+        return SLS_OK; // user_file not configured, nothing to reload
+    }
+    return load_users(path);
 }
 
 int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
@@ -338,32 +358,42 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     std::string app(slash1 + 1, slash2 - slash1 - 1);
     std::string stream(slash2 + 1);
 
-    std::map<std::string, sls_user_cred_t>::iterator it = self->m_users.find(stream);
-    if (it == self->m_users.end()) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
-                self, stream.c_str());
-        return -1;
+    // Look up credentials under a read lock and copy what we need out of
+    // the map so we can drop the lock before calling into libsrt (which may
+    // reorder across threads).
+    std::string pass_value;
+    bool        pass_found  = false;
+    bool        pass_empty  = false;
+    const char *direction   = NULL;
+    {
+        CSLSLock lock(&self->m_users_lock, 0); // read lock
+        std::map<std::string, sls_user_cred_t>::iterator it = self->m_users.find(stream);
+        if (it == self->m_users.end()) {
+            sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
+                    self, stream.c_str());
+            return -1;
+        }
+
+        // Match the app token against every app block's app_publisher/app_player
+        // to decide which passphrase column applies.
+        sls_conf_server_t *cs = (sls_conf_server_t *)self->m_conf;
+        for (sls_conf_app_t *ca = (sls_conf_app_t *)cs->child; ca;
+             ca = (sls_conf_app_t *)ca->sibling) {
+            if (app == ca->app_publisher) { pass_value = it->second.publish_pass; direction = "publish"; pass_found = true; break; }
+            if (app == ca->app_player)    { pass_value = it->second.play_pass;    direction = "play";    pass_found = true; break; }
+        }
+        pass_empty = pass_value.empty();
     }
 
-    // Match the app token against every app block's app_publisher/app_player
-    // to decide which passphrase column applies.
-    sls_conf_server_t *cs = (sls_conf_server_t *)self->m_conf;
-    const std::string *pass = NULL;
-    const char *direction = NULL;
-    for (sls_conf_app_t *ca = (sls_conf_app_t *)cs->child; ca;
-         ca = (sls_conf_app_t *)ca->sibling) {
-        if (app == ca->app_publisher) { pass = &it->second.publish_pass; direction = "publish"; break; }
-        if (app == ca->app_player)    { pass = &it->second.play_pass;    direction = "play";    break; }
-    }
-    if (!pass) {
+    if (!pass_found) {
         sls_log(SLS_LOG_INFO,
                 "[%p]CSLSListener::listen_callback, app '%s' matches no app_publisher/app_player for user '%s'; rejecting.",
                 self, app.c_str(), stream.c_str());
         return -1;
     }
 
-    if (!pass->empty()) {
-        if (srt_setsockflag(ns, SRTO_PASSPHRASE, pass->c_str(), (int)pass->length()) < 0) {
+    if (!pass_empty) {
+        if (srt_setsockflag(ns, SRTO_PASSPHRASE, pass_value.c_str(), (int)pass_value.length()) < 0) {
             sls_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_PASSPHRASE for user '%s' (%s) failed: %s.",
                     self, stream.c_str(), direction, srt_getlasterror_str());
