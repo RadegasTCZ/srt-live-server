@@ -87,7 +87,21 @@ int CSLSMapData::remove(char *key)
             delete array_data;
         }
     	m_map_array.erase(item);
-        return SLS_OK;
+        ret = SLS_OK;
+    }
+
+    // Drop cached PSI (PAT/PMT/SPS/PPS) so the next publisher on the same
+    // stream key seeds fresh metadata from its own packets. Without this,
+    // pullers joining after a codec or track-layout change receive the
+    // previous publisher's PMT and decode the wrong elementary stream.
+    std::map<std::string, ts_info *>::iterator item_ti;
+    item_ti = m_map_ts_info.find(strKey);
+    if (item_ti != m_map_ts_info.end()) {
+        ts_info *ti = item_ti->second;
+        if (ti) {
+            delete ti;
+        }
+        m_map_ts_info.erase(item_ti);
     }
     return ret;
 }
@@ -229,6 +243,15 @@ void CSLSMapData::clear()
         it ++;
     }
     m_map_array.clear();
+
+    std::map<std::string, ts_info *>::iterator it_ti;
+    for (it_ti = m_map_ts_info.begin(); it_ti != m_map_ts_info.end(); ++it_ti) {
+        ts_info *ti = it_ti->second;
+        if (ti) {
+            delete ti;
+        }
+    }
+    m_map_ts_info.clear();
 }
 
 int CSLSMapData::check_ts_info(char *data, int len, ts_info *ti)
