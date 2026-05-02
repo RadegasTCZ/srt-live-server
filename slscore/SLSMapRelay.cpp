@@ -65,7 +65,7 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
     	cur_mananger = item->second;
         if (NULL != cur_mananger) {
         	sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, cur_mananger=%p, exist, app_uplive=%s, stream_name=%s.",
-                    this, app_uplive, stream_name, cur_mananger);
+                    this, cur_mananger, app_uplive, stream_name);
             return cur_mananger;
         }
     }
@@ -76,7 +76,7 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
         cur_mananger = new CSLSPusherManager;
     else {
     	sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, failed, wrong , app_uplive=%s, stream_name=%s.",
-                this, app_uplive, stream_name, cur_mananger);
+                this, app_uplive, stream_name);
     	return NULL;
     }
     cur_mananger->set_relay_conf(sri);

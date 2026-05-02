@@ -38,7 +38,7 @@
 #define SLS_LOG_INFO      3
 #define SLS_LOG_DEBUG     4
 #define SLS_LOG_TRACE     5
-static char const * LOG_LEVEL_NAME[] = {
+static char const * LOG_LEVEL_NAME[] __attribute__((unused)) = {
 		"FATAL",
 		"ERROR",
 		"WARNING",
@@ -48,7 +48,7 @@ static char const * LOG_LEVEL_NAME[] = {
 };
 
 
-static const char APP_NAME[] = "SLS";
+static const char APP_NAME[] __attribute__((unused)) = "SLS";
 
 #define sls_log CSLSLog::log
 #define sls_set_log_level CSLSLog::set_log_level
@@ -65,7 +65,7 @@ private :
 public :
     static int  create_instance();
     static int  destory_instance();
-    static void log(int level, const char *fmt, ...);
+    static void log(int level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
     static void set_log_level(char *level);
     static void set_log_file(char * file_name);
 

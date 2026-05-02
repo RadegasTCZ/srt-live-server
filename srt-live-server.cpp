@@ -82,7 +82,7 @@ int main(int argc, char* argv[])
     sls_opt_t           sls_opt;
 
     CSLSManager             *sls_manager = NULL;
-    std:list <CSLSManager*>  reload_manager_list;
+    std::list<CSLSManager*>  reload_manager_list;
     CHttpClient             *http_stat_client = new CHttpClient;
 
     int ret = SLS_OK;
@@ -166,8 +166,9 @@ int main(int argc, char* argv[])
         goto EXIT_PROC;
     }
 
-    if (strlen(conf_srt->stat_post_url) > 0)
+    if (strlen(conf_srt->stat_post_url) > 0) {
         http_stat_client->open(conf_srt->stat_post_url, stat_method, conf_srt->stat_post_interval);
+    }
 
 	while(!b_exit)
 	{
@@ -248,7 +249,7 @@ EXIT_PROC:
     }
 
     //release all reload manager
-    sls_log(SLS_LOG_INFO, "exit, release reload_manager_list begin，count=%d.", reload_manager_list.size());
+    sls_log(SLS_LOG_INFO, "exit, release reload_manager_list begin，count=%zu.", reload_manager_list.size());
     std::list<CSLSManager *>::iterator it;
     for ( it = reload_manager_list.begin(); it != reload_manager_list.end(); it++)
     {

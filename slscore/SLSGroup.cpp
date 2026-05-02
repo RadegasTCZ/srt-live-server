@@ -107,7 +107,7 @@ void CSLSGroup::check_new_role() {
     //add to epoll
     if (0 == role->add_to_epoll(m_eid)) {
         m_map_role[fd] = role;
-        sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll fd=%d, role_map.size=%d.",
+        sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll fd=%d, role_map.size=%zu.",
                 this, m_worker_number, role->get_role_name(), role, fd, m_map_role.size());
     } else {
         sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll failed, fd=%d.",
@@ -168,7 +168,7 @@ int CSLSGroup::handler()
         ret = role->handler();
         if (ret < 0) {
         	//handle exception
-            sls_log(SLS_LOG_TRACE, "[%p]CSLSGroup::handle, worker_number=%d, write sock=%d is invalid, %s=%p, write_len=%d, role_map.size=%d.",
+            sls_log(SLS_LOG_TRACE, "[%p]CSLSGroup::handle, worker_number=%d, write sock=%d is invalid, %s=%p, write_len=%d, role_map.size=%zu.",
                     this, m_worker_number, m_write_socks[i], role->get_role_name(), role, write_len, m_map_role.size());
         	role->invalid_srt();
         } else {
@@ -194,7 +194,7 @@ int CSLSGroup::handler()
         ret = role->handler();
         if (ret < 0) {
         	//handle exception
-            sls_log(SLS_LOG_TRACE, "[%p]CSLSGroup::handle, worker_number=%d, readable sock=%d is invalid, %s=%p, readable len=%d, role_map.size=%d.",
+            sls_log(SLS_LOG_TRACE, "[%p]CSLSGroup::handle, worker_number=%d, readable sock=%d is invalid, %s=%p, readable len=%d, role_map.size=%zu.",
                       this, m_worker_number, m_read_socks[i], role->get_role_name(), role, read_len, m_map_role.size());
         	role->invalid_srt();
         } else {
@@ -303,7 +303,7 @@ void CSLSGroup::check_invalid_sock()
         int state = role->get_state(cur_time_ms);
         if (SLS_RS_INVALID == state || SLS_RS_UNINIT == state)
 		{
-			sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, invalid sock=%d, state=%d, role_map.size=%d.",
+			sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, invalid sock=%d, state=%d, role_map.size=%zu.",
 				  this, m_worker_number, role->get_role_name(), role, role->get_fd(), state, m_map_role.size());
 			//check relay
 			if (role->is_reconnect()) {
@@ -332,7 +332,7 @@ void CSLSGroup::check_invalid_sock()
 
 void CSLSGroup::clear()
 {
-    sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::clear, worker_number=%d, role_map.size=%d.",
+    sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::clear, worker_number=%d, role_map.size=%zu.",
             this, m_worker_number, m_map_role.size());
     std::map<int, CSLSRole *>::iterator it;
     for(it=m_map_role.begin(); it!=m_map_role.end(); it++) {

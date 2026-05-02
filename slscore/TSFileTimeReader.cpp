@@ -151,7 +151,7 @@ int  CTSFileTimeReader::get(uint8_t *data, int size, int64_t &tm_ms, bool& jitte
     int ret = m_array_data.get((uint8_t*)&rts, sizeof(rts));
     if (ret != sizeof(rts)) {
         sls_log(SLS_LOG_INFO, "[%p]CTSFileTimeReader::get, failed, m_array_data.get rts, ret=%d.",
-                this, m_file_name, ret);
+                this, ret);
     	return SLS_ERROR;
     }
     tm_ms = rts/90;//rts is 90K clock
@@ -162,7 +162,7 @@ int  CTSFileTimeReader::get(uint8_t *data, int size, int64_t &tm_ms, bool& jitte
     }
     if (ret != size) {
         sls_log(SLS_LOG_INFO, "[%p]CTSFileTimeReader::get, failed, m_array_data. get data, ret=%d, not %d.",
-                this, ret, m_file_name, ret, size);
+                this, ret, size);
     	return SLS_ERROR;
     }
     return SLS_OK;
@@ -222,7 +222,7 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
         if (INVALID_DTS_PTS == m_dts) {
             //the 1st dts
             sls_log(SLS_LOG_INFO, "[%p]CTSFileTimeReader::generate_rts_file, ts_index=%d, dts_index=%d, ti.es_pid=%d, dts=%lld.",
-                    this, ts_index, dts_index, ti.es_pid, ti.dts);
+                    this, ts_index, dts_index, ti.es_pid, (long long)ti.dts);
             m_dts = ti.dts;
             m_pts = ti.pts;
             ti.dts = INVALID_DTS_PTS;
@@ -256,7 +256,7 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
             m_pts = ti.pts;
         }
         sls_log(SLS_LOG_INFO, "[%p]CTSFileTimeReader::generate_rts_file, ts_index=%d, dts_index=%d, m_dts_pid=%d, dts=%lld.",
-                this, ts_index, dts_index, m_dts_pid, ti.dts);
+                this, ts_index, dts_index, m_dts_pid, (long long)ti.dts);
         if (ti.sps_len > 0) {
             sls_log(SLS_LOG_INFO, "[%p]CTSFileTimeReader::generate_rts_file, ts_index=%d, dts_index=%d, m_dts_pid=%d, sps_len=%d, pps_len=%d.",
                     this, ts_index, dts_index, m_dts_pid, ti.sps_len, ti.pps_len);

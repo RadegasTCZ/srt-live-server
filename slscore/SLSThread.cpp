@@ -56,7 +56,7 @@ int CSLSThread::start()
         return -1;
     }
     m_th_id = th_id;
-    sls_log(SLS_LOG_INFO, "[%p]CSLSThread::start, pthread_create ok, m_th_id=%lld.", this, m_th_id);
+    sls_log(SLS_LOG_INFO, "[%p]CSLSThread::start, pthread_create ok, m_th_id=%lu.", this, (unsigned long)m_th_id);
 
 	return ret;
 
@@ -67,7 +67,7 @@ int CSLSThread::stop()
     if (0 == m_th_id) {
         return ret;
     }
-    sls_log(SLS_LOG_INFO, "[%p]CSLSThread::stop, m_th_id=%lld.", this, m_th_id);
+    sls_log(SLS_LOG_INFO, "[%p]CSLSThread::stop, m_th_id=%lu.", this, (unsigned long)m_th_id);
 
     m_exit = 1;
 	pthread_join(m_th_id, NULL);

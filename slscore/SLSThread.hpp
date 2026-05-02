@@ -38,7 +38,7 @@ class CSLSThread
 {
 public :
 	CSLSThread();
-    ~CSLSThread();
+    virtual ~CSLSThread();
 
     int start();
     int stop();

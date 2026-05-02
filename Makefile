@@ -7,7 +7,8 @@ LIBRARY_FILE = -lpthread -lz -lsrt
 BIN_PATH = ./bin
 
 DEBUG = -g
-CFLAGS += $(DEBUG)
+WARN  = -Wall -Wformat=2 -Wno-format-nonliteral -Wno-format-truncation -Wno-invalid-offsetof
+CFLAGS += $(DEBUG) $(WARN)
 
 LOG_PATH = ./logs
 
