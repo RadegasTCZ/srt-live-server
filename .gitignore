@@ -2,7 +2,8 @@ logs
 obj
 bin
 
-# Local, user-specific credentials file. Copy sls-users.conf.example
-# to sls-users.conf and edit with real passphrases; this keeps them
-# out of commits.
+# Local working configs. Copy the .example versions to these names and
+# edit; this keeps deployment-specific values out of commits.
+sls.conf
+sls-test.conf
 sls-users.conf

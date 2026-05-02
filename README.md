@@ -38,7 +38,13 @@ $ ./sls -h
 
 - Runs with default config file
 ------------------------------
+$ cp ../sls.conf.example ../sls.conf      # first run only
 $ ./sls -c ../sls.conf
+
+If you want per-user authentication, also copy the users file template:
+
+$ cp ../sls-users.conf.example ../sls-users.conf
+$ # edit ../sls-users.conf, then uncomment `user_file` in sls.conf
 
 Test
 ====

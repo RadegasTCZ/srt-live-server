@@ -1,0 +1,101 @@
+# srt-live-server example configuration.
+#
+# First run:
+#   cp sls.conf.example sls.conf
+#   ./bin/sls -c sls.conf
+#
+# Reload after edits without dropping connected sessions (sends SIGHUP):
+#   ./bin/sls -s reload
+#
+# Stop the running server (sends SIGINT):
+#   ./bin/sls -s stop
+#
+# Every directive below is commented. Uncomment and edit only the ones
+# you want to change from defaults.
+
+srt {
+    # ----- Process / runtime --------------------------------------------------
+
+    worker_threads     1;       # epoll worker threads; 1 handles hundreds of streams.
+    worker_connections 300;     # max concurrent SRT sockets per worker.
+
+    log_file  logs/error.log;   # path is relative to the CWD when sls starts.
+    log_level info;             # fatal | error | warning | info | debug | trace
+
+    # Optional: POST stream stats as JSON to an external endpoint every N seconds.
+    #stat_post_url      http://127.0.0.1:8001/sls/stat;
+    #stat_post_interval 5;      # seconds
+
+    # Drop privileges after bind(). Only applies when sls is started as root;
+    # ignored (with a warning) otherwise. If `group` is omitted, the user's
+    # primary group is used.
+    #user  nobody;
+    #group nogroup;
+
+    # ----- Listener block -----------------------------------------------------
+    #
+    # One server { } per UDP listen port. Most setups need only one.
+
+    server {
+        listen  8080;           # UDP port for SRT.
+        latency 120;            # ms; SRT receive buffer. Set to ~2x your worst RTT.
+                                # Higher absorbs more jitter at the cost of glass-to-glass.
+
+        # Stream-id "domain" components. Streamids take the form
+        #   <domain_publisher>/<app_publisher>/<name>      for publishers
+        #   <domain_player>/<app_player>/<name>            for players
+        # Multiple values allowed (whitespace-separated).
+        domain_publisher uplive.example.com;
+        domain_player    live.example.com;
+
+        backlog              10;    # listen() backlog -- pending SRT handshakes queue length.
+        idle_streams_timeout 30;    # seconds; -1 disables. Drops idle publishers/players.
+
+        # Optional: POST connect/disconnect events to a webhook.
+        #on_event_url http://127.0.0.1:8000/sls/on_event;
+        #   query string: ?method=on_connect|on_close&role_name=...&srt_url=...
+
+        # ----- Encryption (pick at most ONE mode) ----------------------------
+        #
+        # Mode A -- listener-wide passphrase. Every publisher and player uses
+        # the same passphrase in their SRT URL. Simple but coarse.
+        #srt_passphrase your-secret-min-10-chars;
+        #srt_pbkeylen   16;     # 16/24/32 -> AES-128/192/256. Omit for libsrt default.
+        #
+        # Mode B -- per-user. Each streamid authorises one streamer with their
+        # own publish/play passphrases (or plaintext). Add/remove lines in the
+        # users file and reload (sls -s reload) to grant/revoke. See
+        # sls-users.conf.example for the file format.
+        #user_file sls-users.conf;
+
+        # ----- Apps ----------------------------------------------------------
+        #
+        # Multiple app { } blocks allowed inside a listener. Each binds a
+        # publish/play app-name pair. Most setups need only one.
+
+        app {
+            app_publisher live;     # publishers use streamid '<domain_publisher>/live/<name>'
+            app_player    live;     # players    use streamid '<domain_player>/live/<name>'
+
+            # ----- Optional relays -------------------------------------------
+            #
+            # Pull -- this server FETCHES from upstream(s) on first player demand.
+            #relay {
+            #    type pull;
+            #    mode loop;                  # loop | hash -- how upstreams are picked
+            #    reconnect_interval 10;      # seconds between pull attempts
+            #    idle_streams_timeout -1;    # seconds; -1 = keep pulled stream alive forever
+            #    upstreams 127.0.0.1:9090?streamid=live.example.com/live 192.0.2.50:8080?streamid=live.test.com/live;
+            #}
+            #
+            # Push -- this server FORWARDS local publishers out to upstream(s).
+            #relay {
+            #    type push;
+            #    mode all;                   # all | hash
+            #    reconnect_interval 10;
+            #    idle_streams_timeout 10;
+            #    upstreams 192.0.2.10:8080?streamid=uplive.example.com/live;
+            #}
+        }
+    }
+}
