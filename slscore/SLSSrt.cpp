@@ -138,7 +138,23 @@ SRTS_NONEXIST:
 int CSLSSrt::libsrt_neterrno()
 {
     int err = srt_getlasterror(NULL);
-    sls_log(SLS_LOG_ERROR, "CSLSSrt::libsrt_neterrno, err=%d, %s.",  err, srt_getlasterror_str());
+    const char *msg = srt_getlasterror_str();
+
+    switch (err) {
+        case SRT_ECONNLOST:
+            sls_log(SLS_LOG_INFO,
+                    "CSLSSrt: peer disconnected (err=%d, %s).", err, msg);
+            break;
+        case SRT_ETIMEOUT:
+            sls_log(SLS_LOG_WARNING,
+                    "CSLSSrt: peer idle timeout, no graceful close (err=%d, %s).",
+                    err, msg);
+            break;
+        default:
+            sls_log(SLS_LOG_ERROR,
+                    "CSLSSrt::libsrt_neterrno, err=%d, %s.", err, msg);
+            break;
+    }
     return err;
 }
 
@@ -390,9 +406,7 @@ int CSLSSrt::libsrt_read(char *buf, int size)
     int ret;
     ret = srt_recvmsg(m_sc.fd, buf, size);
     if (ret < 0) {
-        int err_no = libsrt_neterrno();
-        sls_log(SLS_LOG_WARNING, "[%p]CSLSSrt::libsrt_read failed, sock=%d, ret=%d, err_no=%d.",
-        		this, m_sc.fd, ret, err_no);
+        libsrt_neterrno();
     }
     return ret;
 }
