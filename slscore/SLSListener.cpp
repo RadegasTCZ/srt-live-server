@@ -98,7 +98,6 @@ CSLSListener::CSLSListener()
     m_idle_streams_timeout_role = 0;
     m_stat_info = std::string("");
     memset(m_http_url_role, 0, URL_MAX_LEN);
-    memset(m_record_hls_path_prefix, 0, URL_MAX_LEN);
 
     sprintf(m_role_name, "listener");
 }
@@ -138,13 +137,6 @@ void CSLSListener::set_map_puller(CSLSMapRelay *map_puller)
 void CSLSListener::set_map_pusher(CSLSMapRelay *map_pusher)
 {
     m_map_pusher     = map_pusher;
-}
-
-void CSLSListener::set_record_hls_path_prefix(char *path)
-{
-    if (path != NULL && strlen(path) > 0) {
-        snprintf(m_record_hls_path_prefix, sizeof(m_record_hls_path_prefix), "%s", path);
-    }
 }
 
 int CSLSListener::init_conf_app()
@@ -476,13 +468,6 @@ int CSLSListener::start()
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_setup ok.", this);
 
-
-    ret = m_srt->libsrt_listen(m_back_log);
-    if (SLS_OK != ret) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_listen failure.", this);
-        return ret;
-    }
-
     if (!m_users.empty()) {
         if (srt_listen_callback(m_srt->libsrt_get_fd(), listen_callback, this) < 0) {
             sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, srt_listen_callback failed: %s.",
@@ -491,6 +476,12 @@ int CSLSListener::start()
         }
         sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, per-user auth active (%zu user(s) loaded).",
                 this, m_users.size());
+    }
+
+    ret = m_srt->libsrt_listen(m_back_log);
+    if (SLS_OK != ret) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_listen failure.", this);
+        return ret;
     }
 
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, m_list_role=%p.", this, m_list_role);
@@ -534,7 +525,7 @@ int CSLSListener::handler()
 
     //1: accept
     fd_client = m_srt->libsrt_accept();
-    if (ret < 0) {
+    if (fd_client < 0) {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, srt_accept failed, fd=%d.", this, get_fd());
         CSLSSrt::libsrt_neterrno();
         return client_count;
@@ -703,10 +694,6 @@ int CSLSListener::handler()
     std::string stat_info = std::string(tmp);
     pub->set_stat_info_base(stat_info);
     pub->set_http_url(m_http_url_role);
-    //set hls record path
-    snprintf(tmp, sizeof(tmp), "%s/%d/%s",
-            m_record_hls_path_prefix, m_port, key_stream_name);
-    pub->set_record_hls_path(tmp);
 
 	sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new pub=%p, key_stream_name=%s.",
 			this, pub, key_stream_name);

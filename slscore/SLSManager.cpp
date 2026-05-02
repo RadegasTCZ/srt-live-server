@@ -102,7 +102,6 @@ int CSLSManager::start()
     	CSLSListener * p = new CSLSListener();//deleted by groups
     	p->set_role_list(m_list_role);
         p->set_conf(conf);
-        p->set_record_hls_path_prefix(conf_srt->record_hls_path_prefix);
         p->set_map_data("", &m_map_data[i]);
         p->set_map_publisher(&m_map_publisher[i]);
         p->set_map_puller(&m_map_puller[i]);

@@ -106,7 +106,6 @@ public :
     void set_map_publisher(CSLSMapPublisher * publisher);
     void set_map_puller(CSLSMapRelay *map_puller);
     void set_map_pusher(CSLSMapRelay *map_puller);
-    void set_record_hls_path_prefix(char *path);
 
     virtual std::string get_stat_info();
 
@@ -121,7 +120,6 @@ private:
     int                 m_idle_streams_timeout_role;
     std::string 		m_stat_info;
     char                m_http_url_role[URL_MAX_LEN];
-    char                m_record_hls_path_prefix[URL_MAX_LEN];
 
     CSLSRWLock                             m_users_lock;
     std::map<std::string, sls_user_cred_t> m_users;
