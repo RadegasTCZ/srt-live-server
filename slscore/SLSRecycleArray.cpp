@@ -79,7 +79,7 @@ int CSLSRecycleArray::put(char * data, int len)
 
     if (len > m_nDataSize) {
         sls_log(SLS_LOG_INFO, "[%p]CSLSRecycleArray::put, failed, len=%d is bigger than m_nDataSize=%d.",
-                this, data, len, m_nDataSize);
+                this, len, m_nDataSize);
         return SLS_ERROR;
     }
 
@@ -122,7 +122,7 @@ int CSLSRecycleArray::get(char *data, int size, SLSRecycleArrayID *read_id, int 
         read_id->nReadPos   = m_nWritePos;
         read_id->nDataCount = m_nDataCount;
     	read_id->bFirst     = false;
-        sls_log(SLS_LOG_TRACE, "[%p]CSLSRecycleArray::get, the first time.");
+        sls_log(SLS_LOG_TRACE, "[%p]CSLSRecycleArray::get, the first time.", this);
         return SLS_OK;
     }
 

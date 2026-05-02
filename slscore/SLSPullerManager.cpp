@@ -80,7 +80,7 @@ int CSLSPullerManager::connect_loop()
 			break;
 		}
 	    sls_log(SLS_LOG_INFO, "[%p]CSLSPullerManager::connect_loop, failed, index=%d, m_app_uplive=%s, m_stream_name=%s, szURL=‘%s’.",
-	    		this, m_app_uplive, m_stream_name, szURL);
+	    		this, index, m_app_uplive, m_stream_name, szURL);
 		index ++;
 	}
 	m_cur_loop_index = index;

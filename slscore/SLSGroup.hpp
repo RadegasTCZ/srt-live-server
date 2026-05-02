@@ -41,7 +41,7 @@ class CSLSGroup : public CSLSEpollThread
 {
 public :
 	CSLSGroup();
-    ~CSLSGroup();
+    virtual ~CSLSGroup();
 
     int  start();
     int  stop();

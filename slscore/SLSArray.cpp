@@ -92,7 +92,7 @@ int CSLSArray::put(const uint8_t * data, int len)
         //ext at least DEFAULT_MAX_DATA_SIZE each time.
         int   ext_len  = m_nDataSize + (DEFAULT_MAX_DATA_SIZE>=len?DEFAULT_MAX_DATA_SIZE:len);//m_nDataCount + len;
         sls_log(SLS_LOG_INFO, "[%p]CSLSArray::put, len=%d is bigger than nRemainder=%d, ext m_nDataSize=%d to ext_len=%d.",
-                this, data, len, m_nDataSize, ext_len);
+                this, len, nRemainder, m_nDataSize, ext_len);
 
         uint8_t *ext_data = new uint8_t[ext_len];
         int re = get_inline(ext_data, m_nDataCount);

@@ -60,10 +60,12 @@ int CSLSLog::destory_instance()
 
 void CSLSLog::log(int level, const char *fmt, ...)
 {
-    if (!m_pInstance)
-    	m_pInstance = new CSLSLog();
-    if (level > m_pInstance->m_level)
+    if (!m_pInstance) {
+        m_pInstance = new CSLSLog();
+    }
+    if (level > m_pInstance->m_level) {
         return;
+    }
 
 	va_list vl;
     va_start(vl, fmt);

@@ -89,7 +89,7 @@ int CSLSPuller::handler()
 		int64_t cur_time = sls_gettime_ms();
 		if (cur_time - last_read_time >= (m_idle_streams_timeout*1000)) {
 	        sls_log(SLS_LOG_INFO, "[%p]CSLSPuller::handler, no any reader for m_idle_streams_timeout=%ds, last_read_time=%lld, close puller.",
-	        		this, m_idle_streams_timeout, last_read_time);
+	        		this, m_idle_streams_timeout, (long long)last_read_time);
 			m_state = SLS_RS_INVALID;
 			invalid_srt();
 	        return SLS_ERROR;

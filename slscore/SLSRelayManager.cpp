@@ -87,7 +87,7 @@ int CSLSRelayManager::connect(const char *url)
 {
 	int ret = SLS_ERROR;
 	if (url == NULL || strlen(url) == 0) {
-	    sls_log(SLS_LOG_INFO, "[%p]CSLSManager::connect, failed, url=%s.", url?url:"null");
+	    sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::connect, failed, url=%s.", this, url?url:"null");
         return ret;
 	}
 

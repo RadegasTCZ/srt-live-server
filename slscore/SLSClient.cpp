@@ -208,7 +208,7 @@ int CSLSClient::write_data_handler()
 	//write data
 	int n = m_srt->libsrt_write((char *)szData, TS_UDP_LEN);
 	if (n <= 0) {
-		sls_log(SLS_LOG_TRACE, "[%p]CSLSClient::write_data_handler, libsrt_read failure, n=%d.", this, n, TS_UDP_LEN);
+		sls_log(SLS_LOG_TRACE, "[%p]CSLSClient::write_data_handler, libsrt_read failure, n=%d, expect %d.", this, n, TS_UDP_LEN);
         int state = get_state();
         if (SLS_RS_INVALID == state || SLS_RS_UNINIT == state)
 		{
@@ -262,7 +262,7 @@ int CSLSClient::read_data_handler()
 	    //read data
 	    int n = m_srt->libsrt_read(szData, TS_UDP_LEN);
 		if (n <= 0) {
-	        sls_log(SLS_LOG_ERROR, "[%p]CSLSClient::read_data_handler, libsrt_read failure, n=%d.", this, n, TS_UDP_LEN);
+	        sls_log(SLS_LOG_ERROR, "[%p]CSLSClient::read_data_handler, libsrt_read failure, n=%d, expect %d.", this, n, TS_UDP_LEN);
 		    return SLS_OK;
 		}
 
@@ -273,7 +273,7 @@ int CSLSClient::read_data_handler()
 			if (strlen(m_out_file_name) > 0) {
 				m_out_file = ::open(m_out_file_name, O_WRONLY|O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IXOTH);
 			    if (0 == m_out_file) {
-			    	sls_log(SLS_LOG_ERROR, "[%p]CSLSClient::read_data_handler, open file='%s' failed, '%s'.\n", m_out_file_name, strerror(errno));
+			    	sls_log(SLS_LOG_ERROR, "[%p]CSLSClient::read_data_handler, open file='%s' failed, '%s'.\n", this, m_out_file_name, strerror(errno));
 			    	return SLS_ERROR;
 			    }
 			}
