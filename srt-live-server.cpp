@@ -57,7 +57,7 @@ static void reload_handler(int s){
  */
 #define SLS_MAJOR_VERSION "1"
 #define SLS_MIN_VERSION "5"
-#define SLS_TEST_VERSION "2"
+#define SLS_TEST_VERSION "3"
 static void usage()
 {
     printf("-------------------------------------------------\n");
