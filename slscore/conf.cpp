@@ -249,6 +249,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
     int ret = SLS_ERROR;
     sls_conf_base_t * block = NULL;
     string str_line, str_line_last;
+    bool last_secret = false;   // str_line_last came from a srt_passphrase line
     string n, v, line_end_flag;
     int index ;
 
@@ -316,6 +317,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
             str_line = trim(str_line);
 
             n = str_line;
+            bool n_secret = secret;
             if (n.length() == 0) {
                 if (str_line_last.length() == 0) {
                     sls_log(SLS_LOG_ERROR, "line:%d, no name found.", line);
@@ -323,12 +325,14 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
                     break;
                 }
                 n = str_line_last;
+                n_secret = last_secret;
                 str_line_last = "";
+                last_secret = false;
             }
             // new block
             block = sls_conf_create_block_by_name(n, p_runtime);
             if (!block) {
-                sls_log(SLS_LOG_ERROR, "line:%d, name='%s' not found.", line, n.c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d, name='%s' not found.", line, sls_conf_show(n_secret, n).c_str());
                 ret = SLS_ERROR;
                 break;
             }
@@ -362,6 +366,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
             break;
         }
         str_line_last = str_line;
+        last_secret = secret;
     }
     return ret;
 
