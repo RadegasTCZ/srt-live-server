@@ -30,7 +30,8 @@ srt {
     # the directory must already exist and be writable by the user sls starts
     # as (root, when `user` below is set), otherwise startup fails and the error
     # names the path. Under systemd add RuntimeDirectory=sls to the unit.
-    # Running as a normal user from a checkout? Point it somewhere you own:
+    # The file is created 0600; keep its directory writable only by root / the
+    # service user (not /tmp). Running as a normal user from a checkout? Point it somewhere you own:
     #pid_file /run/sls/sls.pid;
 
     # Optional: POST stream stats as JSON to an external endpoint every N seconds.

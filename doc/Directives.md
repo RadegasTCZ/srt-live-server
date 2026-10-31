@@ -31,6 +31,15 @@ directory, point `pid_file` at a writable place, or under systemd set
 usually no longer writable, so the pid file may stay behind at exit; that is
 tolerated.
 
+Security model: the file is created with mode 0600, and its directory must be
+writable only by root or the service user (never a shared directory such as
+`/tmp`). A running sls holds an `fcntl` read lock on it (through a read-only
+descriptor; the writable one is closed before privileges are dropped), and
+`-s` signals only if the lock holder's pid equals the pid in the file. A
+leftover file with no lock holder is reported as "sls is not running (stale
+pid file)" and nothing is signalled; a second instance with the same
+`pid_file` refuses to start.
+
 ## srt_passphrase
 
 Listener-wide passphrase. The value is never written to the log; config lines
