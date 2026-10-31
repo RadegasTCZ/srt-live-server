@@ -37,6 +37,11 @@
 #include "SLSMapRelay.hpp"
 
 /**
+ * pid file used when the srt block has no 'pid_file' directive
+ */
+#define SLS_DEFAULT_PID_FILE "/run/sls/sls.pid"
+
+/**
  * srt conf declare
  */
 SLS_CONF_DYNAMIC_DECLARE_BEGIN(srt)
@@ -48,6 +53,7 @@ char             stat_post_url[URL_MAX_LEN];
 int              stat_post_interval;
 char             user[SHORT_STR_MAX_LEN];
 char             group[SHORT_STR_MAX_LEN];
+char             pid_file[URL_MAX_LEN];
 SLS_CONF_DYNAMIC_DECLARE_END
 
 
@@ -63,6 +69,7 @@ SLS_SET_CONF(srt, string, stat_post_url,               "statistic info post url"
 SLS_SET_CONF(srt, int,    stat_post_interval,          "interval of statistic info post.", 1, 60),
 SLS_SET_CONF(srt, string, user,                        "drop privileges to this user after bind", 1, SHORT_STR_MAX_LEN-1),
 SLS_SET_CONF(srt, string, group,                       "drop privileges to this group after bind (defaults to user's primary group)", 1, SHORT_STR_MAX_LEN-1),
+SLS_SET_CONF(srt, string, pid_file,                    "pid file path (default /run/sls/sls.pid); the directory must exist and be writable", 1, URL_MAX_LEN-1),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 

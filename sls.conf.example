@@ -9,8 +9,9 @@
 # The outcome is only in the server log ("reload ok (N user(s))" at INFO, or
 # "reload failed" at ERROR; a rejected user_file leaves the old users in force).
 #
-# Stop the running server (sends SIGINT):
-#   ./bin/sls -s stop
+# Stop the running server (sends SIGINT; SIGTERM does the same):
+#   ./bin/sls -c sls.conf -s stop
+# -s finds the running server through pid_file, so it needs the same -c conf.
 #
 # Every directive below is commented. Uncomment and edit only the ones
 # you want to change from defaults.
@@ -23,6 +24,14 @@ srt {
 
     log_file  logs/error.log;   # path is relative to the CWD when sls starts.
     log_level info;             # fatal | error | warning | info | debug | trace
+
+    # PID file, used by `sls -s reload|stop`. Default: /run/sls/sls.pid.
+    # sls never creates directories and never follows a symlink at this path:
+    # the directory must already exist and be writable by the user sls starts
+    # as (root, when `user` below is set), otherwise startup fails and the error
+    # names the path. Under systemd add RuntimeDirectory=sls to the unit.
+    # Running as a normal user from a checkout? Point it somewhere you own:
+    #pid_file /run/sls/sls.pid;
 
     # Optional: POST stream stats as JSON to an external endpoint every N seconds.
     #stat_post_url      http://127.0.0.1:8001/sls/stat;

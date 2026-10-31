@@ -100,10 +100,10 @@ uint32_t sls_hash_key(const char *data, int len);
 int      sls_gethostbyname(const char *hostname, char *ip);
 int      sls_mkdir_p(const char *path);
 
-int sls_read_pid();
-int sls_write_pid(int pid);
-int sls_remove_pid();
-int sls_send_cmd(const char *cmd);
+int sls_write_pid(const char *path, int pid);
+int sls_read_pid(const char *path);
+int sls_remove_pid(const char *path);
+int sls_send_cmd(const char *pid_path, const char *cmd);
 int sls_drop_privileges(const char *user, const char *group);
 
 void sls_split_string(std::string str, std::string separator, std::vector<std::string> &result, int count=-1);

@@ -70,10 +70,49 @@ static void usage()
 //add new parameter here
 static sls_conf_cmd_t  conf_cmd_opt[] = {
     SLS_SET_OPT(string, c, conf_file_name, "conf file name", 1, 1023),
-    SLS_SET_OPT(string, s, c_cmd,          "cmd: reload", 1, 1023),
+    SLS_SET_OPT(string, s, c_cmd,          "cmd: reload|stop (needs -c <conf> to find pid_file)", 1, 1023),
     SLS_SET_OPT(string, l, log_level,      "log level: fatal/error/warning/info/debug/trace", 1, 1023),
 //  SLS_SET_OPT(int, x, xxx,          "", 1, 100),//example
 };
+
+/*
+ * pid file path: the 'pid_file' directive, or the built-in default.
+ */
+static void get_pid_path(const sls_conf_srt_t *conf_srt, char *out, size_t size)
+{
+    if (conf_srt && conf_srt->pid_file[0] != '\0') {
+        snprintf(out, size, "%s", conf_srt->pid_file);
+    } else {
+        snprintf(out, size, "%s", SLS_DEFAULT_PID_FILE);
+    }
+}
+
+/*
+ * 'sls -c <conf> -s reload|stop': read pid_file from the conf and signal the
+ * running server. Returns the process exit code.
+ */
+static int run_cli_cmd(const char *conf_file, const char *cmd)
+{
+    char pid_path[URL_MAX_LEN];
+    char quiet[] = "error";   // set_log_level upcases in place: needs a writable buffer
+
+    if (conf_file[0] == '\0') {
+        printf("error: '-s %s' needs the config file to find 'pid_file'; pass -c <conf>.\n", cmd);
+        return 1;
+    }
+    sls_set_log_level(quiet);
+    if (SLS_OK != sls_conf_open(conf_file)) {
+        return 1;
+    }
+    sls_conf_srt_t *conf_srt = (sls_conf_srt_t *)sls_conf_get_root_conf();
+    if (!conf_srt) {
+        printf("error: no srt block in conf file '%s'.\n", conf_file);
+        return 1;
+    }
+    get_pid_path(conf_srt, pid_path, sizeof(pid_path));
+    // the process exits right after, so the parsed conf is not released here
+    return (SLS_OK == sls_send_cmd(pid_path, cmd)) ? 0 : 1;
+}
 
 int main(int argc, char* argv[])
 {
@@ -92,6 +131,8 @@ int main(int argc, char* argv[])
 
     char stat_method[]        = "POST";
     sls_conf_srt_t * conf_srt = NULL;
+    char pid_path[URL_MAX_LEN] = {0};
+    bool pid_written          = false;   // only remove a pid file this process wrote
 
     usage();
 
@@ -107,9 +148,9 @@ int main(int argc, char* argv[])
         }
     }
 
-    //reload
+    //-s reload|stop
     if (strcmp(sls_opt.c_cmd,  "") != 0) {
-    	return sls_send_cmd(sls_opt.c_cmd);
+        return run_cli_cmd(sls_opt.conf_file_name, sls_opt.c_cmd);
     }
 
     //log level
@@ -146,11 +187,22 @@ int main(int argc, char* argv[])
         goto EXIT_PROC;
     }
 
-    if (0 != sls_write_pid(getpid())) {
+    conf_srt = (sls_conf_srt_t *)sls_conf_get_root_conf();
+    if (!conf_srt) {
+        sls_log(SLS_LOG_ERROR, "no srt block in the conf file, EXIT!");
+        exit_code = 1;
+        goto EXIT_PROC;
+    }
+
+    // copy the path now: the conf is released before the pid file is removed
+    get_pid_path(conf_srt, pid_path, sizeof(pid_path));
+    if (0 != sls_write_pid(pid_path, getpid())) {
         sls_log(SLS_LOG_ERROR, "sls_write_pid failed, EXIT!");
         exit_code = 1;
         goto EXIT_PROC;
     }
+    pid_written = true;
+
     //sls manager
     sls_log(SLS_LOG_INFO, "\nsrt live server is running...");
 
@@ -160,8 +212,6 @@ int main(int argc, char* argv[])
         exit_code = 1;
         goto EXIT_PROC;
     }
-
-    conf_srt = (sls_conf_srt_t *)sls_conf_get_root_conf();
 
     // Drop privileges after listeners have bound (so :<1024 ports still work
     // if the admin configured one) but before we start handling traffic.
@@ -287,7 +337,9 @@ EXIT_PROC:
     sls_conf_close();
     CSLSLog::destory_instance();
 
-    sls_remove_pid();
+    if (pid_written) {
+        sls_remove_pid(pid_path);
+    }
 
     sls_log(SLS_LOG_INFO, "exit, bye bye!");
 

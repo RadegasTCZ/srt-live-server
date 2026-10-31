@@ -16,6 +16,21 @@ line). On reload (`sls -c sls.conf -s reload`, i.e. SIGHUP) a bad file is
 rejected and the previous users stay active; the result is logged
 (`reload ok (N user(s))` at INFO, `reload failed` at ERROR).
 
+## pid_file
+
+Path of the pid file (default `/run/sls/sls.pid`), written at startup and
+removed at exit. `sls -c sls.conf -s reload|stop` reads the same path, so `-s`
+needs `-c`; the CLI prints `reload signal sent; result in log` and the outcome
+is in the server log.
+
+sls never creates the directory and never follows a symlink at the file name
+(it opens with `O_NOFOLLOW`): if the directory is missing or not writable, or
+the path is a symlink, startup fails with an error naming the path. Create the
+directory, point `pid_file` at a writable place, or under systemd set
+`RuntimeDirectory=sls`. After the `user` privilege drop the directory is
+usually no longer writable, so the pid file may stay behind at exit; that is
+tolerated.
+
 ## srt_passphrase
 
 Listener-wide passphrase. The value is never written to the log; config lines

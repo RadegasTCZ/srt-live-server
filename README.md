@@ -41,6 +41,15 @@ $ ./sls -h
 $ cp ../sls.conf.example ../sls.conf      # first run only
 $ ./sls -c ../sls.conf
 
+The pid file defaults to `/run/sls/sls.pid`; sls does not create the directory.
+As a normal user set `pid_file ./sls.pid;` in the srt block (under systemd use
+`RuntimeDirectory=sls`). See `doc/Directives.md`.
+
+- Reload users / stop a running server
+--------------------------------------
+$ ./sls -c ../sls.conf -s reload
+$ ./sls -c ../sls.conf -s stop
+
 If you want per-user authentication, also copy the users file template:
 
 $ cp ../sls-users.conf.example ../sls-users.conf

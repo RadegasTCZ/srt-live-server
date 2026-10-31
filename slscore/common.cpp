@@ -36,6 +36,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <limits.h>
 #include <netdb.h>
 #include <pwd.h>
 #include <signal.h>
@@ -360,89 +361,123 @@ bool sls_is_valid_pbkeylen(int pbkeylen)
     return pbkeylen == 0 || pbkeylen == 16 || pbkeylen == 24 || pbkeylen == 32;
 }
 
-static char pid_path_name[] = "/tmp/sls";
-static char pid_file_name[] = "/tmp/sls/pid.txt";
-int sls_read_pid()
+// ---- pid file -------------------------------------------------------------
+// The path comes from the 'pid_file' directive. sls never creates directories
+// here and never follows a symlink at the final path component (O_NOFOLLOW), so
+// a pre-planted link in a world-writable directory cannot redirect the write.
+int sls_write_pid(const char *path, int pid)
 {
-	struct stat stat_file;
-	int ret = stat(pid_file_name, &stat_file);
-    if (0 != ret) {
-    	printf("no pid file='%s'.\n", pid_file_name);
-    	return 0;
+    if (NULL == path || '\0' == path[0]) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: no pid file path.");
+        return -1;
     }
-
-    int fd = open(pid_file_name, O_RDONLY);
-    if (0 == fd)  {
-    	printf("open file='%s' failed.\n", pid_file_name);
-    	return 0;
+    int fd = open(path, O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW|O_CLOEXEC, 0644);
+    if (fd < 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot open pid file '%s' for writing: %s. "
+                "sls does not create directories or follow symlinks for this file; "
+                "set 'pid_file' in the srt block of the conf to a writable path, or create its directory.",
+                path, strerror(errno));
+        return -1;
     }
-    char pid[128] = {0};
-    int n = read(fd, pid, sizeof(pid));
-    ret = atoi(pid);
-    close(fd);
-    return ret;
-}
-
-int sls_write_pid(int pid)
-{
-	struct stat stat_file;
-	int fd = 0;
-
-	if (sls_mkdir_p(pid_path_name) == -1 && errno != EEXIST) {
-	    printf( "mkdir '%s' failed.\n", pid_path_name);
-	    return -1;
-	}
-    fd = open(pid_file_name, O_WRONLY|O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IXOTH);
-
-    if (0 == fd) {
-    	printf("open file='%s' failed, '%s'.\n", pid_file_name, strerror(errno));
-    	return -1;
+    char buf[32];
+    int  len = snprintf(buf, sizeof(buf), "%d\n", pid);
+    int  off = 0;
+    while (off < len) {
+        ssize_t n = write(fd, buf + off, len - off);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: write to pid file '%s' failed: %s.", path, strerror(errno));
+            close(fd);
+            return -1;
+        }
+        off += (int)n;
     }
-    char buf[128] = {0};
-    sprintf(buf, "%d", pid);
-    write(fd, buf, strlen(buf));
-    close(fd);
-	printf("write pid ok, file='%s', pid=%s.\n", pid_file_name, buf);
-    return 0;
-
-}
-
-int sls_remove_pid()
-{
-	struct stat stat_file;
-    if (0 == stat(pid_file_name, &stat_file)) {
-    	FILE *fd = fopen(pid_file_name, "w");
-        fclose(fd);
+    if (close(fd) != 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: closing pid file '%s' failed: %s.", path, strerror(errno));
+        return -1;
     }
+    sls_log(SLS_LOG_INFO, "sls_write_pid ok, file='%s', pid=%d.", path, pid);
     return 0;
 }
 
-int sls_send_cmd(const char *cmd)
+// Returns the pid in the file, or 0 if the file is missing/unreadable/invalid.
+int sls_read_pid(const char *path)
 {
-	if (NULL == cmd) {
-    	printf("sls_send_cmd failed, cmd is null.\n");
-		return SLS_ERROR;
-	}
-	int pid = sls_read_pid();
-	if (0 >= pid) {
-    	printf("sls_send_cmd failed, pid is invalid (%d).\n", pid);
-        return SLS_OK;
-	}
+    if (NULL == path || '\0' == path[0]) {
+        return 0;
+    }
+    int fd = open(path, O_RDONLY|O_CLOEXEC);
+    if (fd < 0) {
+        return 0;
+    }
+    char buf[32];
+    ssize_t n;
+    do {
+        n = read(fd, buf, sizeof(buf) - 1);
+    } while (n < 0 && errno == EINTR);
+    close(fd);
+    if (n <= 0) {
+        return 0;
+    }
+    buf[n] = '\0';
 
-	//reload?
+    char *end = NULL;
+    errno = 0;
+    long v = strtol(buf, &end, 10);
+    if (errno != 0 || end == buf || v <= 0 || v > INT_MAX) {
+        return 0;
+    }
+    while (*end == '\n' || *end == '\r' || *end == ' ') end++;
+    if (*end != '\0') {
+        return 0;
+    }
+    return (int)v;
+}
+
+// After sls_drop_privileges() the directory is usually not writable any more,
+// so a failed unlink is expected and only worth a warning (never a crash).
+int sls_remove_pid(const char *path)
+{
+    if (NULL == path || '\0' == path[0]) {
+        return 0;
+    }
+    if (unlink(path) != 0 && errno != ENOENT && errno != EACCES) {
+        sls_log(SLS_LOG_WARNING, "sls_remove_pid: cannot remove '%s': %s.", path, strerror(errno));
+    }
+    return 0;
+}
+
+// Command-line side of 'sls -c conf -s reload|stop'. Output goes to stdout.
+int sls_send_cmd(const char *pid_path, const char *cmd)
+{
+    int sig = 0;
+    if (NULL == cmd) {
+        printf("sls_send_cmd failed, cmd is null.\n");
+        return SLS_ERROR;
+    }
     if (strcmp(cmd, "reload") == 0) {
-    	//reload the existed sls
-     	printf("sls_send_cmd ok, reload, sls pid = %d, send SIGUP to it.\n", pid);
-    	kill(pid, SIGHUP);
-        return SLS_OK;
+        sig = SIGHUP;
+    } else if (strcmp(cmd, "stop") == 0) {
+        sig = SIGINT;
+    } else {
+        printf("sls_send_cmd failed, unknown command '%s' (use reload or stop).\n", cmd);
+        return SLS_ERROR;
     }
 
-	//ctrl + c
-    if (strcmp(cmd, "stop") == 0) {
-    	//
-     	printf("sls_send_cmd ok, stop, sls pid = %d, send SIGINT to it.\n", pid);
-    	kill(pid, SIGINT);
-        return SLS_OK;
+    int pid = sls_read_pid(pid_path);
+    if (0 >= pid) {
+        printf("sls_send_cmd failed, no valid pid in pid file '%s' (is sls running with this conf?).\n",
+               pid_path ? pid_path : "");
+        return SLS_ERROR;
+    }
+    if (kill(pid, sig) != 0) {
+        printf("sls_send_cmd failed, cannot signal pid %d from pid file '%s': %s.\n", pid, pid_path, strerror(errno));
+        return SLS_ERROR;
+    }
+    if (sig == SIGHUP) {
+        printf("reload signal sent; result in log\n");
+    } else {
+        printf("stop signal sent\n");
     }
     return SLS_OK;
 }
