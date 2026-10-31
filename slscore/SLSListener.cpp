@@ -756,7 +756,7 @@ int CSLSListener::handler()
 
 	CSLSRole * publisher = m_map_publisher->get_publisher(key_stream_name);
 	if (NULL != publisher) {
-		sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s',but publisher=%p is not NULL.",
+		sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, stream busy: new publisher[%s:%d], stream='%s' already has publisher=%p.",
 					this, peer_name, peer_port, key_stream_name, publisher);
 		srt->libsrt_close();
 		delete srt;

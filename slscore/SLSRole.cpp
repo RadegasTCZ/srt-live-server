@@ -81,9 +81,10 @@ int CSLSRole::init()
 	int ret = 0;
     m_state      = SLS_RS_INITED;
 
-    m_map_data_id.bFirst     = true;
-    m_map_data_id.nDataCount = 0;
-    m_map_data_id.nReadPos   = 0;
+    m_map_data_id.bFirst      = true;
+    m_map_data_id.nDataCount  = 0;
+    m_map_data_id.nReadPos    = 0;
+    m_map_data_id.nGeneration = 0;  // matches no array
 
 	return ret;
 }

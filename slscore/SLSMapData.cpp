@@ -203,12 +203,14 @@ int CSLSMapData::get(char *key, char *data, int len, SLSRecycleArrayID *read_id,
         return SLS_ERROR;
     }
 
-    bool b_first = read_id->bFirst;
-    ret = array_data->get(data, len, read_id, aligned);
-    if (b_first) {
-        //get sps and pps
+    // The array resyncs the reader (first read, new publisher's ring, or
+    // lapped) and then returns no data; the reader restarts at the write
+    // position, so it gets the PSI bootstrap first.
+    bool resynced = false;
+    ret = array_data->get(data, len, read_id, aligned, &resynced);
+    if (resynced) {
         ret = get_ts_info(key, data, len);
-        sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::get, get sps pps ok, key=%s, len=%d.",
+        sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::get, reader resynced, key=%s, bootstrap len=%d.",
                     this, key, ret);
     }
     return ret;
