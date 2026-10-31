@@ -287,66 +287,88 @@ sls_sid_role_t CSLSListener::classify_sid(const sls_sid_t &sid, std::string *app
     return SLS_SID_REJECT;
 }
 
-int CSLSListener::load_users(const char *path)
+int CSLSListener::load_users(const char *path, std::string *err)
 {
+    // Every failure below leaves m_users untouched: a bad file must never
+    // weaken (or silently disable) authentication.
+    char msg[512];
     std::ifstream f(path);
     if (!f.is_open()) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::load_users, cannot open '%s': %s.",
-                this, path, strerror(errno));
+        snprintf(msg, sizeof(msg), "cannot open '%s': %s", path, strerror(errno));
+        if (err) *err = msg;
         return SLS_ERROR;
     }
 
     // Parse into a staging map, then swap under the write lock so
     // listen_callback never observes a half-loaded m_users.
-    std::map<std::string, sls_user_cred_t> staging;
+    std::map<std::string, sls_user_t> staging;
     std::string line;
-    int lineno = 0, loaded = 0;
+    int lineno = 0;
     while (std::getline(f, line)) {
         lineno++;
         std::string::size_type hash = line.find('#');
         if (hash != std::string::npos) line = line.substr(0, hash);
 
         std::istringstream iss(line);
-        std::string name, pub, play;
+        std::string name, pub, play, extra;
         if (!(iss >> name)) continue;              // blank / whitespace-only line
-        if (!(iss >> pub) || !(iss >> play)) {
-            sls_log(SLS_LOG_WARNING,
-                    "[%p]CSLSListener::load_users, %s:%d malformed "
-                    "(expected 'name publish_pass play_pass'); skipping.",
-                    this, path, lineno);
-            continue;
+        if (!(iss >> pub) || !(iss >> play) || (iss >> extra)) {
+            snprintf(msg, sizeof(msg), "%s:%d: wrong column count "
+                     "(expected exactly 'name publish_pass play_pass')", path, lineno);
+            if (err) *err = msg;
+            return SLS_ERROR;
+        }
+        if (!sls_sid_part_ok(name)) {
+            snprintf(msg, sizeof(msg), "%s:%d: invalid user name '%s' "
+                     "(allowed: 1-128 of A-Z a-z 0-9 . _ -, not '.' or '..')",
+                     path, lineno, sls_escape_for_log(name.c_str()).c_str());
+            if (err) *err = msg;
+            return SLS_ERROR;
         }
         if (pub  == "-") pub.clear();
         if (play == "-") play.clear();
 
         if (!sls_is_valid_passphrase_len(pub.length())) {
-            sls_log(SLS_LOG_WARNING,
-                    "[%p]CSLSListener::load_users, %s:%d publish_pass length %zu out of range "
-                    "(SRT requires 10-79 bytes, or '-' for plaintext); skipping user '%s'.",
-                    this, path, lineno, pub.length(), name.c_str());
-            continue;
+            snprintf(msg, sizeof(msg), "%s:%d: publish_pass length %zu out of range "
+                     "(SRT requires 10-79 bytes, or '-' for plaintext) for user '%s'",
+                     path, lineno, pub.length(), name.c_str());
+            if (err) *err = msg;
+            return SLS_ERROR;
         }
         if (!sls_is_valid_passphrase_len(play.length())) {
-            sls_log(SLS_LOG_WARNING,
-                    "[%p]CSLSListener::load_users, %s:%d play_pass length %zu out of range "
-                    "(SRT requires 10-79 bytes, or '-' for plaintext); skipping user '%s'.",
-                    this, path, lineno, play.length(), name.c_str());
-            continue;
+            snprintf(msg, sizeof(msg), "%s:%d: play_pass length %zu out of range "
+                     "(SRT requires 10-79 bytes, or '-' for plaintext) for user '%s'",
+                     path, lineno, play.length(), name.c_str());
+            if (err) *err = msg;
+            return SLS_ERROR;
+        }
+        if (staging.count(name)) {
+            snprintf(msg, sizeof(msg), "%s:%d: duplicate user '%s'", path, lineno, name.c_str());
+            if (err) *err = msg;
+            return SLS_ERROR;
         }
 
-        sls_user_cred_t cred;
-        cred.publish_pass = pub;
-        cred.play_pass    = play;
-        staging[name]     = cred;
-        loaded++;
+        sls_user_t u;
+        u.name         = name;
+        u.publish_pass = pub;
+        u.play_pass    = play;
+        staging[name]  = u;
     }
 
+    if (staging.empty()) {
+        snprintf(msg, sizeof(msg), "no valid users in '%s' (an empty user_file would "
+                 "leave nobody able to connect)", path);
+        if (err) *err = msg;
+        return SLS_ERROR;
+    }
+
+    size_t loaded = staging.size();
     {
         CSLSLock lock(&m_users_lock, 1); // write lock
         m_users.swap(staging);
     }
 
-    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::load_users, loaded %d user(s) from '%s'.",
+    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::load_users, loaded %zu user(s) from '%s'.",
             this, loaded, path);
     return SLS_OK;
 }
@@ -360,7 +382,19 @@ int CSLSListener::reload_users()
     if (!path || !*path) {
         return SLS_OK; // user_file not configured, nothing to reload
     }
-    return load_users(path);
+    std::string err;
+    if (SLS_OK != load_users(path, &err)) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::reload_users, reload failed, keeping the previous users: %s.",
+                this, err.c_str());
+        return SLS_ERROR;
+    }
+    size_t n;
+    {
+        CSLSLock lock(&m_users_lock, 0); // read lock
+        n = m_users.size();
+    }
+    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::reload_users, reload ok (%zu user(s)).", this, n);
+    return SLS_OK;
 }
 
 int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
@@ -398,7 +432,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     bool        pass_empty  = false;
     {
         CSLSLock lock(&self->m_users_lock, 0); // read lock
-        std::map<std::string, sls_user_cred_t>::iterator it = self->m_users.find(stream);
+        std::map<std::string, sls_user_t>::iterator it = self->m_users.find(stream);
         if (it == self->m_users.end()) {
             sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
                     self, stream.c_str());
@@ -471,7 +505,10 @@ int CSLSListener::start()
         return SLS_ERROR;
     }
     if (user_file && *user_file) {
-        if (SLS_OK != load_users(user_file)) {
+        std::string err;
+        if (SLS_OK != load_users(user_file, &err)) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, user_file unusable, refusing to start without authentication: %s.",
+                    this, err.c_str());
             return SLS_ERROR;
         }
         if (passphrase && *passphrase) {
@@ -492,7 +529,9 @@ int CSLSListener::start()
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_setup ok.", this);
 
-    if (!m_users.empty()) {
+    // The callback is installed whenever user_file is set, regardless of how many
+    // users are loaded: with no callback every streamid would be accepted.
+    if (user_file && *user_file) {
         if (srt_listen_callback(m_srt->libsrt_get_fd(), listen_callback, this) < 0) {
             sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, srt_listen_callback failed: %s.",
                     this, srt_getlasterror_str());

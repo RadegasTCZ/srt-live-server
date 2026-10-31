@@ -13,6 +13,13 @@
 # connection allowed." Stream names not listed here are rejected at the
 # SRT handshake stage.
 #
+# FAILS CLOSED: if this file cannot be opened, contains no users, or has any
+# malformed line (wrong number of columns, passphrase not 10-79 bytes, a name
+# outside [A-Za-z0-9._-] / longer than 128, a duplicate name), sls refuses to
+# start (exit code 1, the log names the file and line). A reload (SIGHUP /
+# `sls -c <conf> -s reload`) with a bad file is rejected the same way: the
+# previous users stay in force and the log says "reload failed".
+#
 # Passphrases must be 10-79 printable ASCII characters (libsrt limit).
 #
 # The three examples below illustrate every combination:

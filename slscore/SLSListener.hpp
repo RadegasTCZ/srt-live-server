@@ -75,13 +75,15 @@ SLS_SET_CONF(server, string, user_file,            "path to per-user passphrase 
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 /**
- * Per-stream credentials loaded from user_file.
+ * One user loaded from user_file (extensible record, not a fixed tuple).
  * Empty publish_pass  => publishers may push that stream in plaintext.
  * Empty play_pass     => players may pull that stream in plaintext.
  */
-struct sls_user_cred_t {
-    std::string publish_pass;
+struct sls_user_t {
+    std::string name;
+    std::string publish_pass;  // "" = plaintext allowed
     std::string play_pass;
+    // reserved for web UI project: ip allow/deny, endpoints
 };
 
 
@@ -123,13 +125,16 @@ private:
     char                m_http_url_role[URL_MAX_LEN];
 
     CSLSRWLock                             m_users_lock;
-    std::map<std::string, sls_user_cred_t> m_users;
+    std::map<std::string, sls_user_t>      m_users;
 
     int  init_conf_app();
     // Role of a parsed streamid by host/app (never by app name alone); on
     // PUBLISHER/PLAYER *app_key_out is the publisher-side "host/app" key.
     sls_sid_role_t classify_sid(const sls_sid_t &sid, std::string *app_key_out);
-    int  load_users(const char *path);
+    // Parse the whole file into a staging map; SLS_OK only if every line is
+    // valid and there is at least one user, then swap it into m_users. On any
+    // error m_users is left untouched and *err (if given) names file:line.
+    int  load_users(const char *path, std::string *err);
 
     static int listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
                                const struct sockaddr *peeraddr, const char *streamid);
@@ -137,7 +142,9 @@ private:
 public:
     // Re-read the user_file configured for this listener and swap it into
     // m_users under a write lock. Safe to call from the main thread while
-    // listen_callback is firing on SRT's internal thread.
+    // listen_callback is firing on SRT's internal thread. Returns SLS_ERROR
+    // (and logs ERROR "reload failed") if the file is rejected; the previous
+    // users stay in force.
     int reload_users();
 };
 

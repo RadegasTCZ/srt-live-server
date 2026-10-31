@@ -5,7 +5,9 @@
 #   ./bin/sls -c sls.conf
 #
 # Reload after edits without dropping connected sessions (sends SIGHUP):
-#   ./bin/sls -s reload
+#   ./bin/sls -c sls.conf -s reload
+# The outcome is only in the server log ("reload ok (N user(s))" at INFO, or
+# "reload failed" at ERROR; a rejected user_file leaves the old users in force).
 #
 # Stop the running server (sends SIGINT):
 #   ./bin/sls -s stop
@@ -64,8 +66,10 @@ srt {
         #
         # Mode B -- per-user. Each streamid authorises one streamer with their
         # own publish/play passphrases (or plaintext). Add/remove lines in the
-        # users file and reload (sls -s reload) to grant/revoke. See
-        # sls-users.conf.example for the file format.
+        # users file and reload (sls -c sls.conf -s reload) to grant/revoke. See
+        # sls-users.conf.example for the file format. FAIL CLOSED: an empty or
+        # malformed users file stops sls from starting (and is rejected on
+        # reload); it never silently turns authentication off.
         #user_file sls-users.conf;
 
         # ----- Apps ----------------------------------------------------------

@@ -257,18 +257,19 @@ int CSLSManager::reload()
 
 int CSLSManager::reload_users()
 {
-    int reloaded = 0;
+    int reloaded = 0, failed = 0;
     for (std::list<CSLSListener *>::iterator it = m_servers.begin();
          it != m_servers.end(); it++) {
         CSLSListener *server = *it;
         if (server) {
-            server->reload_users();
-            reloaded++;
+            if (SLS_OK == server->reload_users()) reloaded++;
+            else failed++;
         }
     }
-    sls_log(SLS_LOG_INFO, "[%p]CSLSManager::reload_users, %d listener(s) refreshed.",
-            this, reloaded);
-    return SLS_OK;
+    sls_log(failed ? SLS_LOG_ERROR : SLS_LOG_INFO,
+            "[%p]CSLSManager::reload_users, %d listener(s) refreshed, %d failed.",
+            this, reloaded, failed);
+    return failed ? SLS_ERROR : SLS_OK;
 }
 
 int  CSLSManager::check_invalid()

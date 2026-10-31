@@ -86,6 +86,7 @@ int main(int argc, char* argv[])
     CHttpClient             *http_stat_client = new CHttpClient;
 
     int ret = SLS_OK;
+    int exit_code = 0;   // non-zero on any startup failure
     int l = sizeof(sockaddr_in);
     int64_t tm_begin_ms = 0;
 
@@ -102,7 +103,7 @@ int main(int argc, char* argv[])
         ret = sls_parse_argv(argc, argv, &sls_opt, conf_cmd_opt, cmd_size);
         if (ret!= SLS_OK) {
             CSLSLog::destory_instance();
-            return SLS_ERROR;
+            return 1;
         }
     }
 
@@ -140,12 +141,14 @@ int main(int argc, char* argv[])
     }
     ret = sls_conf_open(sls_opt.conf_file_name);
     if (ret!= SLS_OK) {
-        sls_log(SLS_LOG_INFO, "sls_conf_open failed, EXIT!");
+        sls_log(SLS_LOG_ERROR, "sls_conf_open failed, EXIT!");
+        exit_code = 1;
         goto EXIT_PROC;
     }
 
     if (0 != sls_write_pid(getpid())) {
-        sls_log(SLS_LOG_INFO, "sls_write_pid failed, EXIT!");
+        sls_log(SLS_LOG_ERROR, "sls_write_pid failed, EXIT!");
+        exit_code = 1;
         goto EXIT_PROC;
     }
     //sls manager
@@ -153,7 +156,8 @@ int main(int argc, char* argv[])
 
     sls_manager  = new CSLSManager;
     if (SLS_OK != sls_manager->start()) {
-        sls_log(SLS_LOG_INFO, "sls_manager->start failed, EXIT!");
+        sls_log(SLS_LOG_ERROR, "sls_manager->start failed, EXIT!");
+        exit_code = 1;
         goto EXIT_PROC;
     }
 
@@ -162,7 +166,8 @@ int main(int argc, char* argv[])
     // Drop privileges after listeners have bound (so :<1024 ports still work
     // if the admin configured one) but before we start handling traffic.
     if (SLS_OK != sls_drop_privileges(conf_srt->user, conf_srt->group)) {
-        sls_log(SLS_LOG_INFO, "sls_drop_privileges failed, EXIT!");
+        sls_log(SLS_LOG_ERROR, "sls_drop_privileges failed, EXIT!");
+        exit_code = 1;
         goto EXIT_PROC;
     }
 
@@ -231,8 +236,11 @@ int main(int argc, char* argv[])
             b_reload = 0;
             sls_log(SLS_LOG_INFO, "reload srt live server...");
             if (NULL != sls_manager) {
-                sls_manager->reload_users();
-                sls_log(SLS_LOG_INFO, "reload successfully.");
+                if (SLS_OK == sls_manager->reload_users()) {
+                    sls_log(SLS_LOG_INFO, "reload successfully.");
+                } else {
+                    sls_log(SLS_LOG_ERROR, "reload failed; the previous user_file contents are still in force.");
+                }
             }
 		}
 	}
@@ -283,5 +291,5 @@ EXIT_PROC:
 
     sls_log(SLS_LOG_INFO, "exit, bye bye!");
 
-    return 0;
+    return exit_code;
 }
