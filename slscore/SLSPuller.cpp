@@ -51,6 +51,9 @@ const char SLS_RELAY_STAT_INFO_BASE[] = "\
 CSLSPuller::CSLSPuller()
 {
     m_is_write             = 0;
+    m_closed_for_idle      = false;
+    m_last_reader_tm       = sls_gettime_ms();
+    m_reader_check_tm      = 0;
     sprintf(m_role_name, "puller");
 
 }
@@ -79,22 +82,26 @@ CSLSPuller::~CSLSPuller()
 
 int CSLSPuller::handler()
 {
-	int64_t last_read_time = 0;
-	int ret = handler_read_data(&last_read_time);
-	if (ret >= 0) {
-		//*check if there is any player?
-		if (-1 == m_idle_streams_timeout) {
-			return ret;
-		}
+	int ret = handler_read_data();
+	if (ret >= 0 && -1 != m_idle_streams_timeout) {
+		// Idle = no player attached, whatever the upstream sends (also junk
+		// that yields no whole TS packet). The reader count is looked up at
+		// most once a second, never per packet.
 		int64_t cur_time = sls_gettime_ms();
-		if (cur_time - last_read_time >= (m_idle_streams_timeout*1000)) {
-	        sls_log(SLS_LOG_INFO, "[%p]CSLSPuller::handler, no any reader for m_idle_streams_timeout=%ds, last_read_time=%lld, close puller.",
-	        		this, m_idle_streams_timeout, (long long)last_read_time);
+		if (cur_time - m_reader_check_tm >= 1000) {
+			m_reader_check_tm = cur_time;
+			if (NULL != m_map_data && m_map_data->reader_count(m_map_data_key) > 0) {
+				m_last_reader_tm = cur_time;
+			}
+		}
+		if (cur_time - m_last_reader_tm >= (int64_t)m_idle_streams_timeout * 1000) {
+	        sls_log(SLS_LOG_INFO, "[%p]CSLSPuller::handler, no reader for m_idle_streams_timeout=%ds, close puller (no reconnect).",
+	        		this, m_idle_streams_timeout);
+			m_closed_for_idle = true;
 			m_state = SLS_RS_INVALID;
 			invalid_srt();
 	        return SLS_ERROR;
 		}
-		//*/
 	}
 	return ret;
 }

@@ -102,13 +102,18 @@ srt {
             # ----- Optional relays -------------------------------------------
             #
             # Pull -- this server FETCHES from upstream(s) on first player demand.
+            # A pull lives only while it has players: closed for idleness, or ended
+            # with no player attached, it is dropped (no reconnect) until a player
+            # asks again. With user_file set only listed stream names can pull.
             #relay {
             #    type pull;
             #    mode loop;                  # loop | hash -- how upstreams are picked
             #    reconnect_interval 10;      # seconds between pull attempts
-            #    idle_streams_timeout -1;    # seconds; -1 = keep pulled stream alive forever
+            #    idle_streams_timeout -1;    # seconds with no player before the pull is
+            #                                # closed; -1 = never close a running pull
+            #    max_pull_streams 16;        # concurrent pulled streams for this app (1-1024)
             #    upstreams 127.0.0.1:9090?streamid=live.example.com/live 192.0.2.50:8080?streamid=live.test.com/live;
-            #}
+            #}                               # at least one upstream is required
             #
             # Push -- this server FORWARDS local publishers out to upstream(s).
             #relay {

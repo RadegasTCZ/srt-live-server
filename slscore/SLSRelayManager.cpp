@@ -28,6 +28,7 @@
 
 #include "common.hpp"
 #include "SLSRelayManager.hpp"
+#include "SLSMapRelay.hpp"
 #include "SLSLog.hpp"
 
 
@@ -42,6 +43,10 @@ CSLSRelayManager::CSLSRelayManager()
     m_role_list          = NULL;
     m_sri                = NULL;
     m_listen_port        = 0;
+    m_retired            = false;
+    m_refs               = 1;      // the creator's (the map entry)
+    m_live_relays        = 0;
+    m_owner              = NULL;
 
     memset(m_app_uplive, 0, sizeof(m_app_uplive));
     memset(m_stream_name, 0, sizeof(m_stream_name));
@@ -52,19 +57,102 @@ CSLSRelayManager::~CSLSRelayManager()
 {
 }
 
-void CSLSRelayManager::set_map_publisher(CSLSMapPublisher *map_publisher)
+void CSLSRelayManager::add_ref()
 {
+	m_refs++;
+}
+
+void CSLSRelayManager::release()
+{
+	if (--m_refs == 0) {
+		sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::release, last reference gone, delete, app_uplive=%s, stream_name=%s.",
+				this, m_app_uplive, m_stream_name);
+		delete this;
+	}
+}
+
+void CSLSRelayManager::relay_attached()
+{
+	m_live_relays++;
+}
+
+void CSLSRelayManager::relay_detached()
+{
+	m_live_relays--;
+}
+
+void CSLSRelayManager::configure(CSLSMapData *map_data, CSLSMapPublisher *map_publisher,
+                                 CSLSRoleList *role_list, int listen_port)
+{
+	CSLSLock lock(&m_mutex);
+	m_map_data      = map_data;
 	m_map_publisher = map_publisher;
+	m_role_list     = role_list;
+	m_listen_port   = listen_port;
 }
 
-void CSLSRelayManager::set_map_data(CSLSMapData *map_data)
+void CSLSRelayManager::set_owner(CSLSMapRelay *owner)
 {
-	m_map_data = map_data;
+	m_owner = owner;
 }
 
-void CSLSRelayManager::set_role_list(CSLSRoleList *role_list)
+int CSLSRelayManager::start()
 {
-	m_role_list = role_list;
+	CSLSLock lock(&m_mutex);
+	if (m_retired) {
+		sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::start, retired, app_uplive=%s, stream_name=%s.",
+				this, m_app_uplive, m_stream_name);
+		return SLS_ERROR;
+	}
+	return do_start();
+}
+
+int CSLSRelayManager::reconnect(int64_t cur_tm_ms)
+{
+	CSLSLock lock(&m_mutex);
+	if (m_retired) {
+		return SLS_OK;   // nothing left to do: drop the reconnect entry
+	}
+	return do_reconnect(cur_tm_ms);
+}
+
+bool CSLSRelayManager::on_relay_closed(CSLSRelay *relay)
+{
+	CSLSLock lock(&m_mutex);
+	if (m_retired) {
+		return false;
+	}
+	return do_on_relay_closed(relay);
+}
+
+bool CSLSRelayManager::do_on_relay_closed(CSLSRelay *relay)
+{
+	add_reconnect_stream(relay->get_url());
+	return true;
+}
+
+void CSLSRelayManager::retire_if_idle(const char *why)
+{
+	CSLSLock lock(&m_mutex);
+	if (!m_retired && m_live_relays == 0) {
+		retire_locked(why);
+	}
+}
+
+void CSLSRelayManager::retire_locked(const char *why)
+{
+	if (m_retired) {
+		return;
+	}
+	m_retired = true;
+	sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::retire, %s, app_uplive=%s, stream_name=%s.",
+			this, why, m_app_uplive, m_stream_name);
+	// Lock order is always manager -> map (the map never takes a manager's
+	// mutex). The caller holds a reference, so the map's release cannot free
+	// this manager here.
+	if (NULL != m_owner) {
+		m_owner->remove_relay_manager(m_app_uplive, m_stream_name, this);
+	}
 }
 
 void CSLSRelayManager::set_relay_conf(SLS_RELAY_INFO *sri)
@@ -76,11 +164,6 @@ void CSLSRelayManager::set_relay_info(const char *app_uplive, const char *stream
 {
 	snprintf(m_app_uplive, sizeof(m_app_uplive), "%s", app_uplive);
 	snprintf(m_stream_name, sizeof(m_stream_name), "%s", stream_name);
-}
-
-void CSLSRelayManager::set_listen_port(int port)
-{
-	m_listen_port = port;
 }
 
 int CSLSRelayManager::connect(const char *url)
@@ -147,7 +230,7 @@ int CSLSRelayManager::connect_hash()
 
 std::string CSLSRelayManager::get_hash_url()
 {
-	if (NULL == m_sri) {
+	if (NULL == m_sri || m_sri->m_upstreams.empty()) {
 		return "";
 	}
 	uint32_t key = sls_hash_key(m_stream_name, strlen(m_stream_name));

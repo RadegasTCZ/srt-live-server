@@ -40,7 +40,12 @@ public :
     virtual int  uninit();
     virtual int  handler();
     virtual int  get_stat_base(char *stat_base);
+    // closed because no player read it for idle_streams_timeout
+    bool         closed_for_idle() const { return m_closed_for_idle; }
 protected:
+    bool         m_closed_for_idle;
+    int64_t      m_last_reader_tm;    // ms, last time a player was attached
+    int64_t      m_reader_check_tm;   // ms, last reader_count() look-up
 
 };
 

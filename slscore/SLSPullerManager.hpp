@@ -41,11 +41,13 @@ public :
 	CSLSPullerManager();
     virtual ~CSLSPullerManager();
 
-    virtual int start();
     virtual int add_reconnect_stream(char* relay_url);
-    virtual int reconnect(int64_t cur_tm_ms);
 
 protected:
+    virtual int  do_start();
+    virtual int  do_reconnect(int64_t cur_tm_ms);
+    virtual bool do_on_relay_closed(CSLSRelay *relay);
+    bool has_readers();
 
     int connect_loop();
     virtual CSLSRelay *create_relay();

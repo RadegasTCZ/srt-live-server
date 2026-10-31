@@ -57,35 +57,79 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
 	}
 
     std::string key_stream_name = std::string(app_uplive) + std::string("/") + std::string(stream_name);
-    CSLSLock lock(&m_rwclock, true);
+    bool is_pull = (strcmp(sri->m_type, "pull") == 0);
     CSLSRelayManager * cur_mananger = NULL;
-    std::map<std::string, CSLSRelayManager *>::iterator item;
-    item = m_map_relay_manager.find(key_stream_name);
-    if (item != m_map_relay_manager.end()) {
-    	cur_mananger = item->second;
-        if (NULL != cur_mananger) {
-        	sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, cur_mananger=%p, exist, app_uplive=%s, stream_name=%s.",
-                    this, cur_mananger, app_uplive, stream_name);
-            return cur_mananger;
+    int  count = 0;
+    bool existed = false;
+    {
+        CSLSLock lock(&m_rwclock, true);
+        std::map<std::string, CSLSRelayManager *>::iterator item;
+        item = m_map_relay_manager.find(key_stream_name);
+        if (item != m_map_relay_manager.end() && NULL != item->second) {
+            cur_mananger = item->second;
+            cur_mananger->add_ref();     // the caller's
+            existed = true;
+        } else {
+            if (is_pull) {
+                for (item = m_map_relay_manager.begin(); item != m_map_relay_manager.end(); ++item) {
+                    if (item->second && item->second->get_relay_conf() == sri) count++;
+                }
+            }
+            if (is_pull && count >= sri->m_max_pull_streams) {
+                // refused below, outside the lock
+            } else if (is_pull) {
+                cur_mananger = new CSLSPullerManager;
+            } else if (strcmp(sri->m_type, "push") == 0) {
+                cur_mananger = new CSLSPusherManager;
+            }
+            if (cur_mananger) {
+                cur_mananger->set_relay_conf(sri);
+                cur_mananger->set_relay_info(app_uplive, stream_name);
+                cur_mananger->set_owner(this);
+                m_map_relay_manager[key_stream_name] = cur_mananger;  // the map's reference
+                cur_mananger->add_ref();                              // the caller's
+                count++;
+            }
         }
     }
 
-    if (strcmp(sri->m_type, "pull") == 0)
-        cur_mananger = new CSLSPullerManager;
-    else if (strcmp(sri->m_type, "push") == 0)
-        cur_mananger = new CSLSPusherManager;
-    else {
-    	sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, failed, wrong , app_uplive=%s, stream_name=%s.",
-                this, app_uplive, stream_name);
-    	return NULL;
+    if (existed) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, cur_mananger=%p, exist, app_uplive=%s, stream_name=%s.",
+                this, cur_mananger, app_uplive, stream_name);
+    } else if (cur_mananger) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, ok, app_uplive=%s, stream_name=%s, cur_mananger=%p%s.",
+                this, app_uplive, stream_name, cur_mananger,
+                is_pull ? (std::string(", pull managers=") + std::to_string(count) + "/" + std::to_string(sri->m_max_pull_streams)).c_str() : "");
+    } else if (is_pull) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, refused, app_uplive=%s, stream_name=%s: max_pull_streams=%d reached.",
+                this, app_uplive, stream_name, sri->m_max_pull_streams);
+    } else {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, failed, wrong type='%s', app_uplive=%s, stream_name=%s.",
+                this, sri->m_type, app_uplive, stream_name);
     }
-    cur_mananger->set_relay_conf(sri);
-    cur_mananger->set_relay_info(app_uplive, stream_name);
-
-    m_map_relay_manager[key_stream_name] = cur_mananger ;
-	sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, ok, app_uplive=%s, stream_name=%s, cur_mananger=%p.",
-            this, app_uplive, stream_name, cur_mananger);
     return cur_mananger;
+}
+
+int CSLSMapRelay::remove_relay_manager(const char *app_uplive, const char *stream_name,
+                                       CSLSRelayManager *expected)
+{
+    std::string key_stream_name = std::string(app_uplive) + std::string("/") + std::string(stream_name);
+    CSLSRelayManager *mgr = NULL;
+    {
+        CSLSLock lock(&m_rwclock, true);
+        std::map<std::string, CSLSRelayManager *>::iterator item = m_map_relay_manager.find(key_stream_name);
+        if (item != m_map_relay_manager.end() && (NULL == expected || item->second == expected)) {
+            mgr = item->second;
+            m_map_relay_manager.erase(item);
+        }
+    }
+    if (NULL == mgr) {
+        return SLS_ERROR;
+    }
+    sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::remove_relay_manager, ok, app_uplive=%s, stream_name=%s, manager=%p.",
+            this, app_uplive, stream_name, mgr);
+    mgr->release();   // the map's reference; holders keep it alive
+    return SLS_OK;
 }
 
 void CSLSMapRelay::clear()
@@ -98,7 +142,7 @@ void CSLSMapRelay::clear()
     for(it=m_map_relay_manager.begin(); it!=m_map_relay_manager.end(); ) {
         CSLSRelayManager * relay_manager = it->second;
         if (NULL != relay_manager) {
-		    delete relay_manager;
+		    relay_manager->release();   // the map's reference
 		}
     	it ++;
     }
@@ -133,6 +177,7 @@ int CSLSMapRelay::add_relay_conf(std::string app_uplive, sls_conf_relay_t * cr)
     strcpy(sri->m_type, cr->type);
     sri->m_reconnect_interval   = cr->reconnect_interval;
     sri->m_idle_streams_timeout = cr->idle_streams_timeout;
+    sri->m_max_pull_streams     = cr->max_pull_streams;
 
     if (strcmp(cr->mode, "loop") == 0) {
     	sri->m_mode = SLS_PM_LOOP;
@@ -149,7 +194,11 @@ int CSLSMapRelay::add_relay_conf(std::string app_uplive, sls_conf_relay_t * cr)
     //parse upstreams
     sri->m_upstreams = sls_conf_string_split(string(cr->upstreams), string(" "));
     if (sri->m_upstreams.size() == 0) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_app_conf, wrong upstreams='%s'.", this, cr->upstreams);
+        // the listener rejects this at startup (sls_relay_conf_check); never
+        // keep a relay that would divide by zero picking an upstream
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSMapRelay::add_app_conf, no upstreams, app_uplive=%s.", this, app_uplive.c_str());
+        delete sri;
+        return SLS_ERROR;
     }
     m_map_relay_info[app_uplive] = sri;
     return SLS_OK;

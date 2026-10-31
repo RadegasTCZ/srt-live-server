@@ -171,6 +171,13 @@ void CSLSListener::log_admission_refusal(const char *peer_name, int peer_port, i
 }
 
 namespace {
+// add_relay_manager's reference, dropped when handler() returns
+struct sls_relay_manager_ref {
+    CSLSRelayManager *mgr;
+    explicit sls_relay_manager_ref(CSLSRelayManager *m) : mgr(m) {}
+    ~sls_relay_manager_ref() { if (mgr) mgr->release(); }
+};
+
 // The admission slot taken at accept: given back when handler() returns,
 // unless it was handed to the role that now owns the socket.
 struct sls_slot_guard {
@@ -278,6 +285,12 @@ int CSLSListener::init_conf_app()
         if (NULL != ca->child) {
         	sls_conf_relay_t *cr = (sls_conf_relay_t *)ca->child;
             while (cr) {
+				std::string relay_err;
+				if (SLS_OK != sls_relay_conf_check(cr, &relay_err)) {
+					sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::init_conf_app, %s, app push='%s'.",
+							this, relay_err.c_str(), strUplive.c_str());
+					return SLS_ERROR;
+				}
 				if (strcmp(cr->type, "pull") == 0 ) {
 					if (SLS_OK != m_map_puller->add_relay_conf(strUplive.c_str(), cr)) {
 						sls_log(SLS_LOG_WARNING, "[%p]CSLSListener::init_conf_app, m_map_puller.add_app_conf faile. relay type='%s', app push='%s'.",
@@ -731,6 +744,23 @@ int CSLSListener::handler()
     			delete srt;
     			return client_count;
         	}
+        	// with user_file set, only listed stream names may trigger a pull
+        	// (the listen callback already refuses others; this is the backstop)
+        	const char *user_file = ((sls_conf_server_t*)m_conf)->user_file;
+        	if (user_file && *user_file) {
+        		bool known;
+        		{
+        			CSLSLock lock(&m_users_lock, 0); // read lock
+        			known = m_users.count(psid.stream) > 0;
+        		}
+        		if (!known) {
+    				sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s': not in user_file, no pull.",
+    							this, peer_name, peer_port, key_stream_name);
+    				srt->libsrt_close();
+    				delete srt;
+    				return client_count;
+        		}
+        	}
         	CSLSRelayManager *puller_manager = m_map_puller->add_relay_manager(app_uplive.c_str(), stream_name);
         	if (NULL == puller_manager) {
     			sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, m_map_puller->add_relay_manager failed, new role[%s:%d], stream='%s', publisher is NULL, no puller_manager.",
@@ -739,15 +769,15 @@ int CSLSListener::handler()
     			delete srt;
     			return client_count;
         	}
+        	sls_relay_manager_ref puller_ref(puller_manager);   // add_relay_manager's reference
 
-        	puller_manager->set_map_data(m_map_data);
-        	puller_manager->set_map_publisher(m_map_publisher);
-        	puller_manager->set_role_list(m_list_role);
-        	puller_manager->set_listen_port(m_port);
+        	puller_manager->configure(m_map_data, m_map_publisher, m_list_role, m_port);
 
         	if (SLS_OK != puller_manager->start()) {
     			sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, puller_manager->start failed, new client[%s:%d], stream='%s'.",
     						this, peer_name, peer_port, key_stream_name);
+    			// no puller to keep it: do not leave it counting against max_pull_streams
+    			puller_manager->retire_if_idle("first pull failed");
     			srt->libsrt_close();
     			delete srt;
     			return client_count;
@@ -789,6 +819,7 @@ int CSLSListener::handler()
 		player->set_idle_streams_timeout(m_idle_streams_timeout_role);
 		player->set_srt(srt);
 		player->set_map_data(key_stream_name, m_map_data);
+		player->attach_reader();
 		//stat info
 	    snprintf(tmp, sizeof(tmp), SLS_PLAYER_STAT_INFO_BASE,
 	    		m_port, player->get_role_name(), app_uplive.c_str(), stream_name, sid, peer_name, peer_port, cur_time);
@@ -879,10 +910,8 @@ int CSLSListener::handler()
 					this, peer_name, peer_port, key_stream_name);
 		return client_count;
 	}
-	pusher_manager->set_map_data(m_map_data);
-	pusher_manager->set_map_publisher(m_map_publisher);
-	pusher_manager->set_role_list(m_list_role);
-	pusher_manager->set_listen_port(m_port);
+	sls_relay_manager_ref pusher_ref(pusher_manager);   // add_relay_manager's reference
+	pusher_manager->configure(m_map_data, m_map_publisher, m_list_role, m_port);
 
 	if (SLS_OK != pusher_manager->start()) {
 		sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, pusher_manager->start failed, new role[%s:%d], key_stream_name=%s.",

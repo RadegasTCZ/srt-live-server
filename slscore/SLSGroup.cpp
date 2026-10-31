@@ -101,6 +101,7 @@ void CSLSGroup::check_new_role() {
     int fd = role->get_fd();
     if (fd == 0) {
         //invalid role
+        relay_ended(role);
         delete role;
         return ;
     }
@@ -113,6 +114,7 @@ void CSLSGroup::check_new_role() {
     } else {
         sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll failed, fd=%d.",
                 this, m_worker_number, role->get_role_name(), role, fd);
+        relay_ended(role);
         delete role;
     }
 }
@@ -270,7 +272,23 @@ void CSLSGroup::check_reconnect_relay()
 		it_erase = it;
 		it ++;
 		m_list_reconnect_relay_manager.erase(it_erase);
+		relay_manager->release();   // this entry's reference
     }
+}
+
+void CSLSGroup::relay_ended(CSLSRole *role)
+{
+	if (!role->is_reconnect()) {
+		return;
+	}
+	CSLSRelay * relay = (CSLSRelay *)role;
+	CSLSRelayManager * relay_manager = (CSLSRelayManager *)relay->get_relay_manager();
+	if (NULL != relay_manager && relay_manager->on_relay_closed(relay)) {
+		relay_manager->add_ref();   // held by the reconnect-list entry
+		m_list_reconnect_relay_manager.push_back(relay_manager);
+		sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::relay_ended, worker_number=%d, %s=%p, need reconnect.",
+			  this, m_worker_number, role->get_role_name(), role);
+	}
 }
 
 void CSLSGroup::check_invalid_sock()
@@ -306,14 +324,8 @@ void CSLSGroup::check_invalid_sock()
 		{
 			sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, invalid sock=%d, state=%d, role_map.size=%zu.",
 				  this, m_worker_number, role->get_role_name(), role, role->get_fd(), state, m_map_role.size());
-			//check relay
-			if (role->is_reconnect()) {
-				CSLSRelay * relay = (CSLSRelay *)role;
-				CSLSRelayManager * relay_manager = (CSLSRelayManager *)relay->get_relay_manager();
-				m_list_reconnect_relay_manager.push_back(relay_manager);
-				sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, need reconnect.",
-					  this, m_worker_number, role->get_role_name(), role);
-			}
+			//check relay: reconnect, or retire its manager
+			relay_ended(role);
 
 			role->uninit();
 			if (SLS_OK == role->check_http_client()) {
@@ -346,6 +358,12 @@ void CSLSGroup::clear()
         }
     }
     m_map_role.clear();
+
+    std::list<CSLSRelayManager *>::iterator it_rm;
+    for (it_rm = m_list_reconnect_relay_manager.begin(); it_rm != m_list_reconnect_relay_manager.end(); it_rm++) {
+        if (*it_rm) (*it_rm)->release();
+    }
+    m_list_reconnect_relay_manager.clear();
 }
 
 void CSLSGroup::set_role_list(CSLSRoleList *list_role)

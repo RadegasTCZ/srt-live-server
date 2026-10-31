@@ -76,6 +76,8 @@ private:
     void  check_invalid_sock();
     void  check_new_role();
     void  check_wait_http_role();
+    // a role leaves this worker: let a relay's manager decide on reconnect
+    void  relay_ended(CSLSRole *role);
 
     int           m_worker_connections;
     int           m_worker_number;

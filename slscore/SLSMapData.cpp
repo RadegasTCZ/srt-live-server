@@ -243,6 +243,28 @@ int CSLSMapData::get_ts_info(char *key, char *data, int len)
     return TS_UDP_LEN;
 }
 
+void CSLSMapData::add_reader(const char *key)
+{
+    CSLSLock lock(&m_readers_lock);
+    m_map_readers[std::string(key)]++;
+}
+
+void CSLSMapData::remove_reader(const char *key)
+{
+    CSLSLock lock(&m_readers_lock);
+    std::map<std::string, int>::iterator it = m_map_readers.find(std::string(key));
+    if (it != m_map_readers.end() && --it->second <= 0) {
+        m_map_readers.erase(it);
+    }
+}
+
+int CSLSMapData::reader_count(const char *key)
+{
+    CSLSLock lock(&m_readers_lock);
+    std::map<std::string, int>::iterator it = m_map_readers.find(std::string(key));
+    return it == m_map_readers.end() ? 0 : it->second;
+}
+
 void CSLSMapData::clear()
 {
     CSLSLock lock(&m_rwclock, true);

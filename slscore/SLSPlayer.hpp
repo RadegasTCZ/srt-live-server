@@ -38,8 +38,14 @@ public :
 	~CSLSPlayer();
 
     virtual int handler();
+    virtual int uninit();
+    // count this player as a reader of its stream (after set_map_data);
+    // undone exactly once, in uninit or the destructor
+    void        attach_reader();
 
 private:
+    bool        m_reader_attached;
+    void        detach_reader();
 
 
 };

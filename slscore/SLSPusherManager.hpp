@@ -41,10 +41,11 @@ public :
 	CSLSPusherManager();
     virtual ~CSLSPusherManager();
 
-    virtual int start();
     virtual int add_reconnect_stream(char* relay_url);
-    virtual int reconnect(int64_t cur_tm_ms);
 
+protected:
+    virtual int do_start();
+    virtual int do_reconnect(int64_t cur_tm_ms);
 
 private:
     int connect_all();

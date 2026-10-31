@@ -68,7 +68,7 @@ int CSLSPusherManager::connect_all()
     return all_ret;
 }
 
-int CSLSPusherManager::start()
+int CSLSPusherManager::do_start()
 {
 	int ret = SLS_ERROR;
 	if (m_sri == NULL) {
@@ -142,7 +142,7 @@ int CSLSPusherManager::add_reconnect_stream(char* relay_url)
 	return ret;
 }
 
-int CSLSPusherManager::reconnect(int64_t cur_tm_ms)
+int CSLSPusherManager::do_reconnect(int64_t cur_tm_ms)
 {
 	int ret = SLS_ERROR;
     if (SLS_OK != check_relay_param()) {

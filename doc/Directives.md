@@ -76,6 +76,25 @@ accepted connection can be queued while the workers are full; past this
 timeout it is closed and `CSLSRoleList::expire, expired queued <role>` is
 logged.
 
+## max_pull_streams (relay block), pull relay lifetime
+
+A pull relay is started by the first player asking for a stream that has no
+publisher. `max_pull_streams` (default 16, 1-1024) caps how many streams one
+pull relay block (one app) pulls at once; a request beyond it is refused
+(`add_relay_manager, refused ... max_pull_streams=N reached`). With
+`user_file` set, only stream names listed there can start a pull.
+
+A pull exists only for its players. It is dropped, with no reconnect, when
+- no player has been attached for `idle_streams_timeout` seconds (`-1` never
+  closes a running pull), or
+- its upstream connection ends and no player is attached (also while it waits
+  for `reconnect_interval` to retry).
+While players are attached a broken pull reconnects every `reconnect_interval`
+seconds, as before. The next player request starts a new pull.
+
+A relay block (pull or push) without `upstreams` is a configuration error:
+sls refuses to start.
+
 ## srt_passphrase
 
 Listener-wide passphrase. The value is never written to the log; config lines

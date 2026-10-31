@@ -34,7 +34,16 @@
 /**
  * relay conf
  */
-SLS_CONF_DYNAMIC_IMPLEMENT(relay)
+SLS_CONF_DYNAMIC_IMPLEMENT_DEFAULTS(relay, sls_conf_relay_defaults)
+
+int sls_relay_conf_check(sls_conf_relay_t *cr, std::string *err)
+{
+    if (sls_conf_string_split(std::string(cr->upstreams), std::string(" ")).empty()) {
+        if (err) *err = std::string("relay type='") + cr->type + "' has no upstreams";
+        return SLS_ERROR;
+    }
+    return SLS_OK;
+}
 
 /**
  * CSLSRelay class implementation
@@ -56,19 +65,27 @@ CSLSRelay::CSLSRelay()
 
 CSLSRelay::~CSLSRelay()
 {
-    //release
+    release_relay_manager();
 }
 
+// The reconnect decision is made by the worker before uninit
+// (CSLSRelayManager::on_relay_closed); here the relay only lets go of its
+// manager.
 int CSLSRelay::uninit()
 {
-	// for reconnect
-	if (NULL != m_relay_manager) {
-		((CSLSRelayManager*)m_relay_manager)->add_reconnect_stream(m_url);
-		sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::uninit, add_reconnect_stream, m_url=%s.",
-				this, m_url);
-	}
+	int ret = CSLSRole::uninit();
+	release_relay_manager();
+	return ret;
+}
 
-	return CSLSRole::uninit();
+void CSLSRelay::release_relay_manager()
+{
+	if (NULL != m_relay_manager) {
+		CSLSRelayManager *mgr = (CSLSRelayManager *)m_relay_manager;
+		m_relay_manager = NULL;
+		mgr->relay_detached();
+		mgr->release();
+	}
 }
 
 void CSLSRelay::set_map_publisher(CSLSMapPublisher *map_publisher)
@@ -78,6 +95,12 @@ void CSLSRelay::set_map_publisher(CSLSMapPublisher *map_publisher)
 
 void CSLSRelay::set_relay_manager(void *relay_manager)
 {
+	release_relay_manager();
+	if (NULL != relay_manager) {
+		CSLSRelayManager *mgr = (CSLSRelayManager *)relay_manager;
+		mgr->add_ref();
+		mgr->relay_attached();
+	}
 	m_relay_manager = relay_manager;
 }
 

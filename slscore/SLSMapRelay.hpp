@@ -38,7 +38,15 @@ public:
 	CSLSMapRelay();
     virtual ~CSLSMapRelay();
 
+    // Find or create the manager for app_uplive/stream_name. The result
+    // carries a reference for the caller (release() it when done); NULL if
+    // the app has no relay conf or, for pull, max_pull_streams managers
+    // already exist for it.
     CSLSRelayManager *add_relay_manager(const char *app_uplive, const char *stream_name);
+    // Drop the map's entry (and its reference) for app_uplive/stream_name;
+    // with expected set, only if the entry is that manager. SLS_OK if removed.
+    int  remove_relay_manager(const char *app_uplive, const char *stream_name,
+                              CSLSRelayManager *expected = NULL);
     void clear();
 
     int add_relay_conf(std::string app_uplive, sls_conf_relay_t * cr);

@@ -49,7 +49,16 @@ public:
     bool is_exist(char *key);
 
     int  get_ts_info(char *key, char *data, int len);
+
+    // Players attached to a stream key. Independent of the ring, so it
+    // survives a puller's remove()/add() across a reconnect. Touched only on
+    // connect/close (and once a second by a puller), never per packet.
+    void add_reader(const char *key);
+    void remove_reader(const char *key);
+    int  reader_count(const char *key);
 private:
+    std::map<std::string, int>                   m_map_readers;      //uplive_key_stream:players attached
+    CSLSMutex                                    m_readers_lock;
     std::map<std::string, CSLSRecycleArray *>    m_map_array;        //uplive_key_stream:data'
     std::map<std::string, CSLSTsParser *>        m_map_ts_info;      //uplive_key_stream:PSI bootstrap
     CSLSRWLock          m_rwclock;

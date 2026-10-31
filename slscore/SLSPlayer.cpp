@@ -37,12 +37,36 @@
 CSLSPlayer::CSLSPlayer()
 {
     m_is_write = 1;
+    m_reader_attached = false;
 
     sprintf(m_role_name, "player");
 }
 
 CSLSPlayer::~CSLSPlayer()
 {
+    detach_reader();
+}
+
+int CSLSPlayer::uninit()
+{
+    detach_reader();
+    return CSLSRole::uninit();
+}
+
+void CSLSPlayer::attach_reader()
+{
+    if (!m_reader_attached && NULL != m_map_data && strlen(m_map_data_key) > 0) {
+        m_map_data->add_reader(m_map_data_key);
+        m_reader_attached = true;
+    }
+}
+
+void CSLSPlayer::detach_reader()
+{
+    if (m_reader_attached) {
+        m_reader_attached = false;
+        m_map_data->remove_reader(m_map_data_key);
+    }
 }
 
 

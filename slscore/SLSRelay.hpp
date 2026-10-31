@@ -41,6 +41,7 @@ char             mode[32];
 char             upstreams[1024];
 int              reconnect_interval;
 int              idle_streams_timeout;
+int              max_pull_streams;
 SLS_CONF_DYNAMIC_DECLARE_END
 
 
@@ -54,8 +55,19 @@ SLS_SET_CONF(relay, string, mode,                 "relay mode.", 1, 31),
 SLS_SET_CONF(relay, string, upstreams,            "upstreams",   1, 1023),
 SLS_SET_CONF(relay, int,    reconnect_interval,   "reconnect interval, unit s", 1, 3600),
 SLS_SET_CONF(relay, int,    idle_streams_timeout, "idle streams timeout, unit s", -1, 3600),
+SLS_SET_CONF(relay, int,    max_pull_streams,     "pull: max concurrent pulled streams for this app (default 16)", 1, 1024),
 
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
+
+#define SLS_DEFAULT_MAX_PULL_STREAMS 16
+inline void sls_conf_relay_defaults(sls_conf_relay_t *c)
+{
+    c->max_pull_streams = SLS_DEFAULT_MAX_PULL_STREAMS;
+}
+
+// Startup check of a relay block; SLS_OK, or SLS_ERROR with *err set
+// (e.g. no upstreams: hash mode would divide by zero).
+int sls_relay_conf_check(sls_conf_relay_t *cr, std::string *err);
 
 
 enum SLS_PULL_MODE {
@@ -76,6 +88,7 @@ public :
     virtual int uninit();
 
     void  set_map_publisher(CSLSMapPublisher *publisher);
+    // takes a reference on the manager, dropped in uninit or the destructor
     void  set_relay_manager(void *relay_manager);
     void *get_relay_manager();
     char *get_url();
@@ -94,6 +107,7 @@ protected:
     void              *m_relay_manager;
 
     int          parse_url(char* url, char * ip, size_t ip_size, int& port, char * streamid, size_t streamid_size);
+    void         release_relay_manager();
 
 };
 

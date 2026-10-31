@@ -87,7 +87,7 @@ int CSLSPullerManager::connect_loop()
     return ret;
 }
 
-int CSLSPullerManager::start()
+int CSLSPullerManager::do_start()
 {
 	int ret = SLS_ERROR;
 
@@ -187,9 +187,50 @@ int  CSLSPullerManager::add_reconnect_stream(char* relay_url)
 	return SLS_OK;
 }
 
-int CSLSPullerManager::reconnect(int64_t cur_tm_ms)
+bool CSLSPullerManager::has_readers()
+{
+	if (NULL == m_map_data) {
+		return false;
+	}
+	char key_stream_name[1024] = {0};
+	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", m_app_uplive, m_stream_name);
+	return m_map_data->reader_count(key_stream_name) > 0;
+}
+
+// A pull exists only for its players: a puller closed for idleness, or one
+// that ended with no player left, retires its manager (no reconnect); the
+// next player request creates a new one.
+bool CSLSPullerManager::do_on_relay_closed(CSLSRelay *relay)
+{
+	if (((CSLSPuller *)relay)->closed_for_idle()) {
+		retire_locked("puller closed for idleness");
+		return false;
+	}
+	if (!has_readers()) {
+		retire_locked("puller ended with no player");
+		return false;
+	}
+	m_reconnect_begin_tm = sls_gettime_ms();
+	return true;
+}
+
+int CSLSPullerManager::do_reconnect(int64_t cur_tm_ms)
 {
 	int ret = SLS_ERROR;
+	if (!has_readers()) {
+		retire_locked("no player left while waiting to reconnect");
+		return SLS_OK;
+	}
+	if (m_live_relays > 0) {
+		return SLS_OK;   // a player request already started a new puller
+	}
+	char key_stream_name[1024] = {0};
+	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", m_app_uplive, m_stream_name);
+	if (NULL != m_map_publisher && NULL != m_map_publisher->get_publisher(key_stream_name)) {
+		retire_locked("the stream has a local publisher");
+		return SLS_OK;
+	}
+
 	if (cur_tm_ms - m_reconnect_begin_tm < (m_sri->m_reconnect_interval * 1000)) {
 		return ret;
 	}
@@ -201,10 +242,7 @@ int CSLSPullerManager::reconnect(int64_t cur_tm_ms)
 		return SLS_ERROR;
     }
 
-	char key_stream_name[1024] = {0};
-	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", m_app_uplive, m_stream_name);
-
-	ret = start();
+	ret = do_start();
 	if (SLS_OK != ret) {
 		sls_log(SLS_LOG_INFO, "[%p]CSLSPullerManager::reconnect, start failed, key_stream_name=%s.",
 					this, key_stream_name);
