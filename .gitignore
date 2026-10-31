@@ -7,3 +7,6 @@ bin
 sls.conf
 sls-test.conf
 sls-users.conf
+obj-asan
+bin-asan
+*.d

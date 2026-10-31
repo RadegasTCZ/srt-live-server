@@ -3,12 +3,15 @@ MAIN_NAME=sls
 CLIENT_NAME=slc
 INC_PATH = -I./ -I../ -I./slscore -I./include
 LIB_PATH =  -L ./lib
-LIBRARY_FILE = -lpthread -lz -lsrt
+LIBRARY_FILE = -lpthread -lsrt
 BIN_PATH = ./bin
 
 DEBUG = -g
 WARN  = -Wall -Wformat=2 -Wno-format-nonliteral -Wno-format-truncation -Wno-invalid-offsetof
-CFLAGS += $(DEBUG) $(WARN)
+OPT = -O2 -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fPIE
+LDOPT = -pie -Wl,-z,relro,-z,now
+CFLAGS += $(DEBUG) $(WARN) $(OPT)
+LDFLAGS += $(LDOPT)
 
 LOG_PATH = ./logs
 
@@ -52,16 +55,27 @@ all: $(OBJS)
 	mkdir -p ${LOG_PATH}
 	mkdir -p ${OUTPUT_PATH}
 	mkdir -p ${BIN_PATH}
-	${CXX} -o ${BIN_PATH}/${MAIN_NAME}   srt-live-server.cpp $(OBJS) $(CFLAGS) $(INC_PATH) $(LIB_PATH) $(LIBRARY_FILE)
-	${CXX} -o ${BIN_PATH}/${CLIENT_NAME} srt-live-client.cpp $(OBJS) $(CFLAGS) $(INC_PATH) $(LIB_PATH) $(LIBRARY_FILE)
+	${CXX} -o ${BIN_PATH}/${MAIN_NAME}   srt-live-server.cpp $(OBJS) $(CFLAGS) $(INC_PATH) $(LIB_PATH) $(LDFLAGS) $(LIBRARY_FILE)
+	${CXX} -o ${BIN_PATH}/${CLIENT_NAME} srt-live-client.cpp $(OBJS) $(CFLAGS) $(INC_PATH) $(LIB_PATH) $(LDFLAGS) $(LIBRARY_FILE)
 	#******************************************************************************#
 	#                          Build successful !                                  #
 	#******************************************************************************#
 
-$(OUTPUT_PATH)/%.o: ./$(CORE_PATH)/%.cpp
-	${CXX} -c $(CFLAGS) $< -o $@ $(INC_FLAGS)
+$(OUTPUT_PATH)/%.o: ./$(CORE_PATH)/%.cpp | $(OUTPUT_PATH)
+	${CXX} -c -MMD -MP $(CFLAGS) $(INC_PATH) $< -o $@
+
+$(OUTPUT_PATH):
+	mkdir -p $@
+
+-include $(OBJS:.o=.d)
+
+# Sanitizer build: separate object/binary dirs, no FORTIFY.
+asan:
+	$(MAKE) all OUTPUT_PATH=obj-asan BIN_PATH=bin-asan OPT='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -fPIE' LDOPT='-pie -fsanitize=address,undefined'
+
+.PHONY: all asan clean
 
 clean:
-	rm -f $(OUTPUT_PATH)/*.o
+	rm -f $(OUTPUT_PATH)/*.o $(OUTPUT_PATH)/*.d
 	rm -rf $(BIN_PATH)/*
 
