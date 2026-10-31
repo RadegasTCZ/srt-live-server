@@ -59,10 +59,29 @@ class CSLSMapRelay;
  *     the relay's destructor),
  *   - each worker reconnect-list entry (CSLSGroup),
  *   - the caller of CSLSMapRelay::add_relay_manager, until it calls release().
- * start(), reconnect(), on_relay_closed() and configure() serialize on
- * m_mutex. A retired manager is out of the map and never connects again;
- * only a reference holder may retire it (so release() in the map cannot
- * free it under the caller).
+ * Retiring removes only the map's reference. A retired manager is out of the
+ * map and never connects again; only a reference holder retires it, so the
+ * map's release() cannot free it under the caller.
+ *
+ * State (pull): outside the creator's start() call, every manager is in
+ * exactly one of
+ *   LIVE      m_live_relays > 0: it has a running puller (in the map, counted
+ *             against max_pull_streams),
+ *   WAITING   m_live_relays == 0, not retired, a worker reconnect-list entry
+ *             will call reconnect(), which ends in LIVE, RETIRED, or WAITING
+ *             again (attempt failed, players still attached),
+ *   RETIRED   out of the map, no relay, never connects again.
+ * Every transition happens under m_mutex: start()/do_start (-> LIVE),
+ * relay_ended() (LIVE -> WAITING/RETIRED, the one place a relay stops
+ * counting), reconnect() and retire_if_idle(). m_live_relays is a plain int
+ * guarded by m_mutex. A retire is refused while a relay is live.
+ *
+ * Lock order: manager m_mutex -> CSLSMapRelay::m_rwclock (retire removes the
+ * map entry), and manager m_mutex -> publisher map / map data / role list
+ * locks. CSLSMapRelay never takes a manager's mutex while holding its own
+ * lock (add_relay_manager/remove_relay_manager/clear only touch the atomic
+ * refcount, and release() outside or after the last holder), and none of the
+ * other locks call back into a manager.
  */
 class CSLSRelayManager
 {
@@ -76,10 +95,13 @@ public :
     int  start();
     // SLS_OK: the caller drops its reconnect-list entry
     int  reconnect(int64_t cur_tm_ms);
-    // One of this manager's relay roles ended (its worker, before uninit).
-    // true: keep reconnecting, the caller puts the manager on its reconnect
-    // list (with its own reference).
-    bool on_relay_closed(CSLSRelay *relay);
+    // One of this manager's relay roles ended. The relay stops counting as
+    // live here and nowhere else. may_reconnect: the caller (its worker,
+    // before uninit) can hold a reconnect-list entry; true is returned when
+    // it must put the manager on its list (with its own reference). Without
+    // one (relay torn down outside a worker) a pull manager left with no
+    // live relay retires on the spot.
+    bool relay_ended(CSLSRelay *relay, bool may_reconnect);
     // stop for good unless a relay of this manager is still running
     void retire_if_idle(const char *why);
     bool is_retired();
@@ -94,11 +116,12 @@ public :
     void set_relay_info(const char *app_uplive, const char *stream_name);
     void set_owner(CSLSMapRelay *owner);
 
-    // relay roles of this manager currently alive (CSLSRelay bookkeeping)
-    void relay_attached();
-    void relay_detached();
-
 protected:
+    // a relay of this manager starts (from set_relay_param, under m_mutex)
+    void relay_attached_locked(CSLSRelay *relay);
+    // pull managers exist only for running pulls; push managers persist
+    virtual bool retires_when_idle() { return false; }
+
     virtual int  do_start() = 0;
     virtual int  do_reconnect(int64_t cur_tm_ms) = 0;
     // under m_mutex; default (push): reconnect that relay's url
@@ -113,7 +136,7 @@ protected:
     CSLSMutex            m_mutex;
     bool                 m_retired;
     std::atomic<int>     m_refs;
-    std::atomic<int>     m_live_relays;
+    int                  m_live_relays;      // guarded by m_mutex
     CSLSMapRelay        *m_owner;
 
     CSLSMapPublisher    *m_map_publisher ;

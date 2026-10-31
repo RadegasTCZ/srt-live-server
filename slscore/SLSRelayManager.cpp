@@ -71,20 +71,38 @@ void CSLSRelayManager::release()
 	}
 }
 
-void CSLSRelayManager::relay_attached()
+void CSLSRelayManager::relay_attached_locked(CSLSRelay *relay)
 {
+	relay->set_relay_manager(this);
+	relay->set_live_counted(true);
 	m_live_relays++;
 	int n = m_sri ? ++m_sri->m_live_relays : 0;
 	sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::relay_attached, live relays app=%s n=%d max_pull_streams=%d, stream_name=%s.",
 			this, m_app_uplive, n, m_sri ? m_sri->m_max_pull_streams : 0, m_stream_name);
 }
 
-void CSLSRelayManager::relay_detached()
+bool CSLSRelayManager::relay_ended(CSLSRelay *relay, bool may_reconnect)
 {
-	m_live_relays--;
-	int n = m_sri ? --m_sri->m_live_relays : 0;
-	sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::relay_detached, live relays app=%s n=%d, stream_name=%s.",
-			this, m_app_uplive, n, m_stream_name);
+	CSLSLock lock(&m_mutex);
+	if (relay->live_counted()) {
+		relay->set_live_counted(false);
+		m_live_relays--;
+		int n = m_sri ? --m_sri->m_live_relays : 0;
+		sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::relay_detached, live relays app=%s n=%d, stream_name=%s.",
+				this, m_app_uplive, n, m_stream_name);
+	}
+	if (m_retired) {
+		return false;
+	}
+	if (may_reconnect) {
+		return do_on_relay_closed(relay);
+	}
+	// nobody will hold a reconnect entry: do not leave a manager that
+	// neither runs nor waits
+	if (retires_when_idle()) {
+		retire_locked("relay torn down outside its worker");
+	}
+	return false;
 }
 
 bool CSLSRelayManager::is_retired()
@@ -126,17 +144,6 @@ int CSLSRelayManager::reconnect(int64_t cur_tm_ms)
 		return SLS_OK;   // nothing left to do: drop the reconnect entry
 	}
 	return do_reconnect(cur_tm_ms);
-}
-
-bool CSLSRelayManager::on_relay_closed(CSLSRelay *relay)
-{
-	CSLSLock lock(&m_mutex);
-	// the ended relay no longer counts as live, before any retire decision
-	relay->leave_live();
-	if (m_retired) {
-		return false;
-	}
-	return do_on_relay_closed(relay);
 }
 
 bool CSLSRelayManager::do_on_relay_closed(CSLSRelay *relay)

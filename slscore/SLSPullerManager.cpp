@@ -174,7 +174,7 @@ int CSLSPullerManager::set_relay_param(CSLSRelay *relay)
 
 	relay->set_map_data(key_stream_name, m_map_data);
 	relay->set_map_publisher(m_map_publisher);
-	relay->set_relay_manager(this);
+	relay_attached_locked(relay);
 	m_role_list->push(relay);
 
 	return SLS_OK;
@@ -201,7 +201,7 @@ bool CSLSPullerManager::has_readers()
 // that ended with no player left, retires its manager (no reconnect); the
 // next player request creates a new one. If another puller of this manager
 // is live it carries on: no retire (retire_locked refuses) and no reconnect.
-// The ended relay has already left the live count (on_relay_closed).
+// The ended relay has already left the live count (relay_ended).
 bool CSLSPullerManager::do_on_relay_closed(CSLSRelay *relay)
 {
 	if (((CSLSPuller *)relay)->closed_for_idle()) {

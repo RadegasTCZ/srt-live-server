@@ -112,7 +112,7 @@ int CSLSPusherManager::set_relay_param(CSLSRelay *relay)
 	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", m_app_uplive, m_stream_name);
 	relay->set_map_data(key_stream_name, m_map_data);
 	relay->set_map_publisher(m_map_publisher);
-	relay->set_relay_manager(this);
+	relay_attached_locked(relay);
 	m_role_list->push(relay);
     return SLS_OK;
 }

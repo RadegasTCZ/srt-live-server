@@ -89,10 +89,11 @@ public :
 
     void  set_map_publisher(CSLSMapPublisher *publisher);
     // takes a reference on the manager, dropped in uninit or the destructor
+    // (the manager attaches its relays: CSLSRelayManager::relay_attached_locked)
     void  set_relay_manager(void *relay_manager);
-    // the relay has ended: stop counting it as live (its manager, under the
-    // manager's mutex); idempotent, and done by release otherwise
-    void  leave_live();
+    // live bookkeeping, read and written only by the manager under its mutex
+    bool  live_counted() const { return m_live_counted; }
+    void  set_live_counted(bool v) { m_live_counted = v; }
     void *get_relay_manager();
     char *get_url();
 

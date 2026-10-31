@@ -283,7 +283,7 @@ void CSLSGroup::relay_ended(CSLSRole *role)
 	}
 	CSLSRelay * relay = (CSLSRelay *)role;
 	CSLSRelayManager * relay_manager = (CSLSRelayManager *)relay->get_relay_manager();
-	if (NULL != relay_manager && relay_manager->on_relay_closed(relay)) {
+	if (NULL != relay_manager && relay_manager->relay_ended(relay, true)) {
 		relay_manager->add_ref();   // held by the reconnect-list entry
 		m_list_reconnect_relay_manager.push_back(relay_manager);
 		sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::relay_ended, worker_number=%d, %s=%p, need reconnect.",

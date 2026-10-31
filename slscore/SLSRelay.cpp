@@ -70,7 +70,7 @@ CSLSRelay::~CSLSRelay()
 }
 
 // The reconnect decision is made by the worker before uninit
-// (CSLSRelayManager::on_relay_closed); here the relay only lets go of its
+// (CSLSRelayManager::relay_ended); here the relay only lets go of its
 // manager.
 int CSLSRelay::uninit()
 {
@@ -82,18 +82,14 @@ int CSLSRelay::uninit()
 void CSLSRelay::release_relay_manager()
 {
 	if (NULL != m_relay_manager) {
-		leave_live();
 		CSLSRelayManager *mgr = (CSLSRelayManager *)m_relay_manager;
+		if (m_live_counted) {
+			// ended without its worker deciding (shutdown, odd delete paths):
+			// the manager settles its state under its own mutex
+			mgr->relay_ended(this, false);
+		}
 		m_relay_manager = NULL;
 		mgr->release();
-	}
-}
-
-void CSLSRelay::leave_live()
-{
-	if (m_live_counted && NULL != m_relay_manager) {
-		m_live_counted = false;
-		((CSLSRelayManager *)m_relay_manager)->relay_detached();
 	}
 }
 
@@ -108,8 +104,6 @@ void CSLSRelay::set_relay_manager(void *relay_manager)
 	if (NULL != relay_manager) {
 		CSLSRelayManager *mgr = (CSLSRelayManager *)relay_manager;
 		mgr->add_ref();
-		mgr->relay_attached();
-		m_live_counted = true;
 	}
 	m_relay_manager = relay_manager;
 }
