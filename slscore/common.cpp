@@ -379,11 +379,16 @@ bool sls_is_valid_pbkeylen(int pbkeylen)
 //    starting instance may already have opened would let two instances each
 //    hold "the" lock on different inodes. The lock dies with the process.
 
-// Returns the locked fd (>= 0) or -1. The caller must keep this single fd open
-// until exit and must never open the path a second time in this process:
-// closing ANY fd of the file drops the process's locks on it. The fd stays
-// writable after the privilege drop; that is acceptable because nothing trusts
-// the file's contents.
+// Returns a read-only fd holding an fcntl read lock on the pid file (>= 0), or
+// -1. The caller keeps it open until exit and must never open the path again in
+// this process: closing ANY fd of the file drops the process's locks on it.
+// The writable fd is closed here, before the caller drops privileges, so the
+// unprivileged daemon cannot rewrite the file.
+//
+// Stale-handle reasoning: someone may still hold an fd on an old inode. The
+// fstat check refuses any pre-existing file with group/other bits, and `-s`
+// only signals a lock holder whose /proc/<pid>/exe is this sls binary, so such
+// a handle can at worst block startup or `-s`; both fail closed.
 int sls_write_pid(const char *path, int pid)
 {
     if (NULL == path || '\0' == path[0]) {
@@ -448,8 +453,35 @@ int sls_write_pid(const char *path, int pid)
         close(fd);
         return -1;
     }
+
+    // Swap to a read-only fd: open it, check it is the same inode, close the
+    // writable one (which releases our lock), then re-lock with a read lock. A
+    // second instance's write lock conflicts with it, so mutual exclusion holds.
+    // If another instance slips into the gap one of us fails the F_SETLK and
+    // exits; the worst a race can do is make both exit.
+    int fd2 = open(path, O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
+    if (fd2 < 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot reopen pid file '%s' read-only: %s.", path, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    struct stat st2;
+    if (fstat(fd2, &st2) != 0 || st2.st_dev != st.st_dev || st2.st_ino != st.st_ino) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: pid file '%s' was replaced while starting; refusing.", path);
+        close(fd2);
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    memset(&fl, 0, sizeof(fl));
+    fl.l_type = F_RDLCK; fl.l_whence = SEEK_SET;
+    if (fcntl(fd2, F_SETLK, &fl) != 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: another instance is running (could not re-lock pid file '%s': %s).", path, strerror(errno));
+        close(fd2);
+        return -1;
+    }
     sls_log(SLS_LOG_INFO, "sls_write_pid ok, file='%s', pid=%d.", path, pid);
-    return fd;
+    return fd2;
 }
 
 // Command-line side of 'sls -c conf -s reload|stop'. Output goes to stdout.

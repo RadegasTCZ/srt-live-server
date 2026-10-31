@@ -36,7 +36,8 @@ Security model:
   permissions, another owner or several links is refused at startup (delete it
   and start again).
 - The kernel's lock table is the source of truth, not the file's contents. A
-  running sls holds an `fcntl` write lock on the file; `sls -s` asks the kernel
+  running sls holds an `fcntl` lock on the file through a read-only descriptor
+  (the writable one is closed before privileges are dropped); `sls -s` asks the kernel
   which process holds it, checks that process runs the same sls binary, and
   signals that pid. The pid written in the file is informational only.
 - A leftover file from a previous run is harmless: with no lock holder `sls -s`
