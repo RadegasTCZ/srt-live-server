@@ -348,8 +348,11 @@ EXIT_PROC:
     sls_log(SLS_LOG_INFO, "exit, close conf.");
     sls_conf_close();
 
+    // The pid file is deliberately left in place (see common.cpp): the lock is
+    // released when this process exits, which is what `sls -s` looks at.
     if (pid_fd >= 0) {
-        sls_remove_pid(pid_path, pid_fd);
+        close(pid_fd);
+        pid_fd = -1;
     }
 
     sls_log(SLS_LOG_INFO, "exit, bye bye!");

@@ -18,27 +18,32 @@ rejected and the previous users stay active; the result is logged
 
 ## pid_file
 
-Path of the pid file (default `/run/sls/sls.pid`), written at startup and
-removed at exit. `sls -c sls.conf -s reload|stop` reads the same path, so `-s`
-needs `-c`; the CLI prints `reload signal sent; result in log` and the outcome
-is in the server log.
+Path of the pid file (default `/run/sls/sls.pid`), written at startup.
+`sls -c sls.conf -s reload|stop` reads the same path, so `-s` needs `-c`; the
+CLI prints `reload signal sent; result in log` and the outcome is in the
+server log.
 
 sls never creates the directory and never follows a symlink at the file name
 (it opens with `O_NOFOLLOW`): if the directory is missing or not writable, or
 the path is a symlink, startup fails with an error naming the path. Create the
 directory, point `pid_file` at a writable place, or under systemd set
-`RuntimeDirectory=sls`. After the `user` privilege drop the directory is
-usually no longer writable, so the pid file may stay behind at exit; that is
-tolerated.
+`RuntimeDirectory=sls`.
 
-Security model: the file is created with mode 0600, and its directory must be
-writable only by root or the service user (never a shared directory such as
-`/tmp`). A running sls holds an `fcntl` read lock on it (through a read-only
-descriptor; the writable one is closed before privileges are dropped), and
-`-s` signals only if the lock holder's pid equals the pid in the file. A
-leftover file with no lock holder is reported as "sls is not running (stale
-pid file)" and nothing is signalled; a second instance with the same
-`pid_file` refuses to start.
+Security model:
+- The directory must be writable only by root or the service user (never a
+  shared directory such as `/tmp`).
+- The file is created with mode 0600. An existing file with group/other
+  permissions, another owner or several links is refused at startup (delete it
+  and start again).
+- The kernel's lock table is the source of truth, not the file's contents. A
+  running sls holds an `fcntl` write lock on the file; `sls -s` asks the kernel
+  which process holds it, checks that process runs the same sls binary, and
+  signals that pid. The pid written in the file is informational only.
+- A leftover file from a previous run is harmless: with no lock holder `sls -s`
+  says "sls is not running (stale pid file)" and signals nothing, and the next
+  start simply reuses the file. sls does not delete the file at exit.
+- A second instance with the same `pid_file` refuses to start ("another
+  instance is running (lock holder pid N)") without touching the file.
 
 ## srt_passphrase
 

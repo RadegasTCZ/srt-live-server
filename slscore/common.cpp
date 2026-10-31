@@ -364,181 +364,92 @@ bool sls_is_valid_pbkeylen(int pbkeylen)
 
 // ---- pid file -------------------------------------------------------------
 // Design (see doc/Directives.md "pid_file"):
+//  * The kernel's lock table is the source of truth, never the file's contents.
+//    A running server holds an fcntl write lock on the pid file; `sls -s` asks
+//    F_GETLK who holds it and signals THAT pid (after checking it is an sls
+//    binary). No holder => stale file => nothing is signalled. The pid written
+//    inside is informational only, so a stale, garbage or tampered file cannot
+//    redirect a signal.
 //  * The file is 0600 and must live in a directory only root / the service user
-//    can write to, so no other user can open it, lock it, or replace it.
-//  * sls never creates directories and never follows a symlink at the final path
-//    component (O_NOFOLLOW).
-//  * A running server holds a process-associated fcntl READ lock on the file
-//    (taken on a read-only fd that stays open until exit). `sls -s` asks
-//    F_GETLK who holds it: no holder => stale file, never signalled; holder pid
-//    must equal the pid in the file before anything is signalled.
-//  * The writable fd is closed before privileges are dropped, so the unprivileged
-//    daemon cannot rewrite the file.
+//    can write to. sls never creates directories and never follows a symlink at
+//    the final component (O_NOFOLLOW).
+//  * Startup has no check-then-act step: open (never unlink, never O_EXCL), then
+//    one atomic F_SETLK. A leftover file with no lock holder is simply reused.
+//  * The server never unlinks the file at exit: removing a path that another
+//    starting instance may already have opened would let two instances each
+//    hold "the" lock on different inodes. The lock dies with the process.
 
-// Returns the locked read-only fd (>= 0, keep it open until exit) or -1.
+// Returns the locked fd (>= 0) or -1. The caller must keep this single fd open
+// until exit and must never open the path a second time in this process:
+// closing ANY fd of the file drops the process's locks on it. The fd stays
+// writable after the privilege drop; that is acceptable because nothing trusts
+// the file's contents.
 int sls_write_pid(const char *path, int pid)
 {
     if (NULL == path || '\0' == path[0]) {
         sls_log(SLS_LOG_ERROR, "sls_write_pid: no pid file path.");
         return -1;
     }
+    int fd = open(path, O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC, 0600);
+    if (fd < 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot open pid file '%s' for writing: %s. "
+                "sls does not create directories or follow symlinks for this file; "
+                "set 'pid_file' in the srt block of the conf to a writable path, or create its directory.",
+                path, strerror(errno));
+        return -1;
+    }
+
     struct stat st;
-    struct flock fl;
-
-    // 1. An existing file may be a leftover from an older build or planted by
-    //    someone else, and somebody may already hold an fd on it that no chmod
-    //    can revoke. Never reuse it: refuse if a lock holder exists (a running
-    //    instance), otherwise unlink it and create a fresh inode below.
-    int ofd = open(path, O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
-    if (ofd >= 0) {
-        if (fstat(ofd, &st) != 0 || !S_ISREG(st.st_mode)) {
-            sls_log(SLS_LOG_ERROR, "sls_write_pid: '%s' exists and is not a regular file; refusing to touch it.", path);
-            close(ofd);
-            return -1;
-        }
-        memset(&fl, 0, sizeof(fl));
-        fl.l_type = F_WRLCK; fl.l_whence = SEEK_SET;
-        if (fcntl(ofd, F_GETLK, &fl) != 0) {
-            sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot query the lock on existing pid file '%s': %s.", path, strerror(errno));
-            close(ofd);
-            return -1;
-        }
-        close(ofd);
-        if (fl.l_type != F_UNLCK) {
-            sls_log(SLS_LOG_ERROR, "sls_write_pid: another instance (pid %d) is running with pid file '%s'.", (int)fl.l_pid, path);
-            return -1;
-        }
-        if (unlink(path) != 0 && errno != ENOENT) {
-            sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot remove stale pid file '%s': %s.", path, strerror(errno));
-            return -1;
-        }
-    } else if (errno != ENOENT) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot open pid file '%s': %s. "
-                "sls does not create directories or follow symlinks for this file; "
-                "set 'pid_file' in the srt block of the conf to a writable path, or create its directory.",
-                path, strerror(errno));
-        return -1;
-    }
-
-    // 2. Always a fresh file: O_EXCL, so if anyone raced us in, refuse (no retry).
-    int wfd = open(path, O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0600);
-    if (wfd < 0) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot create pid file '%s': %s. "
-                "sls does not create directories or follow symlinks for this file; "
-                "set 'pid_file' in the srt block of the conf to a writable path, or create its directory.",
-                path, strerror(errno));
-        return -1;
-    }
-
-    // 3. Fail closed unless it is exactly what we think we created.
-    if (fstat(wfd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1 ||
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1 ||
         st.st_uid != geteuid() || (st.st_mode & 077) != 0) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: new pid file '%s' is not a private plain file owned by this user (mode %o); refusing to use it.",
-                path, (unsigned)(st.st_mode & 07777));
-        close(wfd);
-        unlink(path);
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: pid file '%s' is not a private (mode 0600) plain file owned by this user "
+                "with a single link; refusing to use it. If it is a stale leftover, delete it and start again.", path);
+        close(fd);
         return -1;
     }
 
-    // Take the write lock now so two simultaneous starts cannot both pass.
+    struct flock fl;
     memset(&fl, 0, sizeof(fl));
-    fl.l_type = F_WRLCK; fl.l_whence = SEEK_SET;
-    if (fcntl(wfd, F_SETLK, &fl) != 0) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot lock pid file '%s': %s.", path, strerror(errno));
-        close(wfd);
+    fl.l_type = F_WRLCK; fl.l_whence = SEEK_SET;   // l_start = l_len = 0: whole file
+    if (fcntl(fd, F_SETLK, &fl) != 0) {
+        if (errno == EACCES || errno == EAGAIN) {
+            struct flock who;
+            memset(&who, 0, sizeof(who));
+            who.l_type = F_WRLCK; who.l_whence = SEEK_SET;
+            int holder = (fcntl(fd, F_GETLK, &who) == 0 && who.l_type != F_UNLCK) ? (int)who.l_pid : 0;
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: another instance is running (lock holder pid %d) with pid file '%s'.", holder, path);
+        } else {
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot lock pid file '%s': %s.", path, strerror(errno));
+        }
+        close(fd);
         return -1;
     }
 
+    if (ftruncate(fd, 0) != 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot truncate pid file '%s': %s.", path, strerror(errno));
+        close(fd);
+        return -1;
+    }
     char buf[32];
     int  len = snprintf(buf, sizeof(buf), "%d\n", pid);
     int  off = 0;
     while (off < len) {
-        ssize_t n = write(wfd, buf + off, len - off);
+        ssize_t n = write(fd, buf + off, len - off);
         if (n < 0) {
             if (errno == EINTR) continue;
             sls_log(SLS_LOG_ERROR, "sls_write_pid: write to pid file '%s' failed: %s.", path, strerror(errno));
-            close(wfd);
+            close(fd);
             return -1;
         }
         off += (int)n;
     }
-    if (fsync(wfd) != 0) {
+    if (fsync(fd) != 0) {
         sls_log(SLS_LOG_ERROR, "sls_write_pid: fsync of pid file '%s' failed: %s.", path, strerror(errno));
-        close(wfd);
-        return -1;
-    }
-
-    // Process locks belong to (process, file): closing ANY fd of this file
-    // drops them all. So close the writable fd first, then lock a read-only one.
-    close(wfd);
-    int rfd = open(path, O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
-    if (rfd < 0) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot reopen pid file '%s' read-only: %s.", path, strerror(errno));
-        return -1;
-    }
-    struct stat rst;
-    if (fstat(rfd, &rst) != 0 || rst.st_ino != st.st_ino || rst.st_dev != st.st_dev) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: pid file '%s' was replaced while starting; refusing.", path);
-        close(rfd);
-        return -1;
-    }
-    memset(&fl, 0, sizeof(fl));
-    fl.l_type = F_RDLCK; fl.l_whence = SEEK_SET;
-    if (fcntl(rfd, F_SETLK, &fl) != 0) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot lock pid file '%s': %s.", path, strerror(errno));
-        close(rfd);
+        close(fd);
         return -1;
     }
     sls_log(SLS_LOG_INFO, "sls_write_pid ok, file='%s', pid=%d.", path, pid);
-    return rfd;
-}
-
-// Returns the pid in the file, or 0 if the file is missing/unreadable/invalid.
-int sls_read_pid(const char *path)
-{
-    if (NULL == path || '\0' == path[0]) {
-        return 0;
-    }
-    int fd = open(path, O_RDONLY|O_CLOEXEC);
-    if (fd < 0) {
-        return 0;
-    }
-    char buf[32];
-    ssize_t n;
-    do {
-        n = read(fd, buf, sizeof(buf) - 1);
-    } while (n < 0 && errno == EINTR);
-    close(fd);
-    if (n <= 0) {
-        return 0;
-    }
-    buf[n] = '\0';
-
-    char *end = NULL;
-    errno = 0;
-    long v = strtol(buf, &end, 10);
-    if (errno != 0 || end == buf || v <= 0 || v > INT_MAX) {
-        return 0;
-    }
-    while (*end == '\n' || *end == '\r' || *end == ' ') end++;
-    if (*end != '\0') {
-        return 0;
-    }
-    return (int)v;
-}
-
-// Exit: remove the file if we still can (usually not after the privilege drop;
-// tolerated). A leftover file is harmless: nothing holds a lock on it once the
-// fd is closed, so `-s` reports it stale. There is no writable fd to truncate.
-int sls_remove_pid(const char *path, int fd)
-{
-    if (path && path[0] != '\0' && unlink(path) != 0 && errno != ENOENT && errno != EACCES) {
-        sls_log(SLS_LOG_WARNING, "sls_remove_pid: cannot remove '%s': %s.", path, strerror(errno));
-    }
-    if (fd >= 0) {
-        close(fd);
-    }
-    return 0;
+    return fd;
 }
 
 // Command-line side of 'sls -c conf -s reload|stop'. Output goes to stdout.
@@ -558,9 +469,7 @@ int sls_send_cmd(const char *pid_path, const char *cmd)
         return SLS_ERROR;
     }
 
-    int pid = sls_read_pid(pid_path);
-
-    int fd = open(pid_path, O_RDONLY|O_CLOEXEC);
+    int fd = open(pid_path, O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
     if (fd < 0) {
         printf("sls_send_cmd failed, cannot open pid file '%s': %s (is sls running with this conf?).\n", pid_path, strerror(errno));
         return SLS_ERROR;
@@ -574,19 +483,26 @@ int sls_send_cmd(const char *pid_path, const char *cmd)
         printf("sls_send_cmd failed, cannot query the lock on '%s': %s.\n", pid_path, strerror(errno));
         return SLS_ERROR;
     }
-    // A running server holds a lock for its whole life. No holder: stale file,
-    // its pid may belong to an unrelated process now, never signal it.
+    // No lock holder: stale file, nothing is running (whatever pid it names).
     if (who.l_type == F_UNLCK) {
         printf("sls is not running (stale pid file '%s'); nothing sent.\n", pid_path);
         return SLS_ERROR;
     }
-    if (pid <= 0 || (int)who.l_pid != pid) {
-        printf("pid file '%s' does not match lock holder (file pid %d, lock holder pid %d); nothing sent.\n",
-               pid_path, pid, (int)who.l_pid);
+
+    // The target is the kernel's answer. Only signal it if it runs this sls binary.
+    int target = (int)who.l_pid;
+    char exe_self[PATH_MAX], exe_target[PATH_MAX], link[64];
+    ssize_t ns = readlink("/proc/self/exe", exe_self, sizeof(exe_self) - 1);
+    snprintf(link, sizeof(link), "/proc/%d/exe", target);
+    ssize_t nt = readlink(link, exe_target, sizeof(exe_target) - 1);
+    if (ns > 0) exe_self[ns] = '\0';
+    if (nt > 0) exe_target[nt] = '\0';
+    if (target <= 0 || ns <= 0 || nt <= 0 || strcmp(exe_self, exe_target) != 0) {
+        printf("lock holder pid %d is not sls; nothing sent.\n", target);
         return SLS_ERROR;
     }
-    if (kill(pid, sig) != 0) {
-        printf("sls_send_cmd failed, cannot signal pid %d from pid file '%s': %s.\n", pid, pid_path, strerror(errno));
+    if (kill(target, sig) != 0) {
+        printf("sls_send_cmd failed, cannot signal pid %d: %s.\n", target, strerror(errno));
         return SLS_ERROR;
     }
     if (sig == SIGHUP) {

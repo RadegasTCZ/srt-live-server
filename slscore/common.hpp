@@ -100,9 +100,7 @@ uint32_t sls_hash_key(const char *data, int len);
 int      sls_gethostbyname(const char *hostname, char *ip);
 int      sls_mkdir_p(const char *path);
 
-int sls_write_pid(const char *path, int pid);   // returns the locked fd (keep it open), or -1
-int sls_read_pid(const char *path);
-int sls_remove_pid(const char *path, int fd);
+int sls_write_pid(const char *path, int pid);   // returns the locked fd (keep it open until exit), or -1
 int sls_send_cmd(const char *pid_path, const char *cmd);
 int sls_drop_privileges(const char *user, const char *group);
 
