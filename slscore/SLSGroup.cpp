@@ -109,6 +109,13 @@ void CSLSGroup::check_new_role() {
     //add to epoll
     if (0 == role->add_to_epoll(m_eid)) {
         m_map_role[fd] = role;
+        // Announce the role only now that a worker owns it, so on_connect and
+        // on_close always pair: a queued role that expires (or is erased at
+        // shutdown) sent neither. The admission gate is unchanged: until the
+        // hook answers 200, check_http_passed holds the role's reads/writes,
+        // and a failure closes it. No-op for roles without on_event_url
+        // (listener, pullers, pushers).
+        role->on_connect();
         sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll fd=%d, role_map.size=%zu.",
                 this, m_worker_number, role->get_role_name(), role, fd, m_map_role.size());
     } else {

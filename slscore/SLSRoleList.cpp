@@ -107,8 +107,11 @@ int CSLSRoleList::expire(int64_t now_ms, int max_age_ms)
     int n = 0;
     for (std::list<queued_role>::iterator it = expired.begin(); it != expired.end(); ++it) {
         CSLSRole *role = it->role;
-        sls_log(SLS_LOG_INFO, "[%p]CSLSRoleList::expire, expired queued %s=%p after %lld ms (admission_timeout=%d ms), closing it.",
-                this, role->get_role_name(), role, (long long)(now_ms - it->queued_ms),
+        char peer_ip[IP_MAX_LEN] = {0};
+        int  peer_port = 0;
+        role->get_peer_info(peer_ip, peer_port);
+        sls_log(SLS_LOG_INFO, "[%p]CSLSRoleList::expire, expired queued %s=%p peer=%s:%d after %lld ms (admission_timeout=%d ms), closing it.",
+                this, role->get_role_name(), role, peer_ip, peer_port, (long long)(now_ms - it->queued_ms),
                 role->get_admission_timeout() > 0 ? role->get_admission_timeout() : max_age_ms);
         role->uninit();
         delete role;

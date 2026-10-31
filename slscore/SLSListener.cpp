@@ -825,8 +825,9 @@ int CSLSListener::handler()
 	    		m_port, player->get_role_name(), app_uplive.c_str(), stream_name, sid, peer_name, peer_port, cur_time);
 	    std::string stat_info = std::string(tmp);
 	    player->set_stat_info_base(stat_info);
+	    // on_connect is sent by the worker that adopts the role (Ruling R17):
+	    // a role that expires while queued has announced nothing
 	    player->set_http_url(m_http_url_role);
-	    player->on_connect();
 
 		// pub (and, once pushed, player) may already be gone: another thread
 		// can tear a role down right after the lookup, so log pointer values
@@ -895,7 +896,7 @@ int CSLSListener::handler()
 	}
 	pub->set_map_publisher(m_map_publisher);
 	pub->set_map_data(key_stream_name, m_map_data);
-	pub->on_connect();
+	// on_connect: sent by the adopting worker, see CSLSGroup::check_new_role
 	m_list_role->push(pub);
 	sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new publisher[%s:%d], key_stream_name=%s.",
 			this, peer_name, peer_port, key_stream_name);
