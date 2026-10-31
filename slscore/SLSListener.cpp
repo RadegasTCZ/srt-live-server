@@ -717,6 +717,9 @@ int CSLSListener::handler()
     //3.is player?
     if (SLS_SID_PLAYER == role) {
         snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
+        // Only test pub against NULL / log its value: a publisher found here
+        // can be closed and deleted by its worker (or by CSLSRoleList::expire
+        // while still queued) as soon as the map lock is dropped.
         CSLSRole * pub = m_map_publisher->get_publisher(key_stream_name);
         if (NULL == pub) {
         	//*
@@ -794,9 +797,12 @@ int CSLSListener::handler()
 	    player->set_http_url(m_http_url_role);
 	    player->on_connect();
 
+		// pub (and, once pushed, player) may already be gone: another thread
+		// can tear a role down right after the lookup, so log pointer values
+		// and the key, never what they point to
 		m_list_role->push(player);
-		sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new player[%p]=[%s:%d], key_stream_name=%s, %s=%p, m_list_role->size=%d.",
-				this, player, peer_name, peer_port, key_stream_name, pub->get_role_name(), pub, m_list_role->size());
+		sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new player[%p]=[%s:%d], key_stream_name=%s, publisher=%p, m_list_role->size=%d.",
+				this, player, peer_name, peer_port, key_stream_name, pub, m_list_role->size());
         return client_count;
     }
 
