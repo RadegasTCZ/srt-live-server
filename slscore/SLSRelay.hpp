@@ -90,6 +90,9 @@ public :
     void  set_map_publisher(CSLSMapPublisher *publisher);
     // takes a reference on the manager, dropped in uninit or the destructor
     void  set_relay_manager(void *relay_manager);
+    // the relay has ended: stop counting it as live (its manager, under the
+    // manager's mutex); idempotent, and done by release otherwise
+    void  leave_live();
     void *get_relay_manager();
     char *get_url();
 
@@ -105,6 +108,7 @@ protected:
 
     CSLSMapPublisher  *m_map_publisher;
     void              *m_relay_manager;
+    bool               m_live_counted;
 
     int          parse_url(char* url, char * ip, size_t ip_size, int& port, char * streamid, size_t streamid_size);
     void         release_relay_manager();

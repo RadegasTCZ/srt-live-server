@@ -178,6 +178,7 @@ int CSLSMapRelay::add_relay_conf(std::string app_uplive, sls_conf_relay_t * cr)
     sri->m_reconnect_interval   = cr->reconnect_interval;
     sri->m_idle_streams_timeout = cr->idle_streams_timeout;
     sri->m_max_pull_streams     = cr->max_pull_streams;
+    sri->m_live_relays          = 0;
 
     if (strcmp(cr->mode, "loop") == 0) {
     	sri->m_mode = SLS_PM_LOOP;

@@ -58,6 +58,7 @@ CSLSRelay::CSLSRelay()
     m_server_port          = 0;
     m_map_publisher        = NULL;
     m_relay_manager        = NULL;
+    m_live_counted         = false;
     m_need_reconnect       = true;
 
     sprintf(m_role_name, "relay");
@@ -81,10 +82,18 @@ int CSLSRelay::uninit()
 void CSLSRelay::release_relay_manager()
 {
 	if (NULL != m_relay_manager) {
+		leave_live();
 		CSLSRelayManager *mgr = (CSLSRelayManager *)m_relay_manager;
 		m_relay_manager = NULL;
-		mgr->relay_detached();
 		mgr->release();
+	}
+}
+
+void CSLSRelay::leave_live()
+{
+	if (m_live_counted && NULL != m_relay_manager) {
+		m_live_counted = false;
+		((CSLSRelayManager *)m_relay_manager)->relay_detached();
 	}
 }
 
@@ -100,6 +109,7 @@ void CSLSRelay::set_relay_manager(void *relay_manager)
 		CSLSRelayManager *mgr = (CSLSRelayManager *)relay_manager;
 		mgr->add_ref();
 		mgr->relay_attached();
+		m_live_counted = true;
 	}
 	m_relay_manager = relay_manager;
 }

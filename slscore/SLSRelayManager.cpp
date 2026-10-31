@@ -74,11 +74,23 @@ void CSLSRelayManager::release()
 void CSLSRelayManager::relay_attached()
 {
 	m_live_relays++;
+	int n = m_sri ? ++m_sri->m_live_relays : 0;
+	sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::relay_attached, live relays app=%s n=%d max_pull_streams=%d, stream_name=%s.",
+			this, m_app_uplive, n, m_sri ? m_sri->m_max_pull_streams : 0, m_stream_name);
 }
 
 void CSLSRelayManager::relay_detached()
 {
 	m_live_relays--;
+	int n = m_sri ? --m_sri->m_live_relays : 0;
+	sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::relay_detached, live relays app=%s n=%d, stream_name=%s.",
+			this, m_app_uplive, n, m_stream_name);
+}
+
+bool CSLSRelayManager::is_retired()
+{
+	CSLSLock lock(&m_mutex);
+	return m_retired;
 }
 
 void CSLSRelayManager::configure(CSLSMapData *map_data, CSLSMapPublisher *map_publisher,
@@ -119,6 +131,8 @@ int CSLSRelayManager::reconnect(int64_t cur_tm_ms)
 bool CSLSRelayManager::on_relay_closed(CSLSRelay *relay)
 {
 	CSLSLock lock(&m_mutex);
+	// the ended relay no longer counts as live, before any retire decision
+	relay->leave_live();
 	if (m_retired) {
 		return false;
 	}
@@ -134,15 +148,18 @@ bool CSLSRelayManager::do_on_relay_closed(CSLSRelay *relay)
 void CSLSRelayManager::retire_if_idle(const char *why)
 {
 	CSLSLock lock(&m_mutex);
-	if (!m_retired && m_live_relays == 0) {
-		retire_locked(why);
-	}
+	retire_locked(why);
 }
 
-void CSLSRelayManager::retire_locked(const char *why)
+bool CSLSRelayManager::retire_locked(const char *why)
 {
 	if (m_retired) {
-		return;
+		return true;
+	}
+	if (m_live_relays > 0) {
+		sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::retire, not retired (%s): %d relay(s) still live, app_uplive=%s, stream_name=%s.",
+				this, why, (int)m_live_relays, m_app_uplive, m_stream_name);
+		return false;
 	}
 	m_retired = true;
 	sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::retire, %s, app_uplive=%s, stream_name=%s.",
@@ -153,6 +170,7 @@ void CSLSRelayManager::retire_locked(const char *why)
 	if (NULL != m_owner) {
 		m_owner->remove_relay_manager(m_app_uplive, m_stream_name, this);
 	}
+	return true;
 }
 
 void CSLSRelayManager::set_relay_conf(SLS_RELAY_INFO *sri)

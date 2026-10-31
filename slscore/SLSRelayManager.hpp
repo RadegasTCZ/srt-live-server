@@ -42,6 +42,7 @@ struct SLS_RELAY_INFO {
     int      m_reconnect_interval;//unit: s
     int      m_idle_streams_timeout;//unit: s
     int      m_max_pull_streams;   // pull: concurrent managers per relay block
+    std::atomic<int> m_live_relays; // relay roles alive for this block (all its managers)
 };
 
 class CSLSMapRelay;
@@ -81,6 +82,7 @@ public :
     bool on_relay_closed(CSLSRelay *relay);
     // stop for good unless a relay of this manager is still running
     void retire_if_idle(const char *why);
+    bool is_retired();
 
     virtual int  add_reconnect_stream(char* relay_url) = 0;
 
@@ -101,8 +103,12 @@ protected:
     virtual int  do_reconnect(int64_t cur_tm_ms) = 0;
     // under m_mutex; default (push): reconnect that relay's url
     virtual bool do_on_relay_closed(CSLSRelay *relay);
-    // under m_mutex: mark retired and leave the owner map
-    void retire_locked(const char *why);
+    // Under m_mutex: mark retired and leave the owner map, but only while no
+    // relay of this manager is alive (m_live_relays == 0); false otherwise.
+    // So a retired manager never has a live relay, and every live relay
+    // belongs to a manager that is still in the map and counts against
+    // max_pull_streams. start() refuses on a retired manager.
+    bool retire_locked(const char *why);
 
     CSLSMutex            m_mutex;
     bool                 m_retired;

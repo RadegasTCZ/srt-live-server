@@ -199,7 +199,9 @@ bool CSLSPullerManager::has_readers()
 
 // A pull exists only for its players: a puller closed for idleness, or one
 // that ended with no player left, retires its manager (no reconnect); the
-// next player request creates a new one.
+// next player request creates a new one. If another puller of this manager
+// is live it carries on: no retire (retire_locked refuses) and no reconnect.
+// The ended relay has already left the live count (on_relay_closed).
 bool CSLSPullerManager::do_on_relay_closed(CSLSRelay *relay)
 {
 	if (((CSLSPuller *)relay)->closed_for_idle()) {
@@ -217,12 +219,12 @@ bool CSLSPullerManager::do_on_relay_closed(CSLSRelay *relay)
 int CSLSPullerManager::do_reconnect(int64_t cur_tm_ms)
 {
 	int ret = SLS_ERROR;
+	if (m_live_relays > 0) {
+		return SLS_OK;   // a player request already started a new puller: it carries on
+	}
 	if (!has_readers()) {
 		retire_locked("no player left while waiting to reconnect");
 		return SLS_OK;
-	}
-	if (m_live_relays > 0) {
-		return SLS_OK;   // a player request already started a new puller
 	}
 	char key_stream_name[1024] = {0};
 	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", m_app_uplive, m_stream_name);
