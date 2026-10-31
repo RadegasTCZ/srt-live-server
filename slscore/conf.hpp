@@ -119,11 +119,19 @@ struct sls_conf_##c_n##_t : public sls_conf_base_t {\
 #define SLS_CONF_DYNAMIC_DECLARE_END \
 };
 
-#define SLS_CONF_DYNAMIC_IMPLEMENT(c_n)\
+template <class T> inline void sls_conf_no_defaults(T *) {}
+
+// A conf block is zero-filled; set_defaults(sls_conf_<c_n>_t *) then sets the
+// directives whose default is not 0 (e.g. where 0 is itself a valid value).
+#define SLS_CONF_DYNAMIC_IMPLEMENT(c_n) SLS_CONF_DYNAMIC_IMPLEMENT_DEFAULTS(c_n, sls_conf_no_defaults)
+
+#define SLS_CONF_DYNAMIC_IMPLEMENT_DEFAULTS(c_n, set_defaults)\
 sls_conf_base_t * sls_conf_##c_n##_t::create_conf()\
 {\
-    sls_conf_base_t * p = new sls_conf_##c_n##_t ;\
-    memset(p, 0, sizeof(sls_conf_##c_n##_t));\
+    sls_conf_##c_n##_t * c = new sls_conf_##c_n##_t ;\
+    memset(c, 0, sizeof(sls_conf_##c_n##_t));\
+    set_defaults(c);\
+    sls_conf_base_t * p = c;\
     p->child     = NULL;\
     p->sibling   = NULL;\
     p->name = sls_conf_##c_n##_t::runtime_conf.conf_name;\

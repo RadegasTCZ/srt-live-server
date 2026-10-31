@@ -54,6 +54,7 @@ int              stat_post_interval;
 char             user[SHORT_STR_MAX_LEN];
 char             group[SHORT_STR_MAX_LEN];
 char             pid_file[URL_MAX_LEN];
+int              max_connections_per_ip;
 SLS_CONF_DYNAMIC_DECLARE_END
 
 
@@ -64,13 +65,20 @@ SLS_CONF_CMD_DYNAMIC_DECLARE_BEGIN(srt)
 SLS_SET_CONF(srt, string, log_file,                    "save log file name.", 1, URL_MAX_LEN-1),
 SLS_SET_CONF(srt, string, log_level,                   "log level", 1, URL_MAX_LEN-1),
 SLS_SET_CONF(srt, int,    worker_threads,              "count of worker thread, if 0, only main thread.", 0, 100),
-SLS_SET_CONF(srt, int,    worker_connections,          "", 1, 1024),
+SLS_SET_CONF(srt, int,    worker_connections,          "max roles per worker; worker_connections x max(1, worker_threads) caps accepted connections", 1, 1024),
 SLS_SET_CONF(srt, string, stat_post_url,               "statistic info post url", 1, URL_MAX_LEN-1),
 SLS_SET_CONF(srt, int,    stat_post_interval,          "interval of statistic info post.", 1, 60),
 SLS_SET_CONF(srt, string, user,                        "drop privileges to this user after bind", 1, SHORT_STR_MAX_LEN-1),
 SLS_SET_CONF(srt, string, group,                       "drop privileges to this group after bind (defaults to user's primary group)", 1, SHORT_STR_MAX_LEN-1),
 SLS_SET_CONF(srt, string, pid_file,                    "pid file path (default /run/sls/sls.pid); the directory must exist and be writable", 1, URL_MAX_LEN-1),
+SLS_SET_CONF(srt, int,    max_connections_per_ip,      "max concurrent accepted connections from one IP (default 16); 0 = unlimited", 0, 10000),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
+
+#define SLS_DEFAULT_MAX_CONNECTIONS_PER_IP 16
+inline void sls_conf_srt_defaults(sls_conf_srt_t *c)
+{
+    c->max_connections_per_ip = SLS_DEFAULT_MAX_CONNECTIONS_PER_IP;
+}
 
 
 /**
@@ -88,6 +96,8 @@ public :
     int  stop();
     int  reload();
     int  reload_users();
+    // close queued roles past their listener's admission_timeout (main thread)
+    int  expire_queued_roles(int64_t now_ms);
     int  single_thread_handler();
     int  check_invalid();
     bool is_single_thread();
@@ -108,6 +118,10 @@ private:
 
     CSLSRoleList * m_list_role;
     CSLSGroup    * m_single_group;
+
+    // admission slots for every listener of this manager; freed in stop()
+    // after the last role that could hold a slot is gone
+    CSLSConnLimiter * m_conn_limiter;
 };
 
 

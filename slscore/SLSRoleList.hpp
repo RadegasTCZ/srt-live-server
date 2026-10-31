@@ -44,11 +44,20 @@ public :
     CSLSRole *pop();
     void      erase();
     int       size();
+    // Close and delete queued roles that hold an admission slot (listener-
+    // accepted publishers/players) and have waited longer than their
+    // admission timeout (the role's own, else max_age_ms). Relay roles and
+    // the listener itself never expire. Returns the number removed.
+    int       expire(int64_t now_ms, int max_age_ms);
 
 protected:
 
 private:
-    std::list<CSLSRole * > m_list_role;
+    struct queued_role {
+        CSLSRole *role;
+        int64_t   queued_ms;   // when it was pushed
+    };
+    std::list<queued_role> m_list_role;
 
     CSLSMutex m_mutex;
 };

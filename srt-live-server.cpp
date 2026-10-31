@@ -261,6 +261,12 @@ int main(int argc, char* argv[])
 
 		msleep(10);
 
+		// accepted connections still waiting for a worker past admission_timeout
+		if (cur_tm_ms - tm_begin_ms >= 100) {
+			tm_begin_ms = cur_tm_ms;
+			sls_manager->expire_queued_roles(cur_tm_ms);
+		}
+
 		/*for test reload...
 		int64_t tm_cur = sls_gettime();
 		int64_t d = tm_cur - tm;

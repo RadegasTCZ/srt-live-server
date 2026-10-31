@@ -21,6 +21,11 @@ srt {
 
     worker_threads     1;       # epoll worker threads; 1 handles hundreds of streams.
     worker_connections 300;     # max concurrent SRT sockets per worker.
+                                # Accepted connections (publishers + players) are
+                                # capped at worker_connections x max(1, worker_threads);
+                                # over the cap a new connection is closed at accept.
+    max_connections_per_ip 16;  # max concurrent accepted connections from one IP
+                                # address (default 16; 0 = unlimited). Relays don't count.
 
     log_file  logs/error.log;   # path is relative to the CWD when sls starts.
     log_level info;             # fatal | error | warning | info | debug | trace
@@ -62,6 +67,8 @@ srt {
 
         backlog              10;    # listen() backlog -- pending SRT handshakes queue length.
         idle_streams_timeout 30;    # seconds; -1 disables. Drops idle publishers/players.
+        admission_timeout    5000;  # ms (100-60000, default 5000) an accepted connection may
+                                    # wait for a free worker slot before it is closed.
 
         # Optional: POST connect/disconnect events to a webhook.
         #on_event_url http://127.0.0.1:8000/sls/on_event;

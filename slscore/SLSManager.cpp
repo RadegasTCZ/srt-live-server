@@ -35,7 +35,7 @@
 /**
  * srt conf
  */
-SLS_CONF_DYNAMIC_IMPLEMENT(srt)
+SLS_CONF_DYNAMIC_IMPLEMENT_DEFAULTS(srt, sls_conf_srt_defaults)
 
 /**
  * CSLSManager class implementation
@@ -53,6 +53,7 @@ CSLSManager::CSLSManager()
     m_map_publisher  = NULL;
     m_map_puller     = NULL;
     m_map_pusher     = NULL;
+    m_conn_limiter   = NULL;
 
 }
 
@@ -103,10 +104,21 @@ int CSLSManager::start_listeners()
     m_list_role = new CSLSRoleList;
     sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, new m_list_role=%p.", this, m_list_role);
 
+    // Accepted connections are capped at what the workers can hold.
+    {
+        int threads = conf_srt->worker_threads > 1 ? conf_srt->worker_threads : 1;
+        int max_total = conf_srt->worker_connections * threads;
+        m_conn_limiter = new CSLSConnLimiter(max_total, conf_srt->max_connections_per_ip);
+        sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, connection limits: total=%d (worker_connections=%d x %d), per_ip=%d%s.",
+                this, max_total, conf_srt->worker_connections, threads, conf_srt->max_connections_per_ip,
+                conf_srt->max_connections_per_ip == 0 ? " (unlimited)" : "");
+    }
+
     //create listeners according config, delete by groups
     for (i = 0; i < m_server_count; i ++) {
     	CSLSListener * p = new CSLSListener();//deleted by groups
     	p->set_role_list(m_list_role);
+        p->set_admission_limiter(m_conn_limiter);
         p->set_conf(conf);
         p->set_map_data("", &m_map_data[i]);
         p->set_map_publisher(&m_map_publisher[i]);
@@ -195,6 +207,12 @@ int CSLSManager::stop()
     //
     sls_log(SLS_LOG_INFO, "[%p]CSLSManager::stop.", this);
 
+    // From here on a worker adopts no queued role: they are released below
+    // with the role list, not handed to a worker that is about to stop.
+    for (std::list<CSLSGroup *>::iterator it_w = m_workers.begin(); it_w != m_workers.end(); it_w++) {
+        if (*it_w) (*it_w)->stop_intake();
+    }
+
     //stop all listeners
     std::list<CSLSListener *>::iterator it;
     for ( it = m_servers.begin(); it != m_servers.end(); it++) {
@@ -246,7 +264,26 @@ int CSLSManager::stop()
     	delete[] m_map_pusher;
     	m_map_pusher = NULL;
     }
+
+    // every role that could hold a slot is gone: the groups deleted theirs,
+    // the role list was erased above
+    if (m_conn_limiter) {
+        if (m_conn_limiter->total() != 0) {
+            sls_log(SLS_LOG_WARNING, "[%p]CSLSManager::stop, %d connection slot(s) still held.",
+                    this, m_conn_limiter->total());
+        }
+        delete m_conn_limiter;
+        m_conn_limiter = NULL;
+    }
     return ret;
+}
+
+int CSLSManager::expire_queued_roles(int64_t now_ms)
+{
+    if (NULL == m_list_role) {
+        return 0;
+    }
+    return m_list_role->expire(now_ms, SLS_DEFAULT_ADMISSION_TIMEOUT);
 }
 
 int CSLSManager::reload()

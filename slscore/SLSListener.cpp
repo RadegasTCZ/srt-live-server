@@ -29,6 +29,7 @@
 #include <sstream>
 #include <set>
 #include <vector>
+#include <atomic>
 
 #include "SLSListener.hpp"
 #include "SLSLog.hpp"
@@ -79,7 +80,7 @@ const char SLS_PLAYER_STAT_INFO_BASE[] = "\
 /**
  * server conf
  */
-SLS_CONF_DYNAMIC_IMPLEMENT(server)
+SLS_CONF_DYNAMIC_IMPLEMENT_DEFAULTS(server, sls_conf_server_defaults)
 
 /**
  * CSLSListener class implementation
@@ -97,6 +98,8 @@ CSLSListener::CSLSListener()
     m_map_puller    = NULL;
     m_idle_streams_timeout      = UNLIMITED_TIMEOUT;
     m_idle_streams_timeout_role = 0;
+    m_admission_timeout = SLS_DEFAULT_ADMISSION_TIMEOUT;
+    m_admission_limiter = NULL;
     m_stat_info = std::string("");
     memset(m_http_url_role, 0, URL_MAX_LEN);
 
@@ -140,6 +143,48 @@ void CSLSListener::set_map_pusher(CSLSMapRelay *map_pusher)
     m_map_pusher     = map_pusher;
 }
 
+void CSLSListener::set_admission_limiter(CSLSConnLimiter *limiter)
+{
+    m_admission_limiter = limiter;
+}
+
+// Process-wide: a flood from many listeners still logs one line per second.
+static std::atomic<int64_t> s_refusal_log_ms(0);
+static std::atomic<int>     s_refusal_unlogged(0);
+
+void CSLSListener::log_admission_refusal(const char *peer_name, int peer_port, int why)
+{
+    int64_t now  = sls_gettime_ms();
+    int64_t last = s_refusal_log_ms.load();
+    if (now - last < 1000 || !s_refusal_log_ms.compare_exchange_strong(last, now)) {
+        s_refusal_unlogged++;
+        return;
+    }
+    int unlogged = s_refusal_unlogged.exchange(0);
+    if (SLS_CONN_PER_IP == why) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: per-IP connection limit (%d) reached; %d other refusal(s) not logged.",
+                this, peer_name, peer_port, m_admission_limiter->max_per_ip(), unlogged);
+    } else {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: total connection limit (%d) reached; %d other refusal(s) not logged.",
+                this, peer_name, peer_port, m_admission_limiter->max_total(), unlogged);
+    }
+}
+
+namespace {
+// The admission slot taken at accept: given back when handler() returns,
+// unless it was handed to the role that now owns the socket.
+struct sls_slot_guard {
+    CSLSConnLimiter *limiter;
+    const char      *ip;
+    sls_slot_guard(CSLSConnLimiter *l, const char *i) : limiter(l), ip(i) {}
+    ~sls_slot_guard() { if (limiter) limiter->release(ip); }
+    void hand_to(CSLSRole *role) {
+        if (limiter) role->set_conn_limiter(limiter, ip);
+        limiter = NULL;
+    }
+};
+}
+
 int CSLSListener::init_conf_app()
 {
     string strLive;
@@ -168,9 +213,10 @@ int CSLSListener::init_conf_app()
 
     m_back_log                   = conf_server->backlog;
     m_idle_streams_timeout_role  = conf_server->idle_streams_timeout;
+    m_admission_timeout          = conf_server->admission_timeout;
     snprintf(m_http_url_role, sizeof(m_http_url_role), "%s", conf_server->on_event_url);
-    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::init_conf_app, m_back_log=%d, m_idle_streams_timeout=%d.",
-            this, m_back_log, m_idle_streams_timeout_role);
+    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::init_conf_app, m_back_log=%d, m_idle_streams_timeout=%d, admission_timeout=%dms.",
+            this, m_back_log, m_idle_streams_timeout_role, m_admission_timeout);
 
     //domain
     domain_players = sls_conf_string_split(string(conf_server->domain_player), string(" "));
@@ -620,6 +666,16 @@ int CSLSListener::handler()
         delete srt;
         return client_count;
     }
+
+    // admission: over the total or per-IP cap the socket is closed right here
+    int why = SLS_CONN_OK;
+    if (NULL != m_admission_limiter && !m_admission_limiter->try_acquire(peer_name, &why)) {
+        log_admission_refusal(peer_name, peer_port, why);
+        srt->libsrt_close();
+        delete srt;
+        return client_count;
+    }
+    sls_slot_guard slot(m_admission_limiter, peer_name);
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
 
     if (0 != srt->libsrt_getsockopt(SRTO_STREAMID, "SRTO_STREAMID", &sid, &sid_size)) {
@@ -725,6 +781,8 @@ int CSLSListener::handler()
 
 		CSLSPlayer * player = new CSLSPlayer;
 		player->init();
+		slot.hand_to(player);
+		player->set_admission_timeout(m_admission_timeout);
 		player->set_idle_streams_timeout(m_idle_streams_timeout_role);
 		player->set_srt(srt);
 		player->set_map_data(key_stream_name, m_map_data);
@@ -764,6 +822,8 @@ int CSLSListener::handler()
 	}
 	//create new publisher
 	CSLSPublisher * pub = new CSLSPublisher;
+	slot.hand_to(pub);
+	pub->set_admission_timeout(m_admission_timeout);
 	pub->set_srt(srt);
 	pub->set_conf(ca);
 	pub->init();

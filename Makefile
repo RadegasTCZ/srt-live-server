@@ -28,6 +28,7 @@ OBJS = $(OUTPUT_PATH)/SLSLog.o \
 	$(OUTPUT_PATH)/SLSRole.o\
 	$(OUTPUT_PATH)/SLSListener.o\
 	$(OUTPUT_PATH)/SLSRoleList.o\
+	$(OUTPUT_PATH)/SLSConnLimiter.o\
 	$(OUTPUT_PATH)/SLSSrt.o\
 	$(OUTPUT_PATH)/SLSPublisher.o\
 	$(OUTPUT_PATH)/SLSPlayer.o\

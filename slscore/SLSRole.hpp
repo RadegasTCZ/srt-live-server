@@ -36,6 +36,7 @@
 #include "SLSLock.hpp"
 #include "common.hpp"
 #include "HttpClient.hpp"
+#include "SLSConnLimiter.hpp"
 
 
 enum SLS_ROLE_STATE {
@@ -98,6 +99,15 @@ public :
     int         check_http_client();
     int         check_http_passed();
 
+    // Hand the role the admission slot the listener took for its socket at
+    // accept; the role gives it back exactly once, in uninit (also run by the
+    // destructor). Only listener-accepted roles carry a slot.
+    void        set_conn_limiter(CSLSConnLimiter *limiter, const char *ip);
+    bool        holds_conn_slot() const { return NULL != m_conn_limiter; }
+    // ms a queued (accepted, not yet polled) role may wait; 0 = never expires
+    void        set_admission_timeout(int ms) { m_admission_timeout = ms; }
+    int         get_admission_timeout() const { return m_admission_timeout; }
+
 protected:
     CSLSSrt     *m_srt;
     bool         m_is_write;//listener: 0, publisher: 0, player: 1
@@ -138,6 +148,11 @@ protected:
     int  handler_write_data();
     int  handler_read_data(int64_t *last_read_time=NULL);
 private:
+    CSLSConnLimiter *m_conn_limiter;          // non-NULL while holding a slot
+    char             m_conn_ip[IP_MAX_LEN];
+    int              m_admission_timeout;     // ms
+
+    void release_conn_slot();
 
 };
 

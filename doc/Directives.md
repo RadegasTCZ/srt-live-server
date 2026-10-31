@@ -53,6 +53,29 @@ Security model:
 - A second instance with the same `pid_file` refuses to start ("another
   instance is running (lock holder pid N)") without touching the file.
 
+## worker_connections, max_connections_per_ip (srt block)
+
+`worker_connections` is the number of roles one worker thread holds. It also
+caps admission: at most `worker_connections x max(1, worker_threads)`
+listener-accepted connections (publishers and players, on all `server` blocks
+together) exist at once. `max_connections_per_ip` (default 16, 0 = unlimited,
+0-10000) caps the concurrent accepted connections from one IP address.
+
+Both are checked at accept: over either cap the new socket is closed at once
+and one INFO line is logged (`refused [ip:port]: per-IP connection limit (N)
+reached` or `... total connection limit (N) reached`; at most one such line per
+second, with the count of refusals not logged). Outbound relay connections
+(pull and push) never count. A slot is given back when the connection closes,
+whichever way it closes.
+
+## admission_timeout (server block)
+
+Milliseconds (100-60000, default 5000) an accepted connection may wait for a
+free worker slot. The worker also holds the listener and relay roles, so an
+accepted connection can be queued while the workers are full; past this
+timeout it is closed and `CSLSRoleList::expire, expired queued <role>` is
+logged.
+
 ## srt_passphrase
 
 Listener-wide passphrase. The value is never written to the log; config lines

@@ -42,6 +42,7 @@ CSLSGroup::CSLSGroup()
     m_worker_connections = 100;
     m_worker_number      = 0;
     m_reload             = false;
+    m_intake_stopped     = false;
 
     m_stat_post_last_tm_ms = sls_gettime_ms();
     m_stat_post_interval   = 5;//5s default
@@ -88,7 +89,7 @@ void CSLSGroup::reload()
 void CSLSGroup::check_new_role() {
 
     // first, check rolelist
-    if (NULL == m_list_role)
+    if (NULL == m_list_role || m_intake_stopped)
         return ;
     if (m_map_role.size() >= m_worker_connections)
         return;

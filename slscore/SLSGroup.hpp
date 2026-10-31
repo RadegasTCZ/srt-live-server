@@ -27,6 +27,7 @@
 #define _SLSGroup_INCLUDE_
 
 #include <map>
+#include <atomic>
 
 #include "SLSEpollThread.hpp"
 #include "SLSRoleList.hpp"
@@ -46,6 +47,8 @@ public :
     int  start();
     int  stop();
     void reload();
+    // shutdown: adopt no more queued roles; CSLSManager::stop erases them
+    void stop_intake() { m_intake_stopped = true; }
 
     void set_role_list(CSLSRoleList *list_role);
     void set_worker_connections(int n);
@@ -78,6 +81,7 @@ private:
     int           m_worker_number;
     int64_t       m_cur_time_microsec;
     bool          m_reload;
+    std::atomic<bool> m_intake_stopped;
 
     int64_t       m_stat_post_last_tm_ms;
     int           m_stat_post_interval;

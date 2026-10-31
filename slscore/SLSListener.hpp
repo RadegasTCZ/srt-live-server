@@ -56,6 +56,7 @@ char             on_event_url[URL_MAX_LEN];
 char             srt_passphrase[STR_MAX_LEN];
 int              srt_pbkeylen;
 char             user_file[URL_MAX_LEN];
+int              admission_timeout;//unit ms
 SLS_CONF_DYNAMIC_DECLARE_END
 
 /**
@@ -72,7 +73,14 @@ SLS_SET_CONF(server, string, on_event_url,         "on connect/close http url", 
 SLS_SET_CONF(server, string, srt_passphrase,       "listener-wide SRT passphrase; empty = no encryption", 0,  STR_MAX_LEN-1),
 SLS_SET_CONF(server, int,    srt_pbkeylen,         "SRT AES key length: 0=libsrt default, 16/24/32 = AES-128/192/256", 0, 32),
 SLS_SET_CONF(server, string, user_file,            "path to per-user passphrase file (grant/revoke via edit + reload)", 0, URL_MAX_LEN-1),
+SLS_SET_CONF(server, int,    admission_timeout,    "ms an accepted connection may wait for a worker before it is closed (default 5000)", 100, 60000),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
+
+#define SLS_DEFAULT_ADMISSION_TIMEOUT 5000
+inline void sls_conf_server_defaults(sls_conf_server_t *c)
+{
+    c->admission_timeout = SLS_DEFAULT_ADMISSION_TIMEOUT;
+}
 
 /**
  * One user loaded from user_file (extensible record, not a fixed tuple).
@@ -109,6 +117,8 @@ public :
     void set_map_publisher(CSLSMapPublisher * publisher);
     void set_map_puller(CSLSMapRelay *map_puller);
     void set_map_pusher(CSLSMapRelay *map_puller);
+    // shared admission limiter (owned by CSLSManager); NULL = no caps
+    void set_admission_limiter(CSLSConnLimiter *limiter);
 
     virtual std::string get_stat_info();
 
@@ -121,6 +131,8 @@ private:
     CSLSMutex           m_mutex;
 
     int                 m_idle_streams_timeout_role;
+    int                 m_admission_timeout;   // ms, from the server block
+    CSLSConnLimiter   * m_admission_limiter;
     std::string 		m_stat_info;
     char                m_http_url_role[URL_MAX_LEN];
 
@@ -128,6 +140,8 @@ private:
     std::map<std::string, sls_user_t>      m_users;
 
     int  init_conf_app();
+    // one INFO line per second at most for accept-time refusals
+    void log_admission_refusal(const char *peer_name, int peer_port, int why);
     // Role of a parsed streamid by host/app (never by app name alone); on
     // PUBLISHER/PLAYER *app_key_out is the publisher-side "host/app" key.
     sls_sid_role_t classify_sid(const sls_sid_t &sid, std::string *app_key_out);

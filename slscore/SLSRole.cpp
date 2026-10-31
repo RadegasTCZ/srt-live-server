@@ -68,6 +68,9 @@ CSLSRole::CSLSRole()
     m_ts_carry_len    = 0;
     m_need_reconnect  = false;
     m_http_client     = NULL;
+    m_conn_limiter    = NULL;
+    memset(m_conn_ip, 0, sizeof(m_conn_ip));
+    m_admission_timeout = 0;
 
 	sprintf(m_role_name, "role");
 }
@@ -108,7 +111,25 @@ int CSLSRole::uninit()
 	    invalid_srt();
 	}
 
+	// after the socket is closed, so the slot never outlives its connection
+	release_conn_slot();
 	return ret;
+}
+
+void CSLSRole::set_conn_limiter(CSLSConnLimiter *limiter, const char *ip)
+{
+	release_conn_slot();
+	m_conn_limiter = limiter;
+	snprintf(m_conn_ip, sizeof(m_conn_ip), "%s", ip ? ip : "");
+}
+
+void CSLSRole::release_conn_slot()
+{
+	if (NULL != m_conn_limiter) {
+		CSLSConnLimiter *l = m_conn_limiter;
+		m_conn_limiter = NULL;
+		l->release(m_conn_ip);
+	}
 }
 
 int CSLSRole::invalid_srt()
