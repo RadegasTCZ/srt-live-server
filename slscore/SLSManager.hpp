@@ -83,7 +83,8 @@ public :
 	virtual ~CSLSManager();
 
 
-    int  start();
+    int  start_listeners();   // bind + listen, no threads (call before dropping privileges)
+    int  start_workers();     // groups and their threads (call after dropping privileges)
     int  stop();
     int  reload();
     int  reload_users();

@@ -60,9 +60,15 @@ CSLSManager::~CSLSManager()
 {
 }
 
-int CSLSManager::start()
+/*
+ * Startup is split in two so the caller can drop privileges in between:
+ *   start_listeners(): bind + srt_listen (needs the privileged port), no threads.
+ *                      The listeners only queue in m_list_role; nothing is
+ *                      accepted or served until a worker polls them.
+ *   start_workers():   create the groups and start their threads.
+ */
+int CSLSManager::start_listeners()
 {
-	int ret = 0;
 	int i = 0;
 
     //read config info from config file
@@ -118,9 +124,21 @@ int CSLSManager::start()
     	conf = (sls_conf_server_t *)conf->sibling;
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, init listeners, count=%d.", this, m_server_count);
+    return SLS_OK;
+}
+
+int CSLSManager::start_workers()
+{
+	int ret = 0;
+	int i = 0;
+
+    sls_conf_srt_t * conf_srt = (sls_conf_srt_t *)sls_conf_get_root_conf();
+    if (!conf_srt) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start_workers, no srt info, please check the conf file.", this);
+        return SLS_ERROR;
+    }
 
     //create groups
-
     m_worker_threads = conf_srt->worker_threads;
     if (m_worker_threads == 0) {
         CSLSGroup * p = new CSLSGroup();

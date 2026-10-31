@@ -161,11 +161,15 @@ int main(int argc, char* argv[])
     //test erro info...
     //CSLSSrt::libsrt_print_error_info();
 
-    //ctrl + c to exit
+    //ctrl + c / kill (SIGTERM, e.g. systemd stop) to exit
     sigIntHandler.sa_handler = ctrl_c_handler;
     sigemptyset(&sigIntHandler.sa_mask);
     sigIntHandler.sa_flags = 0;
     sigaction(SIGINT, &sigIntHandler, 0);
+    sigaction(SIGTERM, &sigIntHandler, 0);
+
+    //a peer closing a TCP connection (stats/webhook) must not kill the process
+    signal(SIGPIPE, SIG_IGN);
 
     //hup to reload
     sigHupHandler.sa_handler = reload_handler;
@@ -207,16 +211,24 @@ int main(int argc, char* argv[])
     sls_log(SLS_LOG_INFO, "\nsrt live server is running...");
 
     sls_manager  = new CSLSManager;
-    if (SLS_OK != sls_manager->start()) {
-        sls_log(SLS_LOG_ERROR, "sls_manager->start failed, EXIT!");
+    // Startup order: conf -> pid file -> bind/listen -> drop privileges ->
+    // worker threads -> stats client. The privileged steps (pid file in /run,
+    // bind to a port < 1024) are done while still root; no thread that serves
+    // a connection exists until the drop has succeeded.
+    if (SLS_OK != sls_manager->start_listeners()) {
+        sls_log(SLS_LOG_ERROR, "sls_manager->start_listeners failed, EXIT!");
         exit_code = 1;
         goto EXIT_PROC;
     }
 
-    // Drop privileges after listeners have bound (so :<1024 ports still work
-    // if the admin configured one) but before we start handling traffic.
     if (SLS_OK != sls_drop_privileges(conf_srt->user, conf_srt->group)) {
         sls_log(SLS_LOG_ERROR, "sls_drop_privileges failed, EXIT!");
+        exit_code = 1;
+        goto EXIT_PROC;
+    }
+
+    if (SLS_OK != sls_manager->start_workers()) {
+        sls_log(SLS_LOG_ERROR, "sls_manager->start_workers failed, EXIT!");
         exit_code = 1;
         goto EXIT_PROC;
     }
