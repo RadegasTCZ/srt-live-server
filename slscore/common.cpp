@@ -36,6 +36,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <sys/file.h>
 #include <limits.h>
 #include <netdb.h>
 #include <pwd.h>
@@ -365,18 +366,38 @@ bool sls_is_valid_pbkeylen(int pbkeylen)
 // The path comes from the 'pid_file' directive. sls never creates directories
 // here and never follows a symlink at the final path component (O_NOFOLLOW), so
 // a pre-planted link in a world-writable directory cannot redirect the write.
+//
+// Returns the open fd (>= 0) or -1. The caller keeps the fd for the whole process
+// lifetime: it holds an exclusive flock(), which is how `sls -s` tells a running
+// server from a stale file, and how a second instance is refused. The file is
+// opened WITHOUT O_TRUNC and only truncated once the lock is ours, so a second
+// instance never clobbers the pid of the running one.
 int sls_write_pid(const char *path, int pid)
 {
     if (NULL == path || '\0' == path[0]) {
         sls_log(SLS_LOG_ERROR, "sls_write_pid: no pid file path.");
         return -1;
     }
-    int fd = open(path, O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW|O_CLOEXEC, 0644);
+    int fd = open(path, O_WRONLY|O_CREAT|O_NOFOLLOW|O_CLOEXEC, 0644);
     if (fd < 0) {
         sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot open pid file '%s' for writing: %s. "
                 "sls does not create directories or follow symlinks for this file; "
                 "set 'pid_file' in the srt block of the conf to a writable path, or create its directory.",
                 path, strerror(errno));
+        return -1;
+    }
+    if (flock(fd, LOCK_EX|LOCK_NB) != 0) {
+        if (errno == EWOULDBLOCK) {
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: pid file '%s' is locked, another sls instance is already running with this pid_file.", path);
+        } else {
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot lock pid file '%s': %s.", path, strerror(errno));
+        }
+        close(fd);
+        return -1;
+    }
+    if (ftruncate(fd, 0) != 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot truncate pid file '%s': %s.", path, strerror(errno));
+        close(fd);
         return -1;
     }
     char buf[32];
@@ -392,12 +413,8 @@ int sls_write_pid(const char *path, int pid)
         }
         off += (int)n;
     }
-    if (close(fd) != 0) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: closing pid file '%s' failed: %s.", path, strerror(errno));
-        return -1;
-    }
     sls_log(SLS_LOG_INFO, "sls_write_pid ok, file='%s', pid=%d.", path, pid);
-    return 0;
+    return fd;
 }
 
 // Returns the pid in the file, or 0 if the file is missing/unreadable/invalid.
@@ -435,14 +452,20 @@ int sls_read_pid(const char *path)
 }
 
 // After sls_drop_privileges() the directory is usually not writable any more,
-// so a failed unlink is expected and only worth a warning (never a crash).
-int sls_remove_pid(const char *path)
+// so the unlink may fail (tolerated). The still-open fd can always be truncated,
+// so a leftover file holds no pid, and closing it releases the lock.
+int sls_remove_pid(const char *path, int fd)
 {
-    if (NULL == path || '\0' == path[0]) {
-        return 0;
+    if (fd >= 0) {
+        if (ftruncate(fd, 0) != 0) {
+            sls_log(SLS_LOG_WARNING, "sls_remove_pid: cannot truncate pid file: %s.", strerror(errno));
+        }
     }
-    if (unlink(path) != 0 && errno != ENOENT && errno != EACCES) {
+    if (path && path[0] != '\0' && unlink(path) != 0 && errno != ENOENT && errno != EACCES) {
         sls_log(SLS_LOG_WARNING, "sls_remove_pid: cannot remove '%s': %s.", path, strerror(errno));
+    }
+    if (fd >= 0) {
+        close(fd);
     }
     return 0;
 }
@@ -462,6 +485,19 @@ int sls_send_cmd(const char *pid_path, const char *cmd)
     } else {
         printf("sls_send_cmd failed, unknown command '%s' (use reload or stop).\n", cmd);
         return SLS_ERROR;
+    }
+
+    // A running server holds an exclusive flock on its pid file for its whole
+    // life. If we can take a shared lock, nobody does: the file is stale and
+    // the pid in it may belong to an unrelated process, so never signal it.
+    int lfd = open(pid_path, O_RDONLY|O_CLOEXEC);
+    if (lfd >= 0) {
+        if (flock(lfd, LOCK_SH|LOCK_NB) == 0) {
+            close(lfd);
+            printf("sls is not running (stale pid file '%s'); nothing sent.\n", pid_path);
+            return SLS_ERROR;
+        }
+        close(lfd);
     }
 
     int pid = sls_read_pid(pid_path);

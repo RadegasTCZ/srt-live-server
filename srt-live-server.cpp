@@ -132,7 +132,7 @@ int main(int argc, char* argv[])
     char stat_method[]        = "POST";
     sls_conf_srt_t * conf_srt = NULL;
     char pid_path[URL_MAX_LEN] = {0};
-    bool pid_written          = false;   // only remove a pid file this process wrote
+    int  pid_fd               = -1;      // locked pid file, held open until exit
 
     usage();
 
@@ -200,12 +200,12 @@ int main(int argc, char* argv[])
 
     // copy the path now: the conf is released before the pid file is removed
     get_pid_path(conf_srt, pid_path, sizeof(pid_path));
-    if (0 != sls_write_pid(pid_path, getpid())) {
+    pid_fd = sls_write_pid(pid_path, getpid());
+    if (pid_fd < 0) {
         sls_log(SLS_LOG_ERROR, "sls_write_pid failed, EXIT!");
         exit_code = 1;
         goto EXIT_PROC;
     }
-    pid_written = true;
 
     //sls manager
     sls_log(SLS_LOG_INFO, "\nsrt live server is running...");
@@ -348,8 +348,8 @@ EXIT_PROC:
     sls_log(SLS_LOG_INFO, "exit, close conf.");
     sls_conf_close();
 
-    if (pid_written) {
-        sls_remove_pid(pid_path);
+    if (pid_fd >= 0) {
+        sls_remove_pid(pid_path, pid_fd);
     }
 
     sls_log(SLS_LOG_INFO, "exit, bye bye!");
