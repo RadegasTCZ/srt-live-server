@@ -534,6 +534,24 @@ void  CSLSRole::set_http_url(const char *http_url, const struct sockaddr_storage
 	}
 }
 
+// "<base><?|&>on_event=<event>&role_name=..&srt_url=..&remote_ip=..&remote_port=.."
+// Values are percent-encoded; the joiner is '&' when the base URL already has a query.
+std::string CSLSRole::build_event_url(const char *event)
+{
+	std::string url(m_http_url);
+	size_t frag = url.find('#');
+	if (frag != std::string::npos) {
+		url.erase(frag);
+	}
+	url += (url.find('?') == std::string::npos) ? '?' : '&';
+	url += "on_event=" + sls_url_encode(event);
+	url += "&role_name=" + sls_url_encode(m_role_name);
+	url += "&srt_url=" + sls_url_encode(get_streamid());
+	url += "&remote_ip=" + sls_url_encode(m_peer_ip);
+	url += "&remote_port=" + std::to_string(m_peer_port);
+	return url;
+}
+
 int  CSLSRole::on_connect()
 {
 	if (strlen(m_http_url) == 0) {
@@ -543,15 +561,13 @@ int  CSLSRole::on_connect()
 		m_http_client = new CHttpClient;
 	}
 
-	char on_event_url[URL_MAX_LEN] = {0};
 	if (strlen(m_peer_ip) == 0) {
 		get_peer_info(m_peer_ip, m_peer_port);
 	}
-	snprintf(on_event_url, sizeof(on_event_url), "%s?on_event=on_connect&role_name=%s&srt_url=%s&remote_ip=%s&remote_port=%d",
-			m_http_url, m_role_name, get_streamid(), m_peer_ip, m_peer_port);
+	std::string on_event_url = build_event_url("on_connect");
 
 	m_http_client->set_timeout(m_http_timeout);
-	return m_http_client->open(on_event_url, &m_http_addr, m_http_addr_len, "GET");
+	return m_http_client->open(on_event_url.c_str(), &m_http_addr, m_http_addr_len, "GET");
 }
 
 int  CSLSRole::on_close()
@@ -566,18 +582,19 @@ int  CSLSRole::on_close()
 		m_http_client = new CHttpClient;
 	}
 
-	char on_event_url[URL_MAX_LEN] = {0};
 	if (strlen(m_peer_ip) == 0) {
 		get_peer_info(m_peer_ip, m_peer_port);
 	}
-	snprintf(on_event_url, sizeof(on_event_url), "%s?on_event=on_close&role_name=%s&srt_url=%s&remote_ip=%s&remote_port=%d",
-			m_http_url, m_role_name, get_streamid(), m_peer_ip, m_peer_port);
+	std::string on_event_url = build_event_url("on_close");
 
 	m_http_client->set_timeout(m_http_timeout);
-	int ret = m_http_client->open(on_event_url, &m_http_addr, m_http_addr_len, "GET");
+	int ret = m_http_client->open(on_event_url.c_str(), &m_http_addr, m_http_addr_len, "GET");
 	return ret;
 }
 
+// SLS_OK once the on_connect hook has answered 200 (or there is no hook). While it is
+// pending the caller holds the role's reads/writes; a non-200 answer, a connect
+// failure, a malformed answer or no answer within on_event_timeout refuses the role.
 int CSLSRole::check_http_passed()
 {
 	if (m_http_passed)
@@ -588,32 +605,27 @@ int CSLSRole::check_http_passed()
 	}
 
 	m_http_client->handler();
-
-	if (SLS_OK != m_http_client->check_finished() && SLS_OK != m_http_client->check_timeout()) {
+	m_http_client->check_timeout();
+	if (!m_http_client->has_result()) {
 		return SLS_ERROR;
 	}
 
+	int status = m_http_client->get_status();
 	HTTP_RESPONSE_INFO * re = m_http_client->get_response_info();
-	if (NULL == re) {
-	    return SLS_ERROR;
-	}
-
-	int ret = strcmp(re->m_response_code.c_str(), HTTP_RESPONSE_CODE_200);
-    if (0 == ret) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_client_response, http finished, %s, http_url='%s', response_code=%s, response='%s'.",
-    					this, m_role_name, m_http_url, re->m_response_code.c_str(), re->m_response_content.c_str());
+	if (HTTP_RESPONSE_CODE_200_INT == status) {
+		sls_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_passed, http finished, %s, http_url='%s', response_code=%d, response='%s'.",
+				this, m_role_name, m_http_url, status, re->m_response_content.c_str());
 		m_http_client->close();
 		delete m_http_client;
 		m_http_client = NULL;
 		m_http_passed = true;
-	    return SLS_OK;
-    } else {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSPlayer::check_http_client_response, http refused, invalid %s http_url='%s', response_code=%s, response='%s'.",
-						this, m_role_name, m_http_url, re->m_response_code.c_str(), re->m_response_content.c_str());
-		m_http_client->close();
-		delete m_http_client;
-		m_http_client = NULL;
-		invalid_srt();
-		return SLS_ERROR;
+		return SLS_OK;
 	}
+	sls_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_passed, http refused, invalid %s http_url='%s', response_code=%d (0: no usable answer), response='%s'.",
+			this, m_role_name, m_http_url, status, re->m_response_content.c_str());
+	m_http_client->close();
+	delete m_http_client;
+	m_http_client = NULL;
+	invalid_srt();
+	return SLS_ERROR;
 }

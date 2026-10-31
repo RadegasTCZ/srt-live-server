@@ -96,6 +96,7 @@ public :
     void        set_http_url(const char *http_url, const struct sockaddr_storage *addr, socklen_t addr_len, int timeout_ms);
     int         on_connect();
     int         on_close();
+    std::string build_event_url(const char *event);
     int         check_http_client();
     int         check_http_passed();
 

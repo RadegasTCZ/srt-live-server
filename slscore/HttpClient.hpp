@@ -38,8 +38,10 @@ enum HTTP_CALLBACK_TYPE {
 };
 
 #define HTTP_DATA_SIZE             4096
+#define HTTP_MAX_RESPONSE          (64 * 1024)   // headers + body; same cap as sls_http_parse_response
 #define SLS_HTTP_INVALID_CLIENT_ID 0
 #define HTTP_RESPONSE_CODE_200 "200"
+#define HTTP_RESPONSE_CODE_200_INT 200
 
 typedef int (*HTTP_CALLBACK)(void *p, HTTP_CALLBACK_TYPE type, void *v, void* context);
 struct HTTP_RESPONSE_INFO {
@@ -49,7 +51,9 @@ struct HTTP_RESPONSE_INFO {
 	int                      m_response_content_length;
 };
 /**
- * CHttpClient
+ * CHttpClient: one non-blocking HTTP/1.1 request per connection ("Connection: close").
+ * The caller resolves the server (sls_resolve) and drives handler() from its own loop;
+ * nothing here blocks or resolves names.
  */
 class CHttpClient : public CTCPRole
 {
@@ -75,21 +79,26 @@ public :
     int         check_repeat(int64_t cur_tm_ms=0);
     int         check_finished();
 
+    // 0 until the status line has arrived
+    int         get_status();
+    // true once the outcome is known: a status arrived, or the request failed / timed out
+    bool        has_result();
+
     uint32_t            get_id();
     HTTP_RESPONSE_INFO *get_response_info();
 protected:
     uint32_t    m_id;
-    char        m_url[URL_MAX_LEN];
-    char        m_uri[URL_MAX_LEN];
-	char        m_remote_host[URL_MAX_LEN];
+    std::string m_url;
+    std::string m_uri;
+    std::string m_http_host;
 	char        m_http_method[32];
-	int         m_remote_port;
+	int         m_http_port;
 	int64_t     m_begin_tm_ms;
 	int64_t     m_end_tm_ms;
 	int         m_timeout;//ms
+	int         m_interval;//s
 	struct sockaddr_storage m_addr;
 	socklen_t   m_addr_len;
-	int         m_interval;//s
 
 	CSLSArray   m_out_array;
 	uint8_t     m_out_data[HTTP_DATA_SIZE];
@@ -99,19 +108,19 @@ protected:
     std::string m_request_data;
 
     HTTP_RESPONSE_INFO       m_response_info;
-    /*
-	std::vector<std::string> m_response_header;
-	std::string              m_response_code;
-	std::string              m_response_content;
-	int                      m_response_content_length;
-    */
+	std::string              m_resp_buf;      // raw bytes received so far
+	int                      m_status;        // 0: none yet
+	bool                     m_complete;
+	bool                     m_failed;
 	HTTP_CALLBACK            m_callback;
 	void                    *m_callback_context;
 
 	int         parse_url();
 	int         write_http_header(int data_len);
 	int         write_string(std::string *str);
-	int         parse_http_response(std::string &response);
+	void        parse_response();
+	void        finish();
+	void        reset_response();
     virtual int generate_http_request();
     void        get_request_data();
 

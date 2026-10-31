@@ -103,6 +103,14 @@ uint32_t sls_hash_key(const char *data, int len);
 int      sls_resolve(const char *host, int port, struct sockaddr_storage *out, socklen_t *out_len, int family = AF_UNSPEC);
 // "http://host[:port][/path][?query]" -> host (no brackets), port (default 80), uri (starts with '/')
 int      sls_parse_http_url(const char *url, std::string *host, int *port, std::string *uri);
+// RFC 3986 percent-encoding: unreserved characters (A-Z a-z 0-9 - . _ ~) are kept, everything else is %XX
+std::string sls_url_encode(const std::string &s);
+// Parse an HTTP/1.x response held in buf. Returns 1: the message is complete; 0: more data needed
+// (or, with no Content-Length and no chunking, the body ends when the peer closes); -1: malformed or
+// larger than 64 KiB. Once the headers are complete *status (second token of the status line),
+// *header_len (bytes through the blank line), *content_length (-1 if absent) and *chunked are set
+// even when 0 is returned; before that *status is 0. Header names are case-insensitive.
+int      sls_http_parse_response(const std::string &buf, int *status, size_t *header_len, long *content_length, bool *chunked);
 int      sls_mkdir_p(const char *path);
 
 int sls_write_pid(const char *path, int pid);   // returns the locked fd (keep it open until exit), or -1

@@ -243,6 +243,158 @@ int sls_parse_http_url(const char *url, std::string *host, int *port, std::strin
     return SLS_OK;
 }
 
+std::string sls_url_encode(const std::string &s)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(s.size() * 3);
+    for (size_t i = 0; i < s.size(); i++) {
+        unsigned char c = (unsigned char)s[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '.' || c == '_' || c == '~') {
+            out += (char)c;
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
+}
+
+#define SLS_HTTP_MAX_RESPONSE (64 * 1024)
+
+static std::string sls_http_lower_trim(const std::string &s)
+{
+    size_t b = s.find_first_not_of(" \t");
+    if (b == std::string::npos) {
+        return std::string();
+    }
+    size_t e = s.find_last_not_of(" \t");
+    std::string r = s.substr(b, e - b + 1);
+    for (size_t i = 0; i < r.size(); i++) {
+        if (r[i] >= 'A' && r[i] <= 'Z') r[i] = r[i] - 'A' + 'a';
+    }
+    return r;
+}
+
+// 1: the chunked body that starts at buf[pos] is complete, 0: need more, -1: malformed
+static int sls_http_chunked_done(const std::string &buf, size_t pos)
+{
+    for (;;) {
+        size_t e = buf.find("\r\n", pos);
+        if (e == std::string::npos) {
+            return buf.size() - pos > 64 ? -1 : 0;     // a size line is short
+        }
+        std::string line = buf.substr(pos, e - pos);
+        size_t semi = line.find(';');
+        if (semi != std::string::npos) line.erase(semi);
+        line = sls_http_lower_trim(line);
+        if (line.empty() || line.size() > 8 || line.find_first_not_of("0123456789abcdef") != std::string::npos) {
+            return -1;
+        }
+        unsigned long n = strtoul(line.c_str(), NULL, 16);
+        pos = e + 2;
+        if (n == 0) {
+            for (;;) {                                 // trailers, then the blank line
+                e = buf.find("\r\n", pos);
+                if (e == std::string::npos) return 0;
+                if (e == pos) return 1;
+                pos = e + 2;
+            }
+        }
+        if (n > SLS_HTTP_MAX_RESPONSE) {
+            return -1;
+        }
+        if (buf.size() < pos + n + 2) {
+            return 0;
+        }
+        if (buf.compare(pos + n, 2, "\r\n") != 0) {
+            return -1;
+        }
+        pos += n + 2;
+    }
+}
+
+int sls_http_parse_response(const std::string &buf, int *status, size_t *header_len, long *content_length, bool *chunked)
+{
+    int    code = 0;
+    size_t hlen = 0;
+    long   cl   = -1;
+    bool   ch   = false;
+    int    ret  = 0;
+
+    if (buf.size() > SLS_HTTP_MAX_RESPONSE) {
+        ret = -1;
+    } else if (buf.compare(0, buf.size() < 5 ? buf.size() : 5, "HTTP/", buf.size() < 5 ? buf.size() : 5) != 0) {
+        ret = -1;                                      // not an HTTP response
+    } else {
+        size_t hend = buf.find("\r\n\r\n");
+        if (hend == std::string::npos) {
+            ret = 0;                                   // headers not complete yet
+        } else {
+            hlen = hend + 4;
+            size_t eol = buf.find("\r\n");
+            // status line: HTTP/1.x SP code SP reason
+            std::string line = buf.substr(0, eol);
+            size_t sp = line.find(' ');
+            size_t s2 = (sp == std::string::npos) ? sp : line.find_first_not_of(' ', sp);
+            ret = 1;
+            if (s2 == std::string::npos) {
+                ret = -1;
+            } else {
+                size_t e2 = line.find(' ', s2);
+                std::string tok = line.substr(s2, e2 == std::string::npos ? std::string::npos : e2 - s2);
+                if (tok.size() != 3 || tok.find_first_not_of("0123456789") != std::string::npos) {
+                    ret = -1;
+                } else {
+                    code = atoi(tok.c_str());
+                }
+            }
+            size_t pos = eol + 2;
+            while (ret == 1 && pos < hend + 2) {
+                size_t e = buf.find("\r\n", pos);
+                std::string h = buf.substr(pos, e - pos);
+                pos = e + 2;
+                size_t colon = h.find(':');
+                if (colon == std::string::npos) continue;
+                std::string name = sls_http_lower_trim(h.substr(0, colon));
+                std::string val  = sls_http_lower_trim(h.substr(colon + 1));
+                if (name == "content-length") {
+                    if (val.empty() || val.size() > 10 || val.find_first_not_of("0123456789") != std::string::npos) {
+                        ret = -1;
+                    } else {
+                        cl = atol(val.c_str());
+                    }
+                } else if (name == "transfer-encoding") {
+                    if (val.find("chunked") != std::string::npos) ch = true;
+                }
+            }
+            if (ret == 1) {
+                size_t body = buf.size() - hlen;
+                if (code / 100 == 1 || code == 204 || code == 304) {
+                    ret = 1;                           // no body by definition
+                } else if (ch) {
+                    ret = sls_http_chunked_done(buf, hlen);
+                } else if (cl >= 0) {
+                    if ((size_t)cl > SLS_HTTP_MAX_RESPONSE - hlen) {
+                        ret = -1;
+                    } else {
+                        ret = body >= (size_t)cl ? 1 : 0;
+                    }
+                } else {
+                    ret = 0;                           // body ends at close
+                }
+            }
+        }
+    }
+    if (status)         *status         = (ret < 0) ? 0 : code;
+    if (header_len)     *header_len     = hlen;
+    if (content_length) *content_length = cl;
+    if (chunked)        *chunked        = ch;
+    return ret;
+}
+
 static void av_str_replace(char *buf, const char dst, const char ch)
 {
     char *p = NULL;
