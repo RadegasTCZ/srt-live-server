@@ -71,7 +71,7 @@ $(OUTPUT_PATH):
 
 # Sanitizer build: separate object/binary dirs, no FORTIFY.
 asan:
-	$(MAKE) all OUTPUT_PATH=obj-asan BIN_PATH=bin-asan OPT='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -fPIE' LDOPT='-pie -fsanitize=address,undefined'
+	$(MAKE) all OUTPUT_PATH=obj-asan BIN_PATH=bin-asan OPT='-O1 -g -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fsanitize=address,undefined -fno-omit-frame-pointer -fPIE' LDOPT='-pie -fsanitize=address,undefined'
 
 .PHONY: all asan clean
 
