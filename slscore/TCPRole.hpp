@@ -58,7 +58,8 @@ public :
 	virtual ~CTCPRole();
 
     int         open(int port, int backlog);
-    int         open(char *host, int port);
+    // non-blocking connect to an already resolved address (never resolves names)
+    int         open(const struct sockaddr_storage *addr, socklen_t addr_len);
     virtual int close();
 
     virtual int handler(DATA_PARAM *p);
@@ -79,9 +80,9 @@ protected:
     int         m_remote_port;
     bool        m_valid;
 
-    int         setup();
+    int         setup(int family = AF_INET);
     int         listen(int port, int backlog);
-    int         connect(char *host, int port);
+    int         connect(const struct sockaddr_storage *addr, socklen_t addr_len);
 
 };
 

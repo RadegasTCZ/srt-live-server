@@ -44,6 +44,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include <string>
@@ -145,46 +146,102 @@ uint32_t sls_hash_key(const char *data, int len)
     return key;
 }
 
-int sls_gethostbyname(const char *hostname, char *ip)
+int sls_resolve(const char *host, int port, struct sockaddr_storage *out, socklen_t *out_len, int family)
 {
-    char   *ptr, **pptr;
-    struct hostent *hptr;
-    char   str[32];
-    ptr = (char *)hostname;
-    int ret = SLS_ERROR;
+    if (NULL == host || '\0' == host[0] || NULL == out || NULL == out_len || port < 1 || port > 65535) {
+        return SLS_ERROR;
+    }
+    struct addrinfo hints;
+    struct addrinfo *res = NULL;
+    char service[16];
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = family;
+    hints.ai_socktype = SOCK_STREAM;
+    snprintf(service, sizeof(service), "%d", port);
 
-    if((hptr = gethostbyname(ptr)) == NULL)
-     {
-         printf("sls_gethostbyname: gethostbyname error for host:%s\n", ptr);
-         return ret;
-     }
+    int rc = getaddrinfo(host, service, &hints, &res);
+    if (0 != rc || NULL == res) {
+        sls_log(SLS_LOG_ERROR, "sls_resolve: cannot resolve host '%s': %s.", host, gai_strerror(rc));
+        if (res) freeaddrinfo(res);
+        return SLS_ERROR;
+    }
+    if (res->ai_addrlen > sizeof(struct sockaddr_storage)) {
+        freeaddrinfo(res);
+        return SLS_ERROR;
+    }
+    memset(out, 0, sizeof(*out));
+    memcpy(out, res->ai_addr, res->ai_addrlen);
+    *out_len = res->ai_addrlen;
+    freeaddrinfo(res);
+    return SLS_OK;
+}
 
-/*
-    printf("official hostname:%s\n",hptr->h_name);
-     for(pptr = hptr->h_aliases; *pptr != NULL; pptr++)
-         printf(" alias:%s\n",*pptr);
-*/
+int sls_parse_http_url(const char *url, std::string *host, int *port, std::string *uri)
+{
+    static const char scheme[] = "http://";
+    if (NULL == url || NULL == host || NULL == port || NULL == uri) {
+        return SLS_ERROR;
+    }
+    if (0 != strncasecmp(url, scheme, sizeof(scheme) - 1)) {
+        return SLS_ERROR;                       // only plain http is supported
+    }
+    std::string rest(url + sizeof(scheme) - 1);
+    size_t frag = rest.find('#');
+    if (frag != std::string::npos) {
+        rest.erase(frag);
+    }
+    size_t end = rest.find_first_of("/?");
+    std::string authority = rest.substr(0, end);
+    std::string path = (end == std::string::npos) ? std::string() : rest.substr(end);
+    if (path.empty() || path[0] == '?') {
+        path = "/" + path;                      // a base URL without a path gets '/'
+    }
 
-     switch(hptr->h_addrtype)
-     {
-         case AF_INET:
-         case AF_INET6:
-             //pptr=hptr->h_addr_list;
-             //for(; *pptr!=NULL; pptr++)
-             //    printf(" address:%s\n",
-             //           inet_ntop(hptr->h_addrtype, *pptr, str, sizeof(str)));
-
-        	 //copy the 1st ip
-             strcpy(ip, inet_ntop(hptr->h_addrtype, hptr->h_addr, str, sizeof(str)));
-             ret = SLS_OK;
-         break;
-         default:
-             printf("sls_gethostbyname: unknown address type\n");
-         break;
-     }
-
-     return ret;
- }
+    size_t at = authority.rfind('@');
+    if (at != std::string::npos) {
+        authority.erase(0, at + 1);
+    }
+    std::string h;
+    std::string p;
+    if (!authority.empty() && authority[0] == '[') {
+        size_t close = authority.find(']');
+        if (close == std::string::npos) {
+            return SLS_ERROR;
+        }
+        h = authority.substr(1, close - 1);
+        if (close + 1 < authority.size()) {
+            if (authority[close + 1] != ':') {
+                return SLS_ERROR;
+            }
+            p = authority.substr(close + 2);
+        }
+    } else {
+        size_t colon = authority.rfind(':');
+        if (colon == std::string::npos) {
+            h = authority;
+        } else {
+            h = authority.substr(0, colon);
+            p = authority.substr(colon + 1);
+        }
+    }
+    if (h.empty()) {
+        return SLS_ERROR;
+    }
+    int port_num = 80;
+    if (!p.empty()) {
+        if (p.size() > 5 || p.find_first_not_of("0123456789") != std::string::npos) {
+            return SLS_ERROR;
+        }
+        port_num = atoi(p.c_str());
+        if (port_num < 1 || port_num > 65535) {
+            return SLS_ERROR;
+        }
+    }
+    *host = h;
+    *port = port_num;
+    *uri  = path;
+    return SLS_OK;
+}
 
 static void av_str_replace(char *buf, const char dst, const char ch)
 {

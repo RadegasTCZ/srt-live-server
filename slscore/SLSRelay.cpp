@@ -287,7 +287,14 @@ int CSLSRelay::open(const char * srt_url) {
     sa.sin_family = AF_INET;
     sa.sin_port = htons(server_port);
 
-    sls_gethostbyname(host_name, server_ip);
+    struct sockaddr_storage resolved;
+    socklen_t resolved_len = 0;
+    if (SLS_OK != sls_resolve(host_name, server_port, &resolved, &resolved_len, AF_INET)) {
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, cannot resolve host='%s'.", this, host_name);
+        return SLS_ERROR;
+    }
+    sa.sin_addr = ((struct sockaddr_in *)&resolved)->sin_addr;
+    inet_ntop(AF_INET, &sa.sin_addr, server_ip, sizeof(server_ip));
     if (inet_pton(AF_INET, server_ip, &sa.sin_addr) != 1) {
     	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, inet_pton failure. server_ip=%s, server_port=%d.", this, server_ip, server_port);
         return SLS_ERROR;

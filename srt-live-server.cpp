@@ -234,7 +234,18 @@ int main(int argc, char* argv[])
     }
 
     if (strlen(conf_srt->stat_post_url) > 0) {
-        http_stat_client->open(conf_srt->stat_post_url, stat_method, conf_srt->stat_post_interval);
+        // resolved once, here; the client never does DNS itself
+        std::string stat_host, stat_uri;
+        int         stat_port = 0;
+        struct sockaddr_storage stat_addr;
+        socklen_t   stat_addr_len = 0;
+        if (SLS_OK != sls_parse_http_url(conf_srt->stat_post_url, &stat_host, &stat_port, &stat_uri) ||
+            SLS_OK != sls_resolve(stat_host.c_str(), stat_port, &stat_addr, &stat_addr_len)) {
+            sls_log(SLS_LOG_ERROR, "stat_post_url='%s' is not a usable http:// URL or does not resolve; stat posting is disabled.",
+                    conf_srt->stat_post_url);
+        } else {
+            http_stat_client->open(conf_srt->stat_post_url, &stat_addr, stat_addr_len, stat_method, conf_srt->stat_post_interval);
+        }
     }
 
 	while(!b_exit)

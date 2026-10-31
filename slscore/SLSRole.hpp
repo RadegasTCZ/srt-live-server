@@ -93,7 +93,7 @@ public :
     void        update_stat_info();
     virtual int get_peer_info(char *peer_name, int &peer_port);
 
-    void        set_http_url(const char *http_url);
+    void        set_http_url(const char *http_url, const struct sockaddr_storage *addr, socklen_t addr_len, int timeout_ms);
     int         on_connect();
     int         on_close();
     int         check_http_client();
@@ -127,6 +127,9 @@ protected:
     char         m_role_name[STR_MAX_LEN];
     char         m_streamid[URL_MAX_LEN];
     char         m_http_url[URL_MAX_LEN];
+    struct sockaddr_storage m_http_addr;   // resolved by the listener
+    socklen_t    m_http_addr_len;
+    int          m_http_timeout;           // ms
     bool         m_http_passed;
 
     sls_conf_base_t    *m_conf;

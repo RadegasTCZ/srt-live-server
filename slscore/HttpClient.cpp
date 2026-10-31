@@ -22,6 +22,7 @@
  */
 
 #include <errno.h>
+#include <poll.h>
 #include <string.h>
 
 #include "HttpClient.hpp"
@@ -58,7 +59,9 @@ CHttpClient::CHttpClient()
     m_out_data_len = 0;
     m_begin_tm_ms  = 0;
     m_end_tm_ms    = 0;
-    m_timeout      = 5;//default 5s
+    m_timeout      = 5000;//default 5 s, in ms
+    memset(&m_addr, 0, sizeof(m_addr));
+    m_addr_len     = 0;
     m_interval     = 0; //unit s
     m_id           = SLS_HTTP_INVALID_CLIENT_ID;
 
@@ -67,7 +70,7 @@ CHttpClient::CHttpClient()
 
     m_response_info.m_response_content_length    = -1;
     sprintf(m_role_name, "http_client");
-    sprintf(m_http_method, "POST");
+    sprintf(m_http_method, "GET");
 
 }
 
@@ -76,17 +79,19 @@ CHttpClient::~CHttpClient()
     close();
 }
 
-int  CHttpClient::open(const char *url, const char *method, int interval)
+int  CHttpClient::open(const char *url, const struct sockaddr_storage *addr, socklen_t addr_len, const char *method, int interval)
 {
     m_begin_tm_ms = sls_gettime_ms();
     int ret = SLS_OK;
 	if (NULL == url) {
         sls_log(SLS_LOG_INFO, "[%p]CHttpClient::open, failed, url is NULL.", this);
+		ret = SLS_ERROR;
 		goto FUNC_END;
 	}
 	snprintf(m_url, sizeof(m_url), "%s", url);
 	if (m_url[0] == '\0') {
         sls_log(SLS_LOG_INFO, "[%p]CHttpClient::open, failed, m_url='%s'.", this, m_url);
+		ret = SLS_ERROR;
 		goto FUNC_END;
 	}
 	if (NULL != method && strlen(method) > 0) {
@@ -101,13 +106,17 @@ int  CHttpClient::open(const char *url, const char *method, int interval)
 		goto FUNC_END;
     }
 
-    char resolved_ip[128];
-    if (SLS_OK != sls_gethostbyname(m_remote_host, resolved_ip)) {
-        sls_log(SLS_LOG_INFO, "[%p]CHttpClient::open, failed to resolve, remote_host='%s', remote_port=%d.",
+    if (NULL == addr || addr_len == 0 || addr_len > sizeof(m_addr)) {
+        sls_log(SLS_LOG_INFO, "[%p]CHttpClient::open, failed, no resolved address, remote_host='%s', remote_port=%d.",
         		this, m_remote_host, m_remote_port);
+        ret = SLS_ERROR;
 		goto FUNC_END;
     }
-    ret = CTCPRole::open(resolved_ip, m_remote_port);
+    if (addr != &m_addr) {
+        memcpy(&m_addr, addr, addr_len);
+    }
+    m_addr_len = addr_len;
+    ret = CTCPRole::open(&m_addr, m_addr_len);
     if (SLS_OK != ret) {
         sls_log(SLS_LOG_INFO, "[%p]CHttpClient::open, failed, remote_host='%s', remote_port=%d.",
         		this, m_remote_host, m_remote_port);
@@ -155,8 +164,13 @@ int  CHttpClient::close()
 
 int  CHttpClient::reopen()
 {
+	 // open() rewrites m_url / m_http_method: pass copies, not the members themselves
+	 char url[URL_MAX_LEN];
+	 char method[sizeof(m_http_method)];
+	 snprintf(url, sizeof(url), "%s", m_url);
+	 snprintf(method, sizeof(method), "%s", m_http_method);
 	 close();
-     return open(m_url, m_http_method, m_interval);
+     return open(url, &m_addr, m_addr_len, method, m_interval);
 }
 
 
@@ -175,8 +189,8 @@ int  CHttpClient::check_timeout(int64_t cur_tm_ms)
 		cur_tm_ms = sls_gettime_ms();
 	}
 
-    int d = cur_tm_ms - m_begin_tm_ms;
-    if ( d < m_timeout*1000) {
+    int64_t d = cur_tm_ms - m_begin_tm_ms;
+    if ( d < m_timeout) {
     	return SLS_ERROR;
     }
     m_end_tm_ms = cur_tm_ms;
@@ -212,9 +226,9 @@ void  CHttpClient::set_stage_callback(HTTP_CALLBACK callback, void *context)
 	m_callback_context = context;
 }
 
-void CHttpClient::set_timeout(int v)
+void CHttpClient::set_timeout(int ms)
 {
-	m_timeout = v;
+	m_timeout = ms;
 }
 
 void CHttpClient::set_id(uint32_t client_id)
@@ -389,43 +403,43 @@ int CHttpClient::handler(DATA_PARAM *p)
 	return ret;
 }
 
+// Called from the worker's loop: never blocks (poll with a zero timeout).
 int CHttpClient::handler()
 {
-    int ret = 0;
-    int timeout = 10;//10ms
+    if (!m_valid || m_fd <= 0)
+        return SLS_OK;
 
-    int sfd = m_fd;
-    fd_set read_fds;
-    fd_set write_fds;
-    struct timeval tout;
-    int max_sockfd;
-
-    FD_ZERO(&read_fds);
-    FD_SET(sfd, &read_fds);
-    FD_ZERO(&write_fds);
-    FD_SET(sfd, &write_fds);
-    max_sockfd = sfd;
-
-    if (!m_valid)
-        return 0;
-    tout.tv_sec = 0;
-    tout.tv_usec = timeout * 1000;
-    ret = select (max_sockfd + 1, &read_fds, &write_fds, NULL, &tout);
+    struct pollfd pfd;
+    pfd.fd      = m_fd;
+    pfd.events  = POLLIN | POLLOUT;
+    pfd.revents = 0;
+    int ret = poll(&pfd, 1, 0);
     if (ret == 0) {
         return SLS_OK;
     }
-    if (ret == -1) {
-        sls_log(SLS_LOG_INFO, "[%p]CHttpClient::handler, ret=%d, errno=%d, err='%s'",
+    if (ret < 0) {
+        if (errno == EINTR) {
+            return SLS_OK;
+        }
+        sls_log(SLS_LOG_INFO, "[%p]CHttpClient::handler, poll ret=%d, errno=%d, err='%s'",
                 this, ret, errno, strerror(errno));
+        m_valid = false;
         return SLS_ERROR;
     }
 
     //write is ready?
-    if(FD_ISSET(sfd, &write_fds)){
+    if (pfd.revents & POLLOUT) {
+        int err = 0;
+        socklen_t len = sizeof(err);
+        if (0 != getsockopt(m_fd, SOL_SOCKET, SO_ERROR, &err, &len) || 0 != err) {
+            sls_log(SLS_LOG_INFO, "[%p]CHttpClient::handler, connect failed, url='%s', err=%d.", this, m_url, err);
+            m_valid = false;
+            return SLS_ERROR;
+        }
         send();
     }
-    //read is ready?
-    if(FD_ISSET(sfd, &read_fds)){
+    //read is ready? (also reports EOF / reset)
+    if (pfd.revents & (POLLIN | POLLHUP | POLLERR)) {
         recv();
     }
     return SLS_OK;
@@ -435,63 +449,17 @@ int CHttpClient::handler()
 
 int CHttpClient::parse_url()
 {
-    //http://hostname:port/sls?method=stat or http://hostname:port/sls?method=on_connect&srt_url=srt://....
-    if (m_url[0] == '\0') {
-    	return SLS_ERROR;
-    }
-
-    char url[1024] = {0};
-    snprintf(url, sizeof(url), "%s", m_url);
-
-    char *p = url;
-    //protocal
-    p = strchr(url, ':');
-    if (!p) {
-    	sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_url, no ':', url='%s'", this, m_url);
+    //http://hostname:port/sls?on_event=on_connect&srt_url=...
+    std::string host;
+    std::string uri;
+    int         port = 0;
+    if (SLS_OK != sls_parse_http_url(m_url, &host, &port, &uri)) {
+        sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_url, not a usable http url='%s'.", this, m_url);
         return SLS_ERROR;
     }
-    p[0] = 0x00;
-    if (strcmp(url, "http") != 0) {
-    	sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_url, not 'http' prefix, url='%s'.",
-    			this, m_url);
-        return SLS_ERROR;
-    }
-    p += 3;//skip '://'
-
-    //hostname:port
-    char *p_tmp = strchr(p, ':');
-    if (p_tmp) {
-        p_tmp[0] = 0x00;
-        snprintf(m_remote_host, sizeof(m_remote_host), "%s", p);
-        p = p_tmp + 1;
-        p_tmp = strchr(p, '/');
-        if (p_tmp) {
-            p_tmp[0] = 0x00;
-            m_remote_port = atoi(p);
-            p_tmp[0] = '/';
-            p = p_tmp;
-        }else{
-        	sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_url, no '/' in '%s'.",
-        			this, m_url);
-            m_remote_port = atoi(p);
-            p = p_tmp;
-        }
-    } else {
-    	m_remote_port = 80;
-        p_tmp = strchr(p, '/');
-        if (p_tmp){
-            p_tmp[0] = 0x00;
-            snprintf(m_remote_host, sizeof(m_remote_host), "%s", p);
-            p_tmp[0] = '/';
-            p = p_tmp;
-		}else{
-        	sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_url, no '/' in '%s'.",
-        			this, m_url);
-            p = p_tmp;
-        }
-    }
-    if (NULL != p)
-        snprintf(m_uri, sizeof(m_uri), "%s", p);
+    snprintf(m_remote_host, sizeof(m_remote_host), "%s", host.c_str());
+    snprintf(m_uri, sizeof(m_uri), "%s", uri.c_str());
+    m_remote_port = port;
     return SLS_OK;
 }
 

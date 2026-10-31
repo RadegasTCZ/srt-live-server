@@ -57,7 +57,8 @@ public :
 	CHttpClient();
 	virtual ~CHttpClient();
 
-	int         open(const char *url, const char *method=NULL, int interval=0);
+	// addr is the already resolved server (sls_resolve); the client never does DNS.
+	int         open(const char *url, const struct sockaddr_storage *addr, socklen_t addr_len, const char *method="GET", int interval=0);
 	int         close();
 	int         reopen();
 
@@ -67,7 +68,7 @@ public :
     virtual int handler();
 
     void        set_id(uint32_t client_id);
-    void        set_timeout(int v);
+    void        set_timeout(int ms);
     void        set_stage_callback(HTTP_CALLBACK callback, void *context);
 
     int         check_timeout(int64_t cur_tm_ms=0);
@@ -85,7 +86,9 @@ protected:
 	int         m_remote_port;
 	int64_t     m_begin_tm_ms;
 	int64_t     m_end_tm_ms;
-	int         m_timeout;//s
+	int         m_timeout;//ms
+	struct sockaddr_storage m_addr;
+	socklen_t   m_addr_len;
 	int         m_interval;//s
 
 	CSLSArray   m_out_array;

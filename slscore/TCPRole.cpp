@@ -58,11 +58,13 @@ int CTCPRole::handler(DATA_PARAM *p)
 int CTCPRole::write(const char * buf, int size)
 {
 	int len = 0;
-	len = send(m_fd, buf, size, 0);
+	len = send(m_fd, buf, size, MSG_NOSIGNAL);
 	if (0 >= len) {
-        sls_log(SLS_LOG_INFO, "[%p]CTCPRole::read, len=%d, errno=%d, err='%s'",
+        sls_log(SLS_LOG_TRACE, "[%p]CTCPRole::write, len=%d, errno=%d, err='%s'",
         		this, len, errno, strerror(errno));
-
+		if (len < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+			m_valid = false;
+		}
 	}
     return len;
 }
@@ -71,10 +73,14 @@ int CTCPRole::read(char * buf, int size)
 {
 	int len = 0;
 	len = recv(m_fd, buf, size, 0);
-	if (len <= 0){
+	if (len == 0) {
+		// orderly EOF from the peer
+		sls_log(SLS_LOG_TRACE, "[%p]CTCPRole::read, eof.", this);
+		m_valid = false;
+	} else if (len < 0) {
         sls_log(SLS_LOG_TRACE, "[%p]CTCPRole::read, len=%d, errno=%d, err='%s'.",
         		this, len, errno, strerror(errno));
-		if (errno != EAGAIN ) {
+		if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
 	        sls_log(SLS_LOG_INFO, "[%p]CTCPRole::read, invalid tcp.",
 	        		this);
 			m_valid = false;
@@ -83,26 +89,30 @@ int CTCPRole::read(char * buf, int size)
     return len;
 }
 
-int CTCPRole::open(char *host, int port)
+int CTCPRole::open(const struct sockaddr_storage *addr, socklen_t addr_len)
 {
-	if (SLS_OK != setup())
-	{
-        sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::open setup failure, host='%s', port==%d.", this, host, port);
+	if (NULL == addr || addr_len == 0) {
+        sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::open, no address.", this);
         return SLS_ERROR;
 	}
-	if (SLS_OK != connect(host, port))
+	if (SLS_OK != setup(addr->ss_family))
 	{
-        sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::open setup connect failure, host='%s', port==%d.", this, host, port);
+        sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::open setup failure.", this);
+        return SLS_ERROR;
+	}
+	if (SLS_OK != connect(addr, addr_len))
+	{
+        sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::open connect failure.", this);
         return SLS_ERROR;
 	}
     m_valid = true;
 	return SLS_OK;
 }
 
-int CTCPRole::connect(char *host, int port)
+int CTCPRole::connect(const struct sockaddr_storage *addr, socklen_t addr_len)
 {
     if (m_fd <= 0) {
-        sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::connect, m_fd=%d, cant't setup, host='%s', port==%d.", this, m_fd,  host, port);
+        sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::connect, m_fd=%d, cant't setup.", this, m_fd);
         return SLS_ERROR;
     }
     int ret = SLS_ERROR;
@@ -114,28 +124,19 @@ int CTCPRole::connect(char *host, int port)
         return SLS_ERROR;
     }
 
-    struct sockaddr_in servaddr;
-    bzero(&servaddr, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_port = htons(port);
-    //inet_pton(AF_INET, host, &servaddr.sin_addr);
-    servaddr.sin_addr.s_addr = inet_addr(host);
-
-    ret = ::connect(m_fd, (struct sockaddr *) &servaddr, sizeof(servaddr));
+    ret = ::connect(m_fd, (const struct sockaddr *) addr, addr_len);
     if ( ret != 0 )
 	{
     	if (errno != EINPROGRESS)
     	{
-            sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::connect, failure, m_fd=%d, host=%s, port==%d, errno=%d.", this, m_fd, host, port, errno);
+            sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::connect, failure, m_fd=%d, errno=%d.", this, m_fd, errno);
             ::close(m_fd);
             m_fd = 0;
             return SLS_ERROR;
     	}
 	}
 
-    sls_log(SLS_LOG_INFO, "[%p]CTCPRole::connect, ok, m_fd=%d, host=%s, port==%d.", this, m_fd, host, port);
-    snprintf(m_remote_host, sizeof(m_remote_host), "%s", host);
-    m_remote_port = port;
+    sls_log(SLS_LOG_INFO, "[%p]CTCPRole::connect, started, m_fd=%d.", this, m_fd);
 	return SLS_OK;
 }
 
@@ -156,16 +157,21 @@ int CTCPRole::open(int port, int backlog)
 
 }
 
-int CTCPRole::setup()
+int CTCPRole::setup(int family)
 {
     if (m_fd > 0) {
         sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::setup, m_fd=%d, cant't setup.", this, m_fd);
         return SLS_ERROR;
     }
 
-    m_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (m_fd == 0) {
-        sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::setup, create sock failure.", this);
+    m_fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (m_fd <= 0) {
+        // fd 0 is never ours: m_fd == 0 means "no socket" everywhere in this class
+        sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::setup, create sock failure, errno=%d.", this, errno);
+        if (m_fd == 0) {
+            ::close(m_fd);
+        }
+        m_fd = 0;
         return SLS_ERROR;
     }
     sls_log(SLS_LOG_INFO, "[%p]CTCPRole::setup, create sock ok, m_fd=%d.", this, m_fd);

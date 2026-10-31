@@ -102,6 +102,9 @@ CSLSListener::CSLSListener()
     m_admission_limiter = NULL;
     m_stat_info = std::string("");
     memset(m_http_url_role, 0, URL_MAX_LEN);
+    m_on_event_timeout = SLS_DEFAULT_ON_EVENT_TIMEOUT;
+    memset(&m_hook_addr, 0, sizeof(m_hook_addr));
+    m_hook_addr_len = 0;
 
     sprintf(m_role_name, "listener");
 }
@@ -222,6 +225,12 @@ int CSLSListener::init_conf_app()
     m_idle_streams_timeout_role  = conf_server->idle_streams_timeout;
     m_admission_timeout          = conf_server->admission_timeout;
     snprintf(m_http_url_role, sizeof(m_http_url_role), "%s", conf_server->on_event_url);
+    m_on_event_timeout           = conf_server->on_event_timeout;
+    if (m_http_url_role[0] != 0 && SLS_OK != resolve_hook()) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::init_conf_app, on_event_url='%s' is unusable (not an http:// URL or the host does not resolve).",
+                this, m_http_url_role);
+        return SLS_ERROR;
+    }
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::init_conf_app, m_back_log=%d, m_idle_streams_timeout=%d, admission_timeout=%dms.",
             this, m_back_log, m_idle_streams_timeout_role, m_admission_timeout);
 
@@ -432,8 +441,57 @@ int CSLSListener::load_users(const char *path, std::string *err)
     return SLS_OK;
 }
 
+int CSLSListener::resolve_hook()
+{
+    std::string host;
+    std::string uri;
+    int         port = 0;
+    if (SLS_OK != sls_parse_http_url(m_http_url_role, &host, &port, &uri)) {
+        return SLS_ERROR;
+    }
+    struct sockaddr_storage addr;
+    socklen_t               len = 0;
+    if (SLS_OK != sls_resolve(host.c_str(), port, &addr, &len)) {
+        return SLS_ERROR;
+    }
+    CSLSLock lock(&m_hook_mutex);
+    m_hook_addr     = addr;
+    m_hook_addr_len = len;
+    return SLS_OK;
+}
+
+void CSLSListener::reload_hook()
+{
+    if (m_http_url_role[0] == 0) {
+        return;
+    }
+    if (SLS_OK != resolve_hook()) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::reload_hook, cannot resolve the on_event_url host, keeping the previous address.", this);
+    } else {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::reload_hook, on_event_url host re-resolved.", this);
+    }
+}
+
+// Hand a new role the hook's URL, address and timeout. The address is copied
+// under the mutex because a reload may replace it from another thread.
+void CSLSListener::attach_hook(CSLSRole *role)
+{
+    if (m_http_url_role[0] == 0) {
+        return;
+    }
+    struct sockaddr_storage addr;
+    socklen_t               len;
+    {
+        CSLSLock lock(&m_hook_mutex);
+        addr = m_hook_addr;
+        len  = m_hook_addr_len;
+    }
+    role->set_http_url(m_http_url_role, &addr, len, m_on_event_timeout);
+}
+
 int CSLSListener::reload_users()
 {
+    reload_hook();
     if (!m_conf) {
         return SLS_OK;
     }
@@ -827,7 +885,7 @@ int CSLSListener::handler()
 	    player->set_stat_info_base(stat_info);
 	    // on_connect is sent by the worker that adopts the role (Ruling R17):
 	    // a role that expires while queued has announced nothing
-	    player->set_http_url(m_http_url_role);
+	    attach_hook(player);
 
 		// pub (and, once pushed, player) may already be gone: another thread
 		// can tear a role down right after the lookup, so log pointer values
@@ -871,7 +929,7 @@ int CSLSListener::handler()
     		m_port, pub->get_role_name(), app_uplive.c_str(), stream_name, sid, peer_name, peer_port, cur_time);
     std::string stat_info = std::string(tmp);
     pub->set_stat_info_base(stat_info);
-    pub->set_http_url(m_http_url_role);
+    attach_hook(pub);
 
 	sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new pub=%p, key_stream_name=%s.",
 			this, pub, key_stream_name);

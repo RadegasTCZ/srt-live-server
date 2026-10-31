@@ -54,6 +54,9 @@ CSLSRole::CSLSRole()
     memset(m_role_name, 0, STR_MAX_LEN);
     memset(m_streamid, 0, URL_MAX_LEN);
     memset(m_http_url, 0, URL_MAX_LEN);
+    memset(&m_http_addr, 0, sizeof(m_http_addr));
+    m_http_addr_len = 0;
+    m_http_timeout  = 2000;
     m_http_passed  = true;
 
     m_conf         = NULL;
@@ -516,12 +519,15 @@ int  CSLSRole::get_peer_info(char *peer_name, int &peer_port)
     return ret;
 }
 
-void  CSLSRole::set_http_url(const char *http_url)
+void  CSLSRole::set_http_url(const char *http_url, const struct sockaddr_storage *addr, socklen_t addr_len, int timeout_ms)
 {
-	if (NULL == http_url || strlen(http_url) == 0) {
+	if (NULL == http_url || strlen(http_url) == 0 || NULL == addr || addr_len == 0 || addr_len > sizeof(m_http_addr)) {
 	    return ;
 	}
 	snprintf(m_http_url, sizeof(m_http_url), "%s", http_url);
+	memcpy(&m_http_addr, addr, addr_len);
+	m_http_addr_len = addr_len;
+	m_http_timeout  = timeout_ms;
 	if (NULL == m_http_client) {
 		m_http_client = new CHttpClient;
 		m_http_passed = false;
@@ -544,7 +550,8 @@ int  CSLSRole::on_connect()
 	snprintf(on_event_url, sizeof(on_event_url), "%s?on_event=on_connect&role_name=%s&srt_url=%s&remote_ip=%s&remote_port=%d",
 			m_http_url, m_role_name, get_streamid(), m_peer_ip, m_peer_port);
 
-	return m_http_client->open(on_event_url);
+	m_http_client->set_timeout(m_http_timeout);
+	return m_http_client->open(on_event_url, &m_http_addr, m_http_addr_len, "GET");
 }
 
 int  CSLSRole::on_close()
@@ -566,7 +573,8 @@ int  CSLSRole::on_close()
 	snprintf(on_event_url, sizeof(on_event_url), "%s?on_event=on_close&role_name=%s&srt_url=%s&remote_ip=%s&remote_port=%d",
 			m_http_url, m_role_name, get_streamid(), m_peer_ip, m_peer_port);
 
-	int ret = m_http_client->open(on_event_url);
+	m_http_client->set_timeout(m_http_timeout);
+	int ret = m_http_client->open(on_event_url, &m_http_addr, m_http_addr_len, "GET");
 	return ret;
 }
 

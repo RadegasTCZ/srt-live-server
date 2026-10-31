@@ -28,6 +28,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/socket.h>
 #include <string>
 #include <vector>
 #include <unistd.h>
@@ -97,7 +98,11 @@ bool    sls_is_valid_passphrase_len(size_t len);
 bool    sls_is_valid_pbkeylen(int pbkeylen);
 
 uint32_t sls_hash_key(const char *data, int len);
-int      sls_gethostbyname(const char *hostname, char *ip);
+// getaddrinfo(): SLS_OK / SLS_ERROR. Blocking DNS: call only at start-up or reload,
+// never from a worker or the hot path. family: AF_UNSPEC, AF_INET or AF_INET6.
+int      sls_resolve(const char *host, int port, struct sockaddr_storage *out, socklen_t *out_len, int family = AF_UNSPEC);
+// "http://host[:port][/path][?query]" -> host (no brackets), port (default 80), uri (starts with '/')
+int      sls_parse_http_url(const char *url, std::string *host, int *port, std::string *uri);
 int      sls_mkdir_p(const char *path);
 
 int sls_write_pid(const char *path, int pid);   // returns the locked fd (keep it open until exit), or -1
