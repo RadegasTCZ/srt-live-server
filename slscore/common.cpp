@@ -382,46 +382,73 @@ int sls_write_pid(const char *path, int pid)
         sls_log(SLS_LOG_ERROR, "sls_write_pid: no pid file path.");
         return -1;
     }
-    int wfd = open(path, O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC, 0600);
-    if (wfd < 0) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot open pid file '%s' for writing: %s. "
+    struct stat st;
+    struct flock fl;
+
+    // 1. An existing file may be a leftover from an older build or planted by
+    //    someone else, and somebody may already hold an fd on it that no chmod
+    //    can revoke. Never reuse it: refuse if a lock holder exists (a running
+    //    instance), otherwise unlink it and create a fresh inode below.
+    int ofd = open(path, O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if (ofd >= 0) {
+        if (fstat(ofd, &st) != 0 || !S_ISREG(st.st_mode)) {
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: '%s' exists and is not a regular file; refusing to touch it.", path);
+            close(ofd);
+            return -1;
+        }
+        memset(&fl, 0, sizeof(fl));
+        fl.l_type = F_WRLCK; fl.l_whence = SEEK_SET;
+        if (fcntl(ofd, F_GETLK, &fl) != 0) {
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot query the lock on existing pid file '%s': %s.", path, strerror(errno));
+            close(ofd);
+            return -1;
+        }
+        close(ofd);
+        if (fl.l_type != F_UNLCK) {
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: another instance (pid %d) is running with pid file '%s'.", (int)fl.l_pid, path);
+            return -1;
+        }
+        if (unlink(path) != 0 && errno != ENOENT) {
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot remove stale pid file '%s': %s.", path, strerror(errno));
+            return -1;
+        }
+    } else if (errno != ENOENT) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot open pid file '%s': %s. "
                 "sls does not create directories or follow symlinks for this file; "
                 "set 'pid_file' in the srt block of the conf to a writable path, or create its directory.",
                 path, strerror(errno));
         return -1;
     }
 
-    struct stat st;
-    if (fstat(wfd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1 || st.st_uid != geteuid()) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: pid file '%s' is not a plain file owned by this user with a single link; refusing to use it.", path);
-        close(wfd);
+    // 2. Always a fresh file: O_EXCL, so if anyone raced us in, refuse (no retry).
+    int wfd = open(path, O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0600);
+    if (wfd < 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot create pid file '%s': %s. "
+                "sls does not create directories or follow symlinks for this file; "
+                "set 'pid_file' in the srt block of the conf to a writable path, or create its directory.",
+                path, strerror(errno));
         return -1;
     }
 
-    // Refuse if anything holds a lock (a running instance). Take the write lock
-    // (not just a GETLK) so two simultaneous starts cannot both pass.
-    struct flock fl;
+    // 3. Fail closed unless it is exactly what we think we created.
+    if (fstat(wfd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1 ||
+        st.st_uid != geteuid() || (st.st_mode & 077) != 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: new pid file '%s' is not a private plain file owned by this user (mode %o); refusing to use it.",
+                path, (unsigned)(st.st_mode & 07777));
+        close(wfd);
+        unlink(path);
+        return -1;
+    }
+
+    // Take the write lock now so two simultaneous starts cannot both pass.
     memset(&fl, 0, sizeof(fl));
     fl.l_type = F_WRLCK; fl.l_whence = SEEK_SET;
     if (fcntl(wfd, F_SETLK, &fl) != 0) {
-        struct flock who;
-        memset(&who, 0, sizeof(who));
-        who.l_type = F_WRLCK; who.l_whence = SEEK_SET;
-        if (fcntl(wfd, F_GETLK, &who) == 0 && who.l_type != F_UNLCK) {
-            sls_log(SLS_LOG_ERROR, "sls_write_pid: another instance (pid %d) is running with pid file '%s'.", (int)who.l_pid, path);
-        } else {
-            sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot lock pid file '%s': %s.", path, strerror(errno));
-        }
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot lock pid file '%s': %s.", path, strerror(errno));
         close(wfd);
         return -1;
     }
 
-    fchmod(wfd, 0600);
-    if (ftruncate(wfd, 0) != 0) {
-        sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot truncate pid file '%s': %s.", path, strerror(errno));
-        close(wfd);
-        return -1;
-    }
     char buf[32];
     int  len = snprintf(buf, sizeof(buf), "%d\n", pid);
     int  off = 0;
@@ -435,7 +462,11 @@ int sls_write_pid(const char *path, int pid)
         }
         off += (int)n;
     }
-    fsync(wfd);
+    if (fsync(wfd) != 0) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: fsync of pid file '%s' failed: %s.", path, strerror(errno));
+        close(wfd);
+        return -1;
+    }
 
     // Process locks belong to (process, file): closing ANY fd of this file
     // drops them all. So close the writable fd first, then lock a read-only one.
@@ -443,6 +474,12 @@ int sls_write_pid(const char *path, int pid)
     int rfd = open(path, O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
     if (rfd < 0) {
         sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot reopen pid file '%s' read-only: %s.", path, strerror(errno));
+        return -1;
+    }
+    struct stat rst;
+    if (fstat(rfd, &rst) != 0 || rst.st_ino != st.st_ino || rst.st_dev != st.st_dev) {
+        sls_log(SLS_LOG_ERROR, "sls_write_pid: pid file '%s' was replaced while starting; refusing.", path);
+        close(rfd);
         return -1;
     }
     memset(&fl, 0, sizeof(fl));
