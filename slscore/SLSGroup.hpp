@@ -66,7 +66,13 @@ protected:
 
 private:
     CSLSRoleList                  *m_list_role;
-    std::list<CSLSRole *>          m_list_wait_http_role;
+    // on_close requests of roles that are already gone: fire-and-forget, polled by
+    // this worker thread only (so no lock), each dropped once answered or past its deadline
+    struct CloseWait {
+        CHttpClient *client;
+        int64_t      deadline_ms;
+    };
+    std::list<CloseWait>           m_list_wait_close;
     std::map<int, CSLSRole *>      m_map_role;
     std::list<CSLSRelayManager *>  m_list_reconnect_relay_manager;
 
@@ -75,7 +81,8 @@ private:
     void  check_reconnect_relay();
     void  check_invalid_sock();
     void  check_new_role();
-    void  check_wait_http_role();
+    void  check_wait_close();
+    void  adopt_close_client(CSLSRole *role);
     // a role leaves this worker: let a relay's manager decide on reconnect
     void  relay_ended(CSLSRole *role);
 

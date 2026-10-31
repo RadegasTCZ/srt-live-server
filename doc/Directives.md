@@ -68,6 +68,34 @@ second, with the count of refusals not logged). Outbound relay connections
 (pull and push) never count. A slot is given back when the connection closes,
 whichever way it closes.
 
+## on_event_url, on_event_timeout (server block)
+
+`on_event_url http://host[:port][/path][?query];` makes sls call a webhook
+with a plain HTTP/1.1 `GET` for each publisher and player:
+
+    <url>?on_event=on_connect|on_close&role_name=publisher|player&srt_url=<streamid>&remote_ip=<ip>&remote_port=<port>
+
+The values are percent-encoded (the stream id's `/` is sent as `%2F`); the
+joiner is `&` when the URL already has a query, and a URL without a path gets
+`/`. Only `http://` is supported. The answers are read case-insensitively and
+may carry `Content-Length`, be chunked, or be delimited by the close.
+
+- `on_connect` is sent when a worker adopts the connection. The role is held
+  (no data in or out) until the answer arrives; status 200 admits it, anything
+  else - another status, a malformed answer, a connection error, no answer
+  within `on_event_timeout` - closes it (`http refused` in the log).
+  `on_event_timeout` is in ms (100-30000, default 2000). Waiting for a hook
+  never blocks other roles of the worker.
+- `on_close` is sent once for every `on_connect` that was sent, also when the
+  hook refused or timed out, after the connection is gone. It is
+  fire-and-forget: the answer is not used and the request is dropped after 2 s.
+  A connection that expired while still queued for a worker sent neither.
+
+The hook host is resolved when sls starts (a host that does not resolve, or a
+URL that is not `http://`, stops sls from starting) and again on a reload
+(`-s reload`); if the re-resolution fails the previous address stays in use and
+an error is logged. Names are never resolved while serving connections.
+
 ## admission_timeout (server block)
 
 Milliseconds (100-60000, default 5000) an accepted connection may wait for a

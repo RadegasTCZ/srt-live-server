@@ -66,18 +66,20 @@ int CSLSGroup::stop()
     sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::stop, worker_number=%d.", this, m_worker_number);
 	ret = CSLSEpollThread::stop();
 
-	std::list<CSLSRole * >::iterator it_erase;
-    for (std::list<CSLSRole * >::iterator it = m_list_wait_http_role.begin(); it != m_list_wait_http_role.end();)
-    {
-        CSLSRole * role = *it;
-        if (role) {
-        	role->uninit();
-            delete role;
+    // the worker has stopped: give the last on_close requests a moment to leave
+    int64_t drain_until = sls_gettime_ms() + 300;
+    while (!m_list_wait_close.empty() && sls_gettime_ms() < drain_until) {
+        check_wait_close();
+        if (!m_list_wait_close.empty()) {
+            msleep(5);
         }
-        it ++;
     }
-    m_list_wait_http_role.clear();
-    sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::stop, m_list_wait_http_role.clear, worker_number=%d.", this, m_worker_number);
+    for (std::list<CloseWait>::iterator it = m_list_wait_close.begin(); it != m_list_wait_close.end(); it++) {
+        it->client->close();
+        delete it->client;
+    }
+    m_list_wait_close.clear();
+    sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::stop, m_list_wait_close.clear, worker_number=%d.", this, m_worker_number);
 	return ret;
 }
 
@@ -111,10 +113,11 @@ void CSLSGroup::check_new_role() {
         m_map_role[fd] = role;
         // Announce the role only now that a worker owns it, so on_connect and
         // on_close always pair: a queued role that expires (or is erased at
-        // shutdown) sent neither. The admission gate is unchanged: until the
-        // hook answers 200, check_http_passed holds the role's reads/writes,
-        // and a failure closes it. No-op for roles without on_event_url
-        // (listener, pullers, pushers).
+        // shutdown) sent neither, and an announced one always gets its on_close
+        // (even when the hook refused it or timed out). The admission gate is
+        // unchanged: until the hook answers 200, check_http_passed holds the
+        // role's reads/writes, and a failure closes it. No-op for roles without
+        // on_event_url (listener, pullers, pushers).
         role->on_connect();
         sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll fd=%d, role_map.size=%zu.",
                 this, m_worker_number, role->get_role_name(), role, fd, m_map_role.size());
@@ -222,32 +225,46 @@ int CSLSGroup::handler()
 
 void CSLSGroup::idle_check()
 {
-	check_wait_http_role();
+	check_wait_close();
 	check_reconnect_relay();
     check_invalid_sock();
     check_new_role();
 }
 
-void CSLSGroup::check_wait_http_role()
+// A gone role's on_close request is taken over here and polled (zero-timeout poll,
+// never blocks) until the hook has answered or the request times out.
+void CSLSGroup::adopt_close_client(CSLSRole *role)
 {
-    std::list<CSLSRole *>::iterator it;
-    std::list<CSLSRole *>::iterator it_erase;
-    for(it=m_list_wait_http_role.begin(); it!=m_list_wait_http_role.end();) {
-        CSLSRole * role = *it;
-		it_erase = it;
-		it ++;
-        if (!role) {
-        	m_list_wait_http_role.erase(it_erase);
-            continue;
-        }
-        if (SLS_ERROR == role->check_http_client()){
-			sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_wait_http_role, worker_number=%d, delete %s=%p.",
-					this, m_worker_number, role->get_role_name(), role);
-        	role->uninit();
-        	delete role;
-        	m_list_wait_http_role.erase(it_erase);
+    CHttpClient *client = role->take_close_client();
+    if (NULL == client) {
+        return;
+    }
+    CloseWait w;
+    w.client      = client;
+    w.deadline_ms = sls_gettime_ms() + SLS_ON_CLOSE_TIMEOUT_MS;
+    m_list_wait_close.push_back(w);
+    sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::adopt_close_client, worker_number=%d, %s=%p, on_close pending, waiting=%zu.",
+            this, m_worker_number, role->get_role_name(), role, m_list_wait_close.size());
+}
+
+void CSLSGroup::check_wait_close()
+{
+    if (m_list_wait_close.empty()) {
+        return;
+    }
+    int64_t now = sls_gettime_ms();
+    for (std::list<CloseWait>::iterator it = m_list_wait_close.begin(); it != m_list_wait_close.end();) {
+        CHttpClient *client = it->client;
+        client->handler();
+        client->check_timeout(now);
+        if (client->has_result() || now >= it->deadline_ms) {
+            sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_wait_close, worker_number=%d, on_close done, status=%d.",
+                    this, m_worker_number, client->get_status());
+            client->close();
+            delete client;
+            it = m_list_wait_close.erase(it);
         } else {
-           role->handler();
+            it++;
         }
     }
 }
@@ -335,15 +352,10 @@ void CSLSGroup::check_invalid_sock()
 			relay_ended(role);
 
 			role->uninit();
-			if (SLS_OK == role->check_http_client()) {
-				m_list_wait_http_role.push_back(role);
-				sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, put into m_list_wait_http_role.",
-					  this, m_worker_number, role->get_role_name(), role);
-			} else {
-				sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, delete.",
-					  this, m_worker_number, role->get_role_name(), role);
-			    delete role;
-			}
+			adopt_close_client(role);
+			sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, delete.",
+				  this, m_worker_number, role->get_role_name(), role);
+			delete role;
 			m_map_role.erase(it_erase);
 			continue;
 		}
@@ -361,6 +373,7 @@ void CSLSGroup::clear()
             sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::clear, worker_number=%d, delete %s=%p.",
                     this, m_worker_number, role->get_role_name(), role);
             role->uninit();
+            adopt_close_client(role);
             delete role;
         }
     }

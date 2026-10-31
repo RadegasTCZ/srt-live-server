@@ -70,9 +70,11 @@ srt {
         admission_timeout    5000;  # ms (100-60000, default 5000) an accepted connection may
                                     # wait for a free worker slot before it is closed.
 
-        # Optional: POST connect/disconnect events to a webhook.
+        # Optional: GET connect/disconnect events to a webhook (see doc/Directives.md).
         #on_event_url http://127.0.0.1:8000/sls/on_event;
-        #   query string: ?method=on_connect|on_close&role_name=...&srt_url=...
+        #   query string: ?on_event=on_connect|on_close&role_name=...&srt_url=...&remote_ip=...&remote_port=...
+        #   (values percent-encoded). on_connect must be answered 200 or the role is refused.
+        #on_event_timeout 2000;   # ms (100-30000, default 2000) the on_connect answer may take
 
         # ----- Encryption (pick at most ONE mode) ----------------------------
         #

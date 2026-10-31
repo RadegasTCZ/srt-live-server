@@ -58,6 +58,9 @@ CSLSRole::CSLSRole()
     m_http_addr_len = 0;
     m_http_timeout  = 2000;
     m_http_passed  = true;
+    m_connect_sent = false;
+    m_close_sent   = false;
+    m_close_client = NULL;
 
     m_conf         = NULL;
     m_map_data     = NULL;
@@ -81,6 +84,12 @@ CSLSRole::CSLSRole()
 CSLSRole::~CSLSRole()
 {
     uninit();
+    if (NULL != m_close_client) {
+        // never handed to a group (e.g. shutdown): best effort is over
+        m_close_client->close();
+        delete m_close_client;
+        m_close_client = NULL;
+    }
 }
 
 
@@ -113,6 +122,7 @@ int CSLSRole::uninit()
 	    remove_from_epoll();
 	    invalid_srt();
 	}
+	on_close();      // no-op unless on_connect was sent and on_close has not been
 
 	// after the socket is closed, so the slot never outlives its connection
 	release_conn_slot();
@@ -308,12 +318,11 @@ bool CSLSRole::check_idle_streams_duration(int64_t cur_time_ms)
 	return false;
 }
 
-int CSLSRole::check_http_client()
+CHttpClient *CSLSRole::take_close_client()
 {
-	if (NULL == m_http_client) {
-		return SLS_ERROR;
-	}
-	return SLS_OK;
+	CHttpClient *c = m_close_client;
+	m_close_client = NULL;
+	return c;
 }
 
 // Keep only whole, synced TS packets of buf[0..len): they are compacted to the
@@ -567,28 +576,42 @@ int  CSLSRole::on_connect()
 	std::string on_event_url = build_event_url("on_connect");
 
 	m_http_client->set_timeout(m_http_timeout);
+	// from here on on_close is owed, even when the hook refuses, times out or cannot be reached
+	m_connect_sent = true;
 	return m_http_client->open(on_event_url.c_str(), &m_http_addr, m_http_addr_len, "GET");
 }
 
+// Fire-and-forget: sent iff on_connect was sent (Ruling R18), once. The request is
+// non-blocking and outlives the role: the worker group takes the client over
+// (take_close_client) and drops it after a short deadline.
 int  CSLSRole::on_close()
 {
-	if (!m_http_passed) {
+	if (!m_connect_sent || m_close_sent) {
 		return SLS_OK;
 	}
+	m_close_sent = true;
 	if (strlen(m_http_url) == 0) {
 		return SLS_OK;
 	}
-	if (NULL == m_http_client) {
-		m_http_client = new CHttpClient;
+	if (NULL != m_close_client) {
+		delete m_close_client;
 	}
+	m_close_client = new CHttpClient;
 
 	if (strlen(m_peer_ip) == 0) {
 		get_peer_info(m_peer_ip, m_peer_port);
 	}
 	std::string on_event_url = build_event_url("on_close");
 
-	m_http_client->set_timeout(m_http_timeout);
-	int ret = m_http_client->open(on_event_url.c_str(), &m_http_addr, m_http_addr_len, "GET");
+	m_close_client->set_timeout(SLS_ON_CLOSE_TIMEOUT_MS);
+	int ret = m_close_client->open(on_event_url.c_str(), &m_http_addr, m_http_addr_len, "GET");
+	if (SLS_OK != ret) {
+		sls_log(SLS_LOG_INFO, "[%p]CSLSRole::on_close, %s, could not start the on_close request, http_url='%s'.",
+				this, m_role_name, m_http_url);
+		m_close_client->close();
+		delete m_close_client;
+		m_close_client = NULL;
+	}
 	return ret;
 }
 

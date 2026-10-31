@@ -50,6 +50,8 @@ const int UNLIMITED_TIMEOUT = -1;
 /**
  * CSLSRole , the base of player, publisher and listener
  */
+#define SLS_ON_CLOSE_TIMEOUT_MS 2000   // an on_close request that is still unanswered is dropped
+
 class CSLSRole
 {
 public :
@@ -97,8 +99,10 @@ public :
     int         on_connect();
     int         on_close();
     std::string build_event_url(const char *event);
-    int         check_http_client();
     int         check_http_passed();
+    // The pending fire-and-forget on_close request, ownership passes to the caller
+    // (the worker group, which keeps polling it after the role is gone); NULL if none.
+    CHttpClient *take_close_client();
 
     // Hand the role the admission slot the listener took for its socket at
     // accept; the role gives it back exactly once, in uninit (also run by the
@@ -132,6 +136,8 @@ protected:
     socklen_t    m_http_addr_len;
     int          m_http_timeout;           // ms
     bool         m_http_passed;
+    bool         m_connect_sent;   // on_connect was sent: on_close is owed, whatever the hook answered (Ruling R18)
+    bool         m_close_sent;
 
     sls_conf_base_t    *m_conf;
     CSLSMapData        *m_map_data;
@@ -147,7 +153,8 @@ protected:
     int           m_ts_carry_len;
     bool          m_need_reconnect;
     std::string   m_stat_info_base;
-    CHttpClient  *m_http_client;
+    CHttpClient  *m_http_client;     // the on_connect request, while pending
+    CHttpClient  *m_close_client;    // the on_close request, until the group takes it
 
     int  handler_write_data();
     int  handler_read_data(int64_t *last_read_time=NULL);
