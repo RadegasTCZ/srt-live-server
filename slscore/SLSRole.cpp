@@ -64,6 +64,8 @@ CSLSRole::CSLSRole()
     memset(m_data, 0, DATA_BUFF_SIZE);
     m_data_len        = 0;
     m_data_pos        = 0;
+    memset(m_ts_carry, 0, sizeof(m_ts_carry));
+    m_ts_carry_len    = 0;
     m_need_reconnect  = false;
     m_http_client     = NULL;
 
@@ -85,6 +87,7 @@ int CSLSRole::init()
     m_map_data_id.nDataCount  = 0;
     m_map_data_id.nReadPos    = 0;
     m_map_data_id.nGeneration = 0;  // matches no array
+    m_ts_carry_len            = 0;
 
 	return ret;
 }
@@ -289,9 +292,51 @@ int CSLSRole::check_http_client()
 	return SLS_OK;
 }
 
+// Keep only whole, synced TS packets of buf[0..len): they are compacted to the
+// front of buf and their byte count is returned. A trailing partial packet is
+// saved in carry for the next read. Where a packet boundary lacks the sync
+// byte, the bytes up to the next 0x47 that is followed by another 0x47 one
+// packet later (or that is too close to the end to tell) are dropped.
+static int sls_ts_whole_packets(uint8_t *buf, int len, uint8_t *carry, int *carry_len, int *dropped)
+{
+    int out = 0;
+    int i = 0;
+    *dropped = 0;
+    while (i + TS_PACK_LEN <= len) {
+        if (buf[i] == TS_SYNC_BYTE) {
+            if (out != i) {
+                memmove(buf + out, buf + i, TS_PACK_LEN);
+            }
+            out += TS_PACK_LEN;
+            i   += TS_PACK_LEN;
+            continue;
+        }
+        int j = i + 1;
+        while (j < len && !(buf[j] == TS_SYNC_BYTE &&
+                            (j + TS_PACK_LEN >= len || buf[j + TS_PACK_LEN] == TS_SYNC_BYTE))) {
+            j++;
+        }
+        *dropped += j - i;
+        i = j;
+    }
+    // here len - i < TS_PACK_LEN; carry from the first sync byte of the tail
+    int k = i;
+    while (k < len && buf[k] != TS_SYNC_BYTE) {
+        k++;
+    }
+    *dropped += k - i;
+    i = k;
+    *carry_len = len - i;
+    if (*carry_len > 0) {
+        memcpy(carry, buf + i, *carry_len);
+    }
+    return out;
+}
+
 int CSLSRole::handler_read_data(int64_t *last_read_time)
 {
-	char szData[TS_UDP_LEN];
+	// room for the carried partial packet plus one SRT message
+	uint8_t szData[TS_PACK_LEN + TS_UDP_LEN];
 
 	if (SLS_OK != check_http_passed()) {
 		return SLS_OK;
@@ -306,8 +351,12 @@ int CSLSRole::handler_read_data(int64_t *last_read_time)
 		}
 		return SLS_ERROR;
 	}
-    //read data
-    int n = m_srt->libsrt_read(szData, TS_UDP_LEN);
+    //read data, appended to the partial packet carried from the last read
+    int carry = m_ts_carry_len;
+    if (carry > 0) {
+        memcpy(szData, m_ts_carry, carry);
+    }
+    int n = m_srt->libsrt_read((char *)szData + carry, TS_UDP_LEN);
 	if (n <= 0) {
         sls_log(SLS_LOG_TRACE, "[%p]CSLSRole::handler_read_data, libsrt_read returned n=%d (peer gone); cleanup will follow.", this, n);
 	    return SLS_ERROR;
@@ -334,9 +383,26 @@ int CSLSRole::handler_read_data(int64_t *last_read_time)
     }
 
     sls_log(SLS_LOG_TRACE, "[%p]CSLSRole::handler_read_data, ok, libsrt_read n=%d.", this, n);
-    int ret = m_map_data->put(m_map_data_key, szData, n, last_read_time);
 
-    return ret;
+    // the ring (and so every player) only ever gets whole, synced packets
+    int dropped = 0;
+    int whole = sls_ts_whole_packets(szData, carry + n, m_ts_carry, &m_ts_carry_len, &dropped);
+    if (dropped > 0) {
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::handler_read_data, dropped %d unsynced byte(s), key=%s.",
+                this, dropped, m_map_data_key);
+    }
+    if (0 == whole) {
+        // nothing to put this round; not a sign of missing readers
+        if (NULL != last_read_time) {
+            *last_read_time = sls_gettime_ms();
+        }
+        return n;
+    }
+    int ret = m_map_data->put(m_map_data_key, (char *)szData, whole, last_read_time);
+    if (ret < 0) {
+        return ret;
+    }
+    return n;
 }
 
 int CSLSRole::handler_write_data()

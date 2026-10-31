@@ -127,6 +127,10 @@ protected:
     char          m_data[DATA_BUFF_SIZE];
     int           m_data_len;
     int           m_data_pos;
+    // publishing roles: partial TS packet left over from the last SRT read,
+    // so only whole 188-byte packets reach the ring (dropped on disconnect)
+    uint8_t       m_ts_carry[TS_PACK_LEN];
+    int           m_ts_carry_len;
     bool          m_need_reconnect;
     std::string   m_stat_info_base;
     CHttpClient  *m_http_client;
