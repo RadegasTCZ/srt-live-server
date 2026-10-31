@@ -455,10 +455,14 @@ int sls_write_pid(const char *path, int pid)
     }
 
     // Swap to a read-only fd: open it, check it is the same inode, close the
-    // writable one (which releases our lock), then re-lock with a read lock. A
-    // second instance's write lock conflicts with it, so mutual exclusion holds.
-    // If another instance slips into the gap one of us fails the F_SETLK and
-    // exits; the worst a race can do is make both exit.
+    // writable one (which releases our lock), then re-lock with a read lock.
+    // Between the close and the F_SETLK another instance B may take the write
+    // lock, write ITS pid, swap to its own read lock and run. Read locks do not
+    // conflict, so our F_RDLCK can succeed too. We therefore read the file back
+    // through the locked fd and require our own pid: if A's read lock succeeded,
+    // either B's write already finished (B's pid is in the file, A exits) or
+    // B's F_SETLK comes later and conflicts with A's read lock (B exits). Exactly
+    // one instance survives.
     int fd2 = open(path, O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
     if (fd2 < 0) {
         sls_log(SLS_LOG_ERROR, "sls_write_pid: cannot reopen pid file '%s' read-only: %s.", path, strerror(errno));
@@ -473,12 +477,31 @@ int sls_write_pid(const char *path, int pid)
         return -1;
     }
     close(fd);
+#ifdef SLS_TEST_PID_GAP
+    // test builds only (never compiled in release): widen the gap so the test can
+    // start a second instance inside it deterministically
+    { const char *g = getenv("SLS_TEST_PID_GAP_MS"); if (g) usleep((useconds_t)atoi(g) * 1000); }
+#endif
     memset(&fl, 0, sizeof(fl));
     fl.l_type = F_RDLCK; fl.l_whence = SEEK_SET;
     if (fcntl(fd2, F_SETLK, &fl) != 0) {
         sls_log(SLS_LOG_ERROR, "sls_write_pid: another instance is running (could not re-lock pid file '%s': %s).", path, strerror(errno));
         close(fd2);
         return -1;
+    }
+    {
+        char chk[32];
+        ssize_t cn = pread(fd2, chk, sizeof(chk) - 1, 0);
+        long    cv = 0;
+        if (cn > 0) {
+            chk[cn] = '\0';
+            cv = strtol(chk, NULL, 10);
+        }
+        if (cn <= 0 || cv != (long)pid) {
+            sls_log(SLS_LOG_ERROR, "sls_write_pid: another instance is running (pid file '%s' holds pid %ld, not ours).", path, cv);
+            close(fd2);
+            return -1;
+        }
     }
     sls_log(SLS_LOG_INFO, "sls_write_pid ok, file='%s', pid=%d.", path, pid);
     return fd2;

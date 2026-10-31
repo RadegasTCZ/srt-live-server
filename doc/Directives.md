@@ -43,6 +43,13 @@ Security model:
 - A leftover file from a previous run is harmless: with no lock holder `sls -s`
   says "sls is not running (stale pid file)" and signals nothing, and the next
   start simply reuses the file. sls does not delete the file at exit.
+- `sls -s` must be run as root (or as the user sls itself runs as, if it never
+  runs as root): the file is root-owned 0600, and the daemon, once it has
+  dropped privileges, is not dumpable so `/proc/<pid>/exe` of it is only
+  readable by root.
+- After the sls binary is replaced on disk (upgrade), `sls -s` refuses with
+  "lock holder pid N is not sls" until the old process has been restarted,
+  because the running process's executable no longer matches the new file.
 - A second instance with the same `pid_file` refuses to start ("another
   instance is running (lock holder pid N)") without touching the file.
 
