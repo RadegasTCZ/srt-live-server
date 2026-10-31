@@ -119,27 +119,6 @@ std::string sls_find_string(std::vector<std::string> &src, std::string &dst);
 #define INVALID_PID -1
 #define PAT_PID 0
 #define INVALID_DTS_PTS -1
-#define MAX_PES_PAYLOAD 200 * 1024
-
-struct ts_info {
-    int      es_pid;
-    int64_t  dts;
-    int64_t  pts;
-    bool     need_spspps;
-    int      sps_len;
-    uint8_t  sps[TS_PACK_LEN];
-    int      pps_len;
-    uint8_t  pps[TS_PACK_LEN];
-    uint8_t  ts_data[TS_UDP_LEN];
-    uint8_t  pat[TS_PACK_LEN];
-    int      pat_len;
-    int      pmt_pid;
-    uint8_t  pmt[TS_PACK_LEN];
-    int      pmt_len;
-
-};
-void sls_init_ts_info(ts_info *ti);
-int  sls_parse_ts_info(const uint8_t *packet, ts_info *ti);
 
 
 #endif

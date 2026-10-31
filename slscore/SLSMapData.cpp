@@ -65,6 +65,14 @@ int CSLSMapData::add(char *key)
     CSLSRecycleArray * data_array = new CSLSRecycleArray;
     //m_map_array.insert(make_pair(strKey, data_array));
     m_map_array[strKey] = data_array;
+
+    // a new ring is a new publisher: its PSI bootstrap starts empty
+    std::map<std::string, CSLSTsParser *>::iterator item_ti = m_map_ts_info.find(strKey);
+    if (item_ti != m_map_ts_info.end() && item_ti->second) {
+        item_ti->second->reset();
+    } else {
+        m_map_ts_info[strKey] = new CSLSTsParser;
+    }
     sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::add ok, key='%s'.",
             this, key);
     return ret;
@@ -94,13 +102,10 @@ int CSLSMapData::remove(char *key)
     // stream key seeds fresh metadata from its own packets. Without this,
     // pullers joining after a codec or track-layout change receive the
     // previous publisher's PMT and decode the wrong elementary stream.
-    std::map<std::string, ts_info *>::iterator item_ti;
+    std::map<std::string, CSLSTsParser *>::iterator item_ti;
     item_ti = m_map_ts_info.find(strKey);
     if (item_ti != m_map_ts_info.end()) {
-        ts_info *ti = item_ti->second;
-        if (ti) {
-            delete ti;
-        }
+        delete item_ti->second;
         m_map_ts_info.erase(item_ti);
     }
     return ret;
@@ -161,22 +166,20 @@ int CSLSMapData::put(char *key, char *data, int len, int64_t *last_read_time)
         *last_read_time = array_data->get_last_read_time();
     }
 
-    //check sps and pps
-    ts_info *ti = NULL;
-    std::map<std::string, ts_info *>::iterator item_ti;
+    // PSI bootstrap: parse only until it is complete, then no per-packet work
+    CSLSTsParser *parser = NULL;
+    std::map<std::string, CSLSTsParser *>::iterator item_ti;
     item_ti = m_map_ts_info.find(strKey);
-    if (item_ti == m_map_ts_info.end()) {
-        ti = new ts_info;
-        sls_init_ts_info(ti);
-        ti->need_spspps = true;
-        m_map_ts_info[strKey] = ti;
-    }else{
-        ti = item_ti->second;
+    if (item_ti == m_map_ts_info.end() || NULL == item_ti->second) {
+        parser = new CSLSTsParser;
+        m_map_ts_info[strKey] = parser;
+    } else {
+        parser = item_ti->second;
     }
 
-    if (SLS_OK == check_ts_info(data, len, ti)) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::put, check_spspps ok, key=%s.",
-                this, key);
+    if (!parser->complete() && SLS_OK == check_ts_info(data, len, parser)) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::put, PSI bootstrap ready, key=%s, video pid=%d, stream_type=0x%02x.",
+                this, key, parser->video_pid(), parser->video_stream_type());
     }
 
     return ret;
@@ -216,21 +219,28 @@ int CSLSMapData::get(char *key, char *data, int len, SLSRecycleArrayID *read_id,
     return ret;
 }
 
+// The bootstrap, padded with null packets to one TS_UDP_LEN unit: players
+// send whole TS_UDP_LEN units and refill their buffer below that.
+// 0 (players get live data) while the bootstrap is incomplete.
 int CSLSMapData::get_ts_info(char *key, char *data, int len)
 {
-    int ret = 0;
-    ts_info *ti = NULL;
     std::string strKey = std::string(key);
-    std::map<std::string, ts_info *>::iterator item_ti;
+    std::map<std::string, CSLSTsParser *>::iterator item_ti;
     item_ti = m_map_ts_info.find(strKey);
-    if (item_ti != m_map_ts_info.end()) {
-        ti = item_ti->second;
-        if (len >= TS_UDP_LEN) {
-            memcpy(data, ti->ts_data, TS_UDP_LEN);
-            ret = TS_UDP_LEN;
-        }
+    if (item_ti == m_map_ts_info.end() || NULL == item_ti->second || len < TS_UDP_LEN)
+        return 0;
+    uint8_t *out = (uint8_t *)data;
+    int n = item_ti->second->build_bootstrap(out, TS_UDP_LEN);
+    if (n <= 0)
+        return 0;
+    for (; n < TS_UDP_LEN; n += TS_PACK_LEN) {
+        out[n]     = TS_SYNC_BYTE;
+        out[n + 1] = 0x1F;          // PID 0x1FFF
+        out[n + 2] = 0xFF;
+        out[n + 3] = 0x10;          // payload only, CC 0
+        memset(out + n + 4, 0xFF, TS_PACK_LEN - 4);
     }
-    return ret;
+    return TS_UDP_LEN;
 }
 
 void CSLSMapData::clear()
@@ -246,28 +256,21 @@ void CSLSMapData::clear()
     }
     m_map_array.clear();
 
-    std::map<std::string, ts_info *>::iterator it_ti;
+    std::map<std::string, CSLSTsParser *>::iterator it_ti;
     for (it_ti = m_map_ts_info.begin(); it_ti != m_map_ts_info.end(); ++it_ti) {
-        ts_info *ti = it_ti->second;
-        if (ti) {
-            delete ti;
-        }
+        delete it_ti->second;
     }
     m_map_ts_info.clear();
 }
 
-int CSLSMapData::check_ts_info(char *data, int len, ts_info *ti)
+// data holds whole 188-byte packets (the publisher role only puts those);
+// a trailing partial packet would be skipped. SLS_OK once complete.
+int CSLSMapData::check_ts_info(char *data, int len, CSLSTsParser *parser)
 {
-    //only get the first, suppose the sps and pps are not changed always.
-    for (int i = 0; i < len;) {
-        if (ti->sps_len > 0 && ti->pps_len > 0 && ti->pat_len > 0 && ti->pat_len > 0) {
-            break;
-        }
-        sls_parse_ts_info((const uint8_t *)data + i, ti);
-        i += TS_PACK_LEN;
+    for (int i = 0; i + TS_PACK_LEN <= len && !parser->complete(); i += TS_PACK_LEN) {
+        parser->feed((const uint8_t *)data + i);
     }
-
-    return SLS_ERROR;
+    return parser->complete() ? SLS_OK : SLS_ERROR;
 }
 
 

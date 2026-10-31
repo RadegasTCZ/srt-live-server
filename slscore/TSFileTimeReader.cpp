@@ -41,6 +41,43 @@
 #define RTS_PACK_LEN (1316 + sizeof(int64_t))
 #define RTS_BUF_SIZE (RTS_PACK_LEN * 100)
 
+static int64_t ts_read_timestamp(const uint8_t *p)
+{
+    return ((int64_t)(p[0] & 0x0E) << 29) | ((int64_t)p[1] << 22) |
+           ((int64_t)(p[2] & 0xFE) << 14) | ((int64_t)p[3] << 7) | (p[4] >> 1);
+}
+
+// PTS/DTS of a PES starting in this 188-byte packet (DTS = PTS when only
+// PTS is present). False if the packet starts no PES with a timestamp, or
+// the header doesn't fit the packet; never reads outside the packet.
+static bool ts_pes_time(const uint8_t *pkt, int *pid, int64_t *dts, int64_t *pts)
+{
+    if (pkt[0] != TS_SYNC_BYTE || !(pkt[1] & 0x40))
+        return false;
+    int afc = (pkt[3] >> 4) & 0x03;
+    if (!(afc & 0x01))
+        return false;
+    int off = 4;
+    if (afc & 0x02)
+        off = 5 + pkt[4];
+    if (off + 14 > TS_PACK_LEN)                 // PES header up to the PTS
+        return false;
+    const uint8_t *p = pkt + off;
+    if (p[0] != 0x00 || p[1] != 0x00 || p[2] != 0x01)
+        return false;
+    int flags = p[7] & 0xC0;
+    if (flags == 0x80) {
+        *pts = *dts = ts_read_timestamp(p + 9);
+    } else if (flags == 0xC0 && off + 19 <= TS_PACK_LEN) {
+        *pts = ts_read_timestamp(p + 9);
+        *dts = ts_read_timestamp(p + 14);
+    } else {
+        return false;
+    }
+    *pid = ((pkt[1] & 0x1F) << 8) | pkt[2];
+    return true;
+}
+
 
 CTSFileTimeReader::CTSFileTimeReader()
 {
@@ -207,13 +244,19 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
     uint8_t ts_pack[TS_PACK_LEN] = {0};
     int ts_index = 0;
     int dts_index = 0;
-    ts_info ti;
-    sls_init_ts_info(&ti);
+    struct { int es_pid; int64_t dts; int64_t pts; } ti = {INVALID_PID, INVALID_DTS_PTS, INVALID_DTS_PTS};
     while(true) {
     	int n = read(ts_fd, ts_pack, TS_PACK_LEN);
     	if (n < TS_PACK_LEN)
     		break;
-    	sls_parse_ts_info((const uint8_t *)ts_pack, &ti);
+        // timestamps of the first timestamped PID only
+        int pid;
+        int64_t dts, pts;
+        if (ts_pes_time(ts_pack, &pid, &dts, &pts) && (INVALID_PID == ti.es_pid || pid == ti.es_pid)) {
+            ti.es_pid = pid;
+            ti.dts    = dts;
+            ti.pts    = pts;
+        }
         if (INVALID_DTS_PTS == ti.dts ) {
             m_array_data.put(ts_pack, TS_PACK_LEN);
             ts_index ++;
@@ -257,10 +300,6 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
         }
         sls_log(SLS_LOG_INFO, "[%p]CTSFileTimeReader::generate_rts_file, ts_index=%d, dts_index=%d, m_dts_pid=%d, dts=%lld.",
                 this, ts_index, dts_index, m_dts_pid, (long long)ti.dts);
-        if (ti.sps_len > 0) {
-            sls_log(SLS_LOG_INFO, "[%p]CTSFileTimeReader::generate_rts_file, ts_index=%d, dts_index=%d, m_dts_pid=%d, sps_len=%d, pps_len=%d.",
-                    this, ts_index, dts_index, m_dts_pid, ti.sps_len, ti.pps_len);
-        }
         ti.dts = INVALID_DTS_PTS;
         ti.pts = INVALID_DTS_PTS;
 

@@ -31,6 +31,7 @@
 
 #include "SLSRecycleArray.hpp"
 #include "SLSLock.hpp"
+#include "SLSTsParser.hpp"
 
 class CSLSMapData
 {
@@ -50,10 +51,10 @@ public:
     int  get_ts_info(char *key, char *data, int len);
 private:
     std::map<std::string, CSLSRecycleArray *>    m_map_array;        //uplive_key_stream:data'
-    std::map<std::string, ts_info *>             m_map_ts_info;      //uplive_key_stream:ts_info'
+    std::map<std::string, CSLSTsParser *>        m_map_ts_info;      //uplive_key_stream:PSI bootstrap
     CSLSRWLock          m_rwclock;
 
-    int check_ts_info(char *data, int len, ts_info *ti);
+    int check_ts_info(char *data, int len, CSLSTsParser *parser);
 };
 
 

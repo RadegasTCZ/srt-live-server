@@ -33,6 +33,7 @@ OBJS = $(OUTPUT_PATH)/SLSLog.o \
 	$(OUTPUT_PATH)/SLSPlayer.o\
 	$(OUTPUT_PATH)/SLSRecycleArray.o\
 	$(OUTPUT_PATH)/SLSMapData.o\
+	$(OUTPUT_PATH)/SLSTsParser.o\
 	$(OUTPUT_PATH)/SLSMapPublisher.o\
 	$(OUTPUT_PATH)/SLSRelay.o\
 	$(OUTPUT_PATH)/SLSPuller.o\
