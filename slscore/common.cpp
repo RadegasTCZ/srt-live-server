@@ -49,6 +49,7 @@
 
 
 #include "common.hpp"
+#include "SLSStreamId.hpp"
 #include "SLSLog.hpp"
 
 
@@ -336,23 +337,11 @@ void sls_remove_marks(char * s) {
     }
 }
 
-// Accept a streamid component (host / app / stream name) only if it's safe
-// to use as a path segment and map key. Rejects empty, path separators,
-// control chars, and bare "." / "..". Callers must reject the connection
-// on false — these names flow into filesystem paths (HLS recording).
+// Legacy wrapper: a streamid component is safe iff it passes the shared
+// streamid rule (SLSStreamId.cpp). Kept so there is only one rule.
 bool sls_is_safe_name(const char *s)
 {
-    if (!s || !*s)
-        return false;
-    if (s[0] == '.' && (s[1] == 0 || (s[1] == '.' && s[2] == 0)))
-        return false;
-    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
-        if (*p == '/' || *p == '\\')
-            return false;
-        if (*p < 0x20 || *p == 0x7f)
-            return false;
-    }
-    return true;
+    return s && sls_sid_part_ok(std::string(s));
 }
 
 // SRT caps SRTO_PASSPHRASE at 10-79 printable bytes. A zero-length value

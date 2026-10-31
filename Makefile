@@ -19,6 +19,7 @@ LOG_PATH = ./logs
 OUTPUT_PATH = ./obj
 OBJS = $(OUTPUT_PATH)/SLSLog.o \
 	$(OUTPUT_PATH)/common.o\
+	$(OUTPUT_PATH)/SLSStreamId.o\
 	$(OUTPUT_PATH)/conf.o\
 	$(OUTPUT_PATH)/SLSThread.o\
 	$(OUTPUT_PATH)/SLSEpollThread.o\

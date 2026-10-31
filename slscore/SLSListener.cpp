@@ -27,6 +27,7 @@
 #include <string.h>
 #include <fstream>
 #include <sstream>
+#include <set>
 #include <vector>
 
 #include "SLSListener.hpp"
@@ -188,6 +189,8 @@ int CSLSListener::init_conf_app()
         return SLS_ERROR;
     }
 
+    std::set<std::string> publisher_keys;   // host/app a publisher connects to
+    std::set<std::string> player_keys;      // host/app a player connects to
     int app_count = sls_conf_get_conf_count(conf_app);
     sls_conf_app_t * ca = conf_app;
     for (int i = 0; i < app_count; i ++) {
@@ -198,6 +201,7 @@ int CSLSListener::init_conf_app()
             return SLS_ERROR;
         }
         strUplive = strUpliveDomain + "/" + strUplive;
+        publisher_keys.insert(strUplive);
         m_map_publisher->set_conf(strUplive, ca);
         sls_log(SLS_LOG_INFO, "[%p]CSLSListener::init_conf_app, add app push '%s'.",
                 this, strUplive.c_str());
@@ -217,6 +221,7 @@ int CSLSListener::init_conf_app()
                         this, strUplive.c_str(), strTemp.c_str());
                 return SLS_ERROR;
             }
+            player_keys.insert(strTemp);
             //m_map_live_2_uplive[strTemp]  = strUplive;
             m_map_publisher->set_live_2_uplive(strTemp, strUplive);
 
@@ -249,8 +254,37 @@ int CSLSListener::init_conf_app()
 
         ca = (sls_conf_app_t *)ca->sibling;
     }
+
+    // A host/app key must have exactly one role, otherwise the streamid
+    // classifier (and therefore the passphrase choice) would be ambiguous.
+    for (std::set<std::string>::const_iterator it = publisher_keys.begin();
+         it != publisher_keys.end(); ++it) {
+        if (player_keys.count(*it)) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::init_conf_app failed, '%s' is configured as both a publisher and a player app.",
+                    this, it->c_str());
+            return SLS_ERROR;
+        }
+    }
     return SLS_OK;
 
+}
+
+sls_sid_role_t CSLSListener::classify_sid(const sls_sid_t &sid, std::string *app_key_out)
+{
+    // The role is decided by host/app, the same lookups handler() always used,
+    // never by the app name alone.
+    std::string key = sid.host + "/" + sid.app;
+
+    std::string uplive = m_map_publisher->get_uplive(key);
+    if (uplive.length() > 0) {
+        if (app_key_out) *app_key_out = uplive;
+        return SLS_SID_PLAYER;
+    }
+    if (NULL != m_map_publisher->get_ca(key)) {
+        if (app_key_out) *app_key_out = key;
+        return SLS_SID_PUBLISHER;
+    }
+    return SLS_SID_REJECT;
 }
 
 int CSLSListener::load_users(const char *path)
@@ -339,24 +373,29 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         return -1;
     }
 
-    // Expect streamid of the form "domain/app/stream".
-    const char *slash1 = strchr(streamid, '/');
-    const char *slash2 = slash1 ? strchr(slash1 + 1, '/') : NULL;
-    if (!slash1 || !slash2) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, malformed streamid '%s'; rejecting.",
-                self, streamid);
+    // Expect streamid of the form "host/app/stream" with strict charset.
+    sls_sid_t sid;
+    if (!sls_sid_parse(streamid, &sid)) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, refused: streamid must be host/app/stream, sid='%s'.",
+                self, sls_escape_for_log(streamid).c_str());
         return -1;
     }
-    std::string app(slash1 + 1, slash2 - slash1 - 1);
-    std::string stream(slash2 + 1);
+    const std::string &stream = sid.stream;
+
+    std::string app_key;
+    sls_sid_role_t role = self->classify_sid(sid, &app_key);
+    if (SLS_SID_REJECT == role) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused: '%s/%s' is neither a publisher nor a player app (user '%s').",
+                self, sid.host.c_str(), sid.app.c_str(), stream.c_str());
+        return -1;
+    }
+    const char *direction = (SLS_SID_PUBLISHER == role) ? "publish" : "play";
 
     // Look up credentials under a read lock and copy what we need out of
     // the map so we can drop the lock before calling into libsrt (which may
     // reorder across threads).
     std::string pass_value;
-    bool        pass_found  = false;
     bool        pass_empty  = false;
-    const char *direction   = NULL;
     {
         CSLSLock lock(&self->m_users_lock, 0); // read lock
         std::map<std::string, sls_user_cred_t>::iterator it = self->m_users.find(stream);
@@ -365,23 +404,8 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
                     self, stream.c_str());
             return -1;
         }
-
-        // Match the app token against every app block's app_publisher/app_player
-        // to decide which passphrase column applies.
-        sls_conf_server_t *cs = (sls_conf_server_t *)self->m_conf;
-        for (sls_conf_app_t *ca = (sls_conf_app_t *)cs->child; ca;
-             ca = (sls_conf_app_t *)ca->sibling) {
-            if (app == ca->app_publisher) { pass_value = it->second.publish_pass; direction = "publish"; pass_found = true; break; }
-            if (app == ca->app_player)    { pass_value = it->second.play_pass;    direction = "play";    pass_found = true; break; }
-        }
+        pass_value = (SLS_SID_PUBLISHER == role) ? it->second.publish_pass : it->second.play_pass;
         pass_empty = pass_value.empty();
-    }
-
-    if (!pass_found) {
-        sls_log(SLS_LOG_INFO,
-                "[%p]CSLSListener::listen_callback, app '%s' matches no app_publisher/app_player for user '%s'; rejecting.",
-                self, app.c_str(), stream.c_str());
-        return -1;
     }
 
     if (!pass_empty) {
@@ -513,9 +537,7 @@ int CSLSListener::handler()
 	CSLSSrt *srt = NULL;
 	char sid[1024] = {0};
 	int  sid_size = sizeof(sid);
-	char host_name[URL_MAX_LEN] = {0};
-	char app_name[URL_MAX_LEN] = {0};
-	char stream_name[URL_MAX_LEN] = {0};
+	sls_sid_t psid;
 	char key_app[URL_MAX_LEN] = {0};
 	char key_stream_name[URL_MAX_LEN] = {0};
     char tmp[URL_MAX_LEN] = {0};
@@ -552,34 +574,36 @@ int CSLSListener::handler()
     	return client_count;
     }
 
-    if (0 != srt->libsrt_split_sid(sid, host_name, sizeof(host_name), app_name, sizeof(app_name), stream_name, sizeof(stream_name))) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], parse sid='%s' failed.", this, peer_name, peer_port, sid);
+    if (!sls_sid_parse(sid, &psid)) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], refused: streamid must be host/app/stream, sid='%s'.",
+                this, peer_name, peer_port, sls_escape_for_log(sid).c_str());
     	srt->libsrt_close();
     	delete srt;
     	return client_count;
     }
-    if (!sls_is_safe_name(host_name) || !sls_is_safe_name(app_name) || !sls_is_safe_name(stream_name)) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], refused: sid='%s' contains unsafe characters in host/app/stream.",
-                this, peer_name, peer_port, sid);
+    const char *stream_name = psid.stream.c_str();
+    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, [%s:%d], sid '%s/%s/%s'",
+            this, peer_name, peer_port, psid.host.c_str(), psid.app.c_str(), stream_name);
+
+    // app exist?
+    snprintf(key_app, sizeof(key_app), "%s/%s", psid.host.c_str(), psid.app.c_str());
+
+    std::string app_uplive = "";
+    sls_conf_app_t * ca = NULL;
+    sls_sid_role_t role = classify_sid(psid, &app_uplive);
+    if (SLS_SID_REJECT == role) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], '%s' is neither a publisher nor a player app.",
+                this, peer_name, peer_port, key_app);
         srt->libsrt_close();
         delete srt;
         return client_count;
     }
-    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, [%s:%d], sid '%s/%s/%s'",
-            this, peer_name, peer_port, host_name, app_name, stream_name);
-
-    // app exist?
-    snprintf(key_app, sizeof(key_app), "%s/%s", host_name, app_name);
-
-    std::string app_uplive = "";
-    sls_conf_app_t * ca = NULL;
 
     char cur_time[STR_DATE_TIME_LEN] = {0};
     sls_gettime_default_string(cur_time);
 
     //3.is player?
-    app_uplive = m_map_publisher->get_uplive(key_app);
-    if (app_uplive.length() > 0) {
+    if (SLS_SID_PLAYER == role) {
         snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
         CSLSRole * pub = m_map_publisher->get_publisher(key_stream_name);
         if (NULL == pub) {

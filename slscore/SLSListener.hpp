@@ -40,6 +40,7 @@
 #include "SLSMapPublisher.hpp"
 #include "SLSMapRelay.hpp"
 #include "SLSLock.hpp"
+#include "SLSStreamId.hpp"
 
 /**
  * server conf
@@ -125,6 +126,9 @@ private:
     std::map<std::string, sls_user_cred_t> m_users;
 
     int  init_conf_app();
+    // Role of a parsed streamid by host/app (never by app name alone); on
+    // PUBLISHER/PLAYER *app_key_out is the publisher-side "host/app" key.
+    sls_sid_role_t classify_sid(const sls_sid_t &sid, std::string *app_key_out);
     int  load_users(const char *path);
 
     static int listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
