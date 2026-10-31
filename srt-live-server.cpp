@@ -347,13 +347,16 @@ EXIT_PROC:
 
     sls_log(SLS_LOG_INFO, "exit, close conf.");
     sls_conf_close();
-    CSLSLog::destory_instance();
 
     if (pid_written) {
         sls_remove_pid(pid_path);
     }
 
     sls_log(SLS_LOG_INFO, "exit, bye bye!");
+
+    // last: closes (and flushes) the log file; a later sls_log would
+    // silently re-create the logger
+    CSLSLog::destory_instance();
 
     return exit_code;
 }

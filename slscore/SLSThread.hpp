@@ -28,6 +28,7 @@
 
 
 #include <pthread.h>
+#include <atomic>
 
 
 
@@ -48,7 +49,7 @@ public :
 
     virtual int work();
 protected:
-	bool m_exit;
+	std::atomic<bool> m_exit;   // set by stop()/the worker, read by the thread loop
 	pthread_t m_th_id;
 
     virtual void    clear();

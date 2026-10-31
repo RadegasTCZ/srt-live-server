@@ -41,7 +41,11 @@ CSLSLog::CSLSLog()
 }
 CSLSLog::~CSLSLog()
 {
-
+    if (m_log_file) {
+        fflush(m_log_file);
+        fclose(m_log_file);
+        m_log_file = NULL;
+    }
 }
 int CSLSLog::create_instance()
 {
@@ -91,6 +95,10 @@ void CSLSLog::print_log(int level, const char *fmt, va_list vl)
 
     if (m_log_file) {
         fwrite(buf_info, strlen(buf_info), 1, m_log_file);
+        // the file is block-buffered: make sure errors survive a crash
+        if (level <= SLS_LOG_ERROR) {
+            fflush(m_log_file);
+        }
     }
 }
 

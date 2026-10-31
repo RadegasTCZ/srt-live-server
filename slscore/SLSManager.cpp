@@ -218,6 +218,16 @@ int CSLSManager::stop()
     }
     m_workers.clear();
 
+    // Roles still queued (accepted but never polled by a worker) reference the
+    // maps below: Publisher::uninit() removes itself from them. Release the
+    // queue now that no worker can pop from it, and only then free the maps.
+    if(m_list_role) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSManager::stop, release rolelist, size=%d.", this, m_list_role->size());
+    	m_list_role->erase();
+    	delete m_list_role;
+    	m_list_role = NULL;
+    }
+
     if (m_map_data) {
     	delete[] m_map_data;
     	m_map_data = NULL;
@@ -235,14 +245,6 @@ int CSLSManager::stop()
     if (m_map_pusher) {
     	delete[] m_map_pusher;
     	m_map_pusher = NULL;
-    }
-
-    //release rolelist
-    if(m_list_role) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSManager::stop, release rolelist, size=%d.", this, m_list_role->size());
-    	m_list_role->erase();
-    	delete m_list_role;
-    	m_list_role = NULL;
     }
     return ret;
 }

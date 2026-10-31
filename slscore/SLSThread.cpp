@@ -36,7 +36,7 @@
 
 CSLSThread::CSLSThread()
 {
-	m_exit     = 0;
+	m_exit     = false;
 	m_th_id     = 0;
 }
 CSLSThread::~CSLSThread()
@@ -69,7 +69,7 @@ int CSLSThread::stop()
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSThread::stop, m_th_id=%lu.", this, (unsigned long)m_th_id);
 
-    m_exit = 1;
+    m_exit = true;
 	pthread_join(m_th_id, NULL);
 	m_th_id = 0;
     clear();
@@ -85,7 +85,7 @@ void CSLSThread::clear()
 
 bool  CSLSThread::is_exit()
 {
-	return m_exit == 1;
+	return m_exit;
 }
 
 void * CSLSThread::thread_func(void * arg)
