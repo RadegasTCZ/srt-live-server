@@ -225,6 +225,27 @@ sls_conf_base_t * sls_conf_create_block_by_name(string n, sls_runtime_conf_t *& 
 }
 //#define new_conf(n, i)\
 //        sls_conf_##n conf_##n##_##i##_info = new sls_conf_##n ;
+/*
+ * Secrets must never reach the log, at any level. A config line whose directive
+ * is srt_passphrase is logged as "srt_passphrase ***".
+ */
+static string sls_conf_mask_line(const string& l)
+{
+    string::size_type b = l.find_first_not_of(" \t");
+    static const char key[] = "srt_passphrase";
+    const size_t kl = sizeof(key) - 1;
+    if (b != string::npos && l.compare(b, kl, key) == 0 &&
+        (b + kl == l.length() || l[b + kl] == ' ' || l[b + kl] == '\t' || l[b + kl] == ';')) {
+        return string(key) + " ***";
+    }
+    return l;
+}
+
+static string sls_conf_mask_value(const string& name, const string& v)
+{
+    return name == "srt_passphrase" ? string("***") : v;
+}
+
 int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& child, sls_runtime_conf_t * p_runtime, int brackets_layers)
 {
     int ret = SLS_ERROR;
@@ -236,7 +257,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
     while(getline(ifs, str_line))
     {
         line ++;
-        sls_log(SLS_LOG_TRACE, "line:%d='%s'", line, str_line.c_str());
+        sls_log(SLS_LOG_TRACE, "line:%d='%s'", line, sls_conf_mask_line(str_line).c_str());
         //remove #
         index = str_line.find('#');
         if (index != -1) {
@@ -246,7 +267,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
         str_line = replace_all(str_line, "\t", "");
         str_line = trim(str_line);
         if (str_line.length() == 0) {
-            sls_log(SLS_LOG_TRACE, "line:%d='%s', is comment.", line, str_line.c_str());
+            sls_log(SLS_LOG_TRACE, "line:%d='%s', is comment.", line, sls_conf_mask_line(str_line).c_str());
             continue;
         }
 
@@ -255,7 +276,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
 
         if (line_end_flag == ";") {
             if (!b) {
-                sls_log(SLS_LOG_ERROR, "line:%d='%s', not found block.", line, str_line.c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d='%s', not found block.", line, sls_conf_mask_line(str_line).c_str());
                 ret = SLS_ERROR;
                 break;
             }
@@ -268,7 +289,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
             //split by space
             int index = str_line.find(' ');
             if (index == -1) {
-                sls_log(SLS_LOG_ERROR, "line:%d='%s', no space separator.", line, str_line.c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d='%s', no space separator.", line, sls_conf_mask_line(str_line).c_str());
                 ret = SLS_ERROR;
                 break;
             }
@@ -278,17 +299,17 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
 
             sls_conf_cmd_t * it = sls_conf_find(n.c_str(), p_runtime->conf_cmd, p_runtime->conf_cmd_size);
             if (!it) {
-                sls_log(SLS_LOG_ERROR, "line:%d='%s', wrong name='%s'.", line, str_line.c_str() ,n.c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d='%s', wrong name='%s'.", line, sls_conf_mask_line(str_line).c_str() ,n.c_str());
                 ret = SLS_ERROR;
                 break;
             }
             const char * r = it->set(v.c_str(), it, b);
             if (r != SLS_CONF_OK) {
-                sls_log(SLS_LOG_ERROR, "line:%d, set failed, %s, name='%s', value='%s'.", line, r ,n.c_str(), v.c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d, set failed, %s, name='%s', value='%s'.", line, r ,n.c_str(), sls_conf_mask_value(n, v).c_str());
                 ret = SLS_ERROR;
                 break;
             }
-            sls_log(SLS_LOG_TRACE, "line:%d, set name='%s', value='%s'.", line, n.c_str(), v.c_str());
+            sls_log(SLS_LOG_TRACE, "line:%d, set name='%s', value='%s'.", line, n.c_str(), sls_conf_mask_value(n, v).c_str());
 
         } else  if (line_end_flag == "{") {
             str_line = str_line.substr(0, str_line.length() - 1);
@@ -327,7 +348,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
             }
         } else if (line_end_flag == "}" ) {
             if (str_line != line_end_flag) {
-                sls_log(SLS_LOG_ERROR, "line:%d=‘%s’, end indicator ‘}’ with more info.", line, str_line.c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d=‘%s’, end indicator ‘}’ with more info.", line, sls_conf_mask_line(str_line).c_str());
                 ret = SLS_ERROR;
                 break;
             }
@@ -337,7 +358,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
             break;
 
         } else {
-            sls_log(SLS_LOG_ERROR, "line:%d='%s', invalid end flag, except ';', '{', '}',", line, str_line.c_str());
+            sls_log(SLS_LOG_ERROR, "line:%d='%s', invalid end flag, except ';', '{', '}',", line, sls_conf_mask_line(str_line).c_str());
             ret = SLS_ERROR;
             break;
         }

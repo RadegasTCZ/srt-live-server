@@ -443,9 +443,26 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     }
 
     if (!pass_empty) {
+        // Key length first (it must be in place before the passphrase derives the
+        // KEK), then the passphrase, then refuse any peer that does not encrypt.
+        int pbkeylen = ((sls_conf_server_t*)self->m_conf)->srt_pbkeylen;
+        if (pbkeylen > 0 &&
+            srt_setsockflag(ns, SRTO_PBKEYLEN, &pbkeylen, sizeof(pbkeylen)) < 0) {
+            sls_log(SLS_LOG_ERROR,
+                    "[%p]CSLSListener::listen_callback, SRTO_PBKEYLEN=%d for user '%s' (%s) failed: %s.",
+                    self, pbkeylen, stream.c_str(), direction, srt_getlasterror_str());
+            return -1;
+        }
         if (srt_setsockflag(ns, SRTO_PASSPHRASE, pass_value.c_str(), (int)pass_value.length()) < 0) {
             sls_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_PASSPHRASE for user '%s' (%s) failed: %s.",
+                    self, stream.c_str(), direction, srt_getlasterror_str());
+            return -1;
+        }
+        int enforce = 1;
+        if (srt_setsockflag(ns, SRTO_ENFORCEDENCRYPTION, &enforce, sizeof(enforce)) < 0) {
+            sls_log(SLS_LOG_ERROR,
+                    "[%p]CSLSListener::listen_callback, SRTO_ENFORCEDENCRYPTION for user '%s' (%s) failed: %s.",
                     self, stream.c_str(), direction, srt_getlasterror_str());
             return -1;
         }

@@ -69,7 +69,8 @@ srt {
         # users file and reload (sls -c sls.conf -s reload) to grant/revoke. See
         # sls-users.conf.example for the file format. FAIL CLOSED: an empty or
         # malformed users file stops sls from starting (and is rejected on
-        # reload); it never silently turns authentication off.
+        # reload); it never silently turns authentication off. srt_pbkeylen
+        # also applies to the per-user passphrases.
         #user_file sls-users.conf;
 
         # ----- Apps ----------------------------------------------------------
