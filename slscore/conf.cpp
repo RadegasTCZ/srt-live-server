@@ -304,6 +304,19 @@ static string sls_conf_show_url_line(const string& raw)
     return key + " " + sls_url_for_log(v.c_str());
 }
 
+// True if the value (its terminating ';' already cut, tabs already turned into
+// spaces) holds a ';' followed by a space: what a second directive on the same
+// line looks like.
+static bool sls_conf_value_has_second_directive(const string& v)
+{
+    for (string::size_type i = v.find(';'); i != string::npos; i = v.find(';', i + 1)) {
+        if (i + 1 < v.size() && v[i + 1] == ' ') {
+            return true;
+        }
+    }
+    return false;
+}
+
 static string sls_conf_show_line(bool secret, bool url, const string& l)
 {
     return url ? sls_conf_show_url_line(l) : sls_conf_show(secret, l);
@@ -385,6 +398,22 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
             if (!it) {
                 // the name only, never the line: the value of a mistyped secret directive must not leak
                 sls_log(SLS_LOG_ERROR, "line:%d, wrong name='%s'.", line, sls_conf_show(secret, n).c_str());
+                ret = SLS_ERROR;
+                break;
+            }
+            // One directive per line. "a x; b y;" would make a's value "x; b y":
+            // a string directive takes it as written (a URL goes on the wire with
+            // the rest of the line in it), with no error. Refused, naming the
+            // directive only: the value may be a secret or carry a token.
+            if (sls_conf_value_has_second_directive(v)) {
+                sls_log(SLS_LOG_ERROR, "line:%d, name='%s': the value contains a ';' followed by more text; "
+                        "put one directive per line (a value cannot contain '; ').", line, sls_conf_show(secret, n).c_str());
+                ret = SLS_ERROR;
+                break;
+            }
+            if (url && v.find(' ') != string::npos) {
+                sls_log(SLS_LOG_ERROR, "line:%d, name='%s': the URL contains a space; a URL cannot contain white space "
+                        "(a second directive on the same line?).", line, n.c_str());
                 ret = SLS_ERROR;
                 break;
             }

@@ -123,6 +123,9 @@ check your config and tooling before you restart.
   when it runs as root without `user`. The shipped `sls.conf.example` is an open
   server until you set `user_file`; its pull example now uses a finite
   `idle_streams_timeout`.
+- **One directive per line.** A value containing `; ` (a second directive on the
+  same line) and a URL containing a space are config errors; they used to be
+  swallowed into the first directive's value.
 - **Session end reason.** `reason=` is `peer disconnected`, `idle timeout (no
   data)`, `shutdown`, `error` or `closed`, taken from the socket state;
   `clean disconnect` and `idle timeout (peer silent)` are gone (libsrt reports both
