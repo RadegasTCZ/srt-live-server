@@ -22,8 +22,37 @@
  */
 
 
+#include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
 #include "SLSConnLimiter.hpp"
 #include "SLSLog.hpp"
+
+std::string sls_ip_key(const char *ip)
+{
+    if (NULL == ip) {
+        return std::string();
+    }
+    struct in6_addr a6;
+    if (1 != inet_pton(AF_INET6, ip, &a6)) {
+        return std::string(ip);           // IPv4 (or not an address): as is
+    }
+    char buf[INET6_ADDRSTRLEN + 4];
+    if (IN6_IS_ADDR_V4MAPPED(&a6)) {
+        struct in_addr a4;
+        memcpy(&a4, &a6.s6_addr[12], 4);
+        if (NULL == inet_ntop(AF_INET, &a4, buf, sizeof(buf))) {
+            return std::string(ip);
+        }
+        return std::string(buf);
+    }
+    memset(&a6.s6_addr[8], 0, 8);         // the /64 prefix
+    if (NULL == inet_ntop(AF_INET6, &a6, buf, sizeof(buf))) {
+        return std::string(ip);
+    }
+    return std::string(buf) + "/64";
+}
 
 CSLSConnLimiter::CSLSConnLimiter(int max_total, int max_per_ip, int reserved_publishers)
 {
@@ -33,7 +62,18 @@ CSLSConnLimiter::CSLSConnLimiter(int max_total, int max_per_ip, int reserved_pub
     m_total      = 0;
     m_shared     = 0;
     m_hs_rate    = 0;
+    m_hs_max_buckets   = 65536;
+    m_hs_overflow.tokens  = 0;
+    m_hs_overflow.last_ms = 0;
     m_hs_last_prune_ms = 0;
+}
+
+void CSLSConnLimiter::set_handshake_rate(int per_sec, size_t max_buckets)
+{
+    m_hs_rate        = per_sec;
+    m_hs_max_buckets = max_buckets > 0 ? max_buckets : 1;
+    m_hs_overflow.tokens  = 4.0 * per_sec;
+    m_hs_overflow.last_ms = 0;
 }
 
 CSLSConnLimiter::~CSLSConnLimiter()
@@ -65,14 +105,14 @@ int CSLSConnLimiter::verdict_locked(const std::string &ip, int kind, const std::
 
 int CSLSConnLimiter::check(const char *ip, int kind, const std::string &stream, int max_stream) const
 {
-    std::string key = ip ? ip : "";
+    std::string key = sls_ip_key(ip);
     CSLSLock lock(&m_mutex);
     return verdict_locked(key, kind, stream, max_stream);
 }
 
 bool CSLSConnLimiter::try_acquire(const char *ip, int kind, const std::string &stream, int max_stream, int *why)
 {
-    std::string key = ip ? ip : "";
+    std::string key = sls_ip_key(ip);
     CSLSLock lock(&m_mutex);
     int v = verdict_locked(key, kind, stream, max_stream);
     if (why) *why = v;
@@ -100,7 +140,7 @@ void CSLSConnLimiter::promote()
 
 void CSLSConnLimiter::release(const char *ip, int kind, const std::string &stream)
 {
-    std::string key = ip ? ip : "";
+    std::string key = sls_ip_key(ip);
     bool held = false;
     {
         CSLSLock lock(&m_mutex);
@@ -131,24 +171,42 @@ void CSLSConnLimiter::release(const char *ip, int kind, const std::string &strea
     }
 }
 
+// Refill b (capacity and rate: rate per second) up to now_ms, then take one
+// token if there is one.
+bool CSLSConnLimiter::take_token(hs_bucket &b, int rate, int64_t now_ms)
+{
+    if (now_ms > b.last_ms) {
+        b.tokens += (now_ms - b.last_ms) * (double)rate / 1000.0;
+        if (b.tokens > rate) {
+            b.tokens = rate;
+        }
+        b.last_ms = now_ms;
+    }
+    if (b.tokens < 1.0) {
+        return false;
+    }
+    b.tokens -= 1.0;
+    return true;
+}
+
 // A bucket idle for a second is full again and carries no state: such
 // buckets are pruned once the map is large (at most once a second). Past
-// SLS_HS_BUCKETS_MAX addresses (after a prune) a new address is let through
-// untracked: the other caps still hold and the map cannot grow without
-// bound. A handshake has to answer libsrt's cookie, so every address here is
-// a real, reachable one.
+// m_hs_max_buckets addresses (after a prune) a new address is not tracked:
+// it draws from one overflow bucket shared by all untracked addresses
+// (4 x the per-IP rate), so a spray of addresses keeps the map bounded and
+// the handshake rate bounded too, never unlimited.
 #define SLS_HS_BUCKETS_PRUNE 4096
-#define SLS_HS_BUCKETS_MAX   65536
 bool CSLSConnLimiter::handshake_allowed(const char *ip, int64_t now_ms)
 {
     if (m_hs_rate <= 0) {
         return true;
     }
-    std::string key = ip ? ip : "";
+    std::string key = sls_ip_key(ip);
     CSLSLock lock(&m_mutex);
     std::map<std::string, hs_bucket>::iterator it = m_hs_buckets.find(key);
     if (it == m_hs_buckets.end()) {
-        if (m_hs_buckets.size() >= SLS_HS_BUCKETS_PRUNE && now_ms - m_hs_last_prune_ms >= 1000) {
+        size_t prune_at = m_hs_max_buckets < SLS_HS_BUCKETS_PRUNE ? m_hs_max_buckets : SLS_HS_BUCKETS_PRUNE;
+        if (m_hs_buckets.size() >= prune_at && now_ms - m_hs_last_prune_ms >= 1000) {
             m_hs_last_prune_ms = now_ms;
             for (std::map<std::string, hs_bucket>::iterator p = m_hs_buckets.begin(); p != m_hs_buckets.end();) {
                 if (now_ms - p->second.last_ms >= 1000) {
@@ -158,8 +216,8 @@ bool CSLSConnLimiter::handshake_allowed(const char *ip, int64_t now_ms)
                 }
             }
         }
-        if (m_hs_buckets.size() >= SLS_HS_BUCKETS_MAX) {
-            return true;
+        if (m_hs_buckets.size() >= m_hs_max_buckets) {
+            return take_token(m_hs_overflow, 4 * m_hs_rate, now_ms);
         }
         hs_bucket b;
         b.tokens  = m_hs_rate - 1;
@@ -167,19 +225,7 @@ bool CSLSConnLimiter::handshake_allowed(const char *ip, int64_t now_ms)
         m_hs_buckets[key] = b;
         return true;
     }
-    hs_bucket &b = it->second;
-    if (now_ms > b.last_ms) {
-        b.tokens += (now_ms - b.last_ms) * (double)m_hs_rate / 1000.0;
-        if (b.tokens > m_hs_rate) {
-            b.tokens = m_hs_rate;
-        }
-        b.last_ms = now_ms;
-    }
-    if (b.tokens < 1.0) {
-        return false;
-    }
-    b.tokens -= 1.0;
-    return true;
+    return take_token(it->second, m_hs_rate, now_ms);
 }
 
 int CSLSConnLimiter::total() const

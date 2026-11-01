@@ -69,6 +69,13 @@ enum SLS_SLOT_KIND {
     SLS_SLOT_PENDING   = 2,   // a publisher the hook has not admitted yet: a shared slot
 };
 
+// The key one address counts under, for the per-IP cap and the handshake
+// rate alike: IPv4 as is, an IPv4-mapped IPv6 address (::ffff:a.b.c.d) as
+// that IPv4 address, any other IPv6 address as its /64 prefix
+// ("2001:db8:1:2::/64": one host usually holds a whole /64). Anything that
+// does not parse is used verbatim.
+std::string sls_ip_key(const char *ip);
+
 class CSLSConnLimiter
 {
 public:
@@ -96,7 +103,9 @@ public:
 
     // Handshakes one IP may start per second (a token bucket of that size,
     // refilled at that rate); 0 = no limit. Set before the listeners start.
-    void set_handshake_rate(int per_sec) { m_hs_rate = per_sec; }
+    // Past max_buckets tracked addresses, the untracked ones share ONE
+    // overflow bucket of 4 x per_sec (max_buckets: for the unit test).
+    void set_handshake_rate(int per_sec, size_t max_buckets = 65536);
     int  handshake_rate() const { return m_hs_rate; }
     // One handshake from ip at now_ms: true if within the rate (and counted).
     // Never blocks; called on libsrt's receive thread (listen callback).
@@ -117,9 +126,12 @@ private:
         int64_t last_ms;
     };
     int                              m_hs_rate;
+    size_t                           m_hs_max_buckets;
+    hs_bucket                        m_hs_overflow;   // shared by the untracked addresses
     std::map<std::string, hs_bucket> m_hs_buckets;
     int64_t                          m_hs_last_prune_ms;
 
+    static bool take_token(hs_bucket &b, int rate, int64_t now_ms);
     int  verdict_locked(const std::string &ip, int kind, const std::string &stream, int max_stream) const;
 };
 
