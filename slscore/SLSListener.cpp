@@ -843,7 +843,7 @@ int CSLSListener::handler()
 		// can tear a role down right after the lookup, so log pointer values
 		// and the key, never what they point to
 		m_list_role->push(player);
-		sls_log(m_http_url_role[0] ? SLS_LOG_DEBUG : SLS_LOG_INFO, "[%p]CSLSListener::handler, new player[%p]=[%s:%d], key_stream_name=%s, publisher=%p, m_list_role->size=%d.",
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new player[%p]=[%s:%d], key_stream_name=%s, publisher=%p, m_list_role->size=%d.",
 				this, player, peer_name, peer_port, key_stream_name, pub, m_list_role->size());
         return client_count;
     }
@@ -905,7 +905,7 @@ int CSLSListener::handler()
 	pub->set_map_data(key_stream_name, m_map_data);
 	// on_connect: sent by the adopting worker, see CSLSGroup::check_new_role
 	m_list_role->push(pub);
-	sls_log(m_http_url_role[0] ? SLS_LOG_DEBUG : SLS_LOG_INFO, "[%p]CSLSListener::handler, new publisher[%s:%d], key_stream_name=%s.",
+	sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new publisher[%s:%d], key_stream_name=%s.",
 			this, peer_name, peer_port, key_stream_name);
 
 	//5. check pusher

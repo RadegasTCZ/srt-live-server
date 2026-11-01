@@ -92,6 +92,15 @@ public :
 
     // who this role is, for the stats document (set once, by whoever creates the role)
     void        set_stat_identity(const char *stream, const char *remote_ip, int remote_port);
+    // Session log (one INFO line each, never rate-limited): a session starts
+    // when the role is ADMITTED (right after a worker adopts a role without a
+    // hook, or when the on_connect hook answers 200) and ends in uninit().
+    // A refused or never-adopted role logs neither. No-op for roles that are
+    // not reported (listeners).
+    void        session_start();
+    void        session_end();
+    void        set_end_reason(const char *why) { if (NULL == m_end_reason) m_end_reason = why; }
+    bool        hook_pending() const { return m_connect_sent && !m_http_passed; }
     // one JSON object for the stats document; empty for roles that are not reported (listeners)
     std::string get_stat_info();
     virtual int get_peer_info(char *peer_name, int &peer_port);
@@ -139,6 +148,9 @@ protected:
     bool         m_http_passed;
     bool         m_connect_sent;   // on_connect was sent: on_close is owed, whatever the hook answered (Ruling R18)
     bool         m_close_sent;
+    bool         m_session_started;   // the start line was logged: the end line is owed
+    int64_t      m_session_start_ms;
+    const char * m_end_reason;        // first reason set wins; a string literal
 
     sls_conf_base_t    *m_conf;
     CSLSMapData        *m_map_data;

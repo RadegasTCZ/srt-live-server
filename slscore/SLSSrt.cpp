@@ -146,7 +146,7 @@ int CSLSSrt::libsrt_neterrno()
                     "CSLSSrt: peer disconnected (err=%d, %s).", err, msg);
             break;
         case SRT_ETIMEOUT:
-            sls_peer_log(SLS_LOG_WARNING,
+            sls_log(SLS_LOG_DEBUG,
                     "CSLSSrt: peer idle timeout, no graceful close (err=%d, %s).",
                     err, msg);
             break;

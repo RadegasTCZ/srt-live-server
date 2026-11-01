@@ -49,6 +49,9 @@ CSLSRole::CSLSRole()
     m_kbitrate               = 0;//kb
     m_stat_remote_port       = 0;
     m_stat_start_ms          = 0;
+    m_session_started        = false;
+    m_session_start_ms       = 0;
+    m_end_reason             = NULL;
     m_idle_streams_timeout   = 10;//unit: s, -1: unlimited
     m_latency                = 20;//ms
 
@@ -128,6 +131,7 @@ int CSLSRole::uninit()
 	    remove_from_epoll();
 	    invalid_srt();
 	}
+	session_end();
 	on_close();      // no-op unless on_connect was sent and on_close has not been
 
 	// after the socket is closed, so the slot never outlives its connection
@@ -176,8 +180,9 @@ int CSLSRole::get_state(int64_t cur_time_ms)
 		return m_state;
 
 	if (check_idle_streams_duration(cur_time_ms)) {
-		sls_log(SLS_LOG_INFO, "[%p]CSLSRole::get_state, check_idle_streams_duration is true, cur m_state=%d, m_idle_streams_timeout=%ds, call invalid_srt.",
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::get_state, check_idle_streams_duration is true, cur m_state=%d, m_idle_streams_timeout=%ds, call invalid_srt.",
 				this, m_state, m_idle_streams_timeout);
+		set_end_reason("idle timeout (no data)");
 		m_state = SLS_RS_INVALID;
 		invalid_srt();
         return m_state;
@@ -188,7 +193,11 @@ int CSLSRole::get_state(int64_t cur_time_ms)
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::get_state, get_sock_state, ret=%d, call invalid_srt.",
         		this, ret);
         if (SRTS_BROKEN == ret || SRTS_CLOSED == ret || SRTS_NONEXIST == ret) {
-            CSLSSrt::libsrt_neterrno();
+            int err = CSLSSrt::libsrt_neterrno();
+            set_end_reason(SRT_ECONNLOST == err ? "clean disconnect" :
+                           SRT_ETIMEOUT  == err ? "idle timeout (peer silent)" : "error");
+        } else {
+            set_end_reason("error");
         }
 		m_state = SLS_RS_INVALID;
 		invalid_srt();
@@ -512,6 +521,28 @@ int CSLSRole::handler_write_data()
     return write_size ;
 }
 
+void CSLSRole::session_start()
+{
+	if (m_session_started || m_stat_stream.empty()) {
+		return;
+	}
+	m_session_started  = true;
+	m_session_start_ms = sls_gettime_ms();
+	sls_log(SLS_LOG_INFO, "[%p]session start, %s, remote=%s:%d, stream=%s.",
+			this, m_role_name, m_stat_remote_ip.c_str(), m_stat_remote_port, m_stat_stream.c_str());
+}
+
+void CSLSRole::session_end()
+{
+	if (!m_session_started) {
+		return;
+	}
+	m_session_started = false;
+	sls_log(SLS_LOG_INFO, "[%p]session end, %s, remote=%s:%d, stream=%s, duration=%.1fs, reason=%s.",
+			this, m_role_name, m_stat_remote_ip.c_str(), m_stat_remote_port, m_stat_stream.c_str(),
+			(sls_gettime_ms() - m_session_start_ms) / 1000.0, m_end_reason ? m_end_reason : "closed");
+}
+
 void   CSLSRole::set_stat_identity(const char *stream, const char *remote_ip, int remote_port)
 {
 	m_stat_stream      = stream;
@@ -660,6 +691,7 @@ int CSLSRole::check_http_passed()
 		delete m_http_client;
 		m_http_client = NULL;
 		m_http_passed = true;
+		session_start();     // admitted by the hook
 		return SLS_OK;
 	}
 	sls_peer_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_passed, http refused, invalid %s http_url='%s', response_code=%d (0: no usable answer), response='%s'.",

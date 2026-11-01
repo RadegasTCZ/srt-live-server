@@ -118,6 +118,9 @@ void CSLSGroup::check_new_role() {
         // role's reads/writes, and a failure closes it. No-op for roles without
         // on_event_url (listener, pullers, pushers).
         role->on_connect();
+        if (!role->hook_pending()) {
+            role->session_start();     // no hook: admitted once a worker owns it
+        }
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll fd=%d, role_map.size=%zu.",
                 this, m_worker_number, role->get_role_name(), role, fd, m_map_role.size());
     } else {
@@ -373,6 +376,7 @@ void CSLSGroup::clear()
         if (role) {
             sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::clear, worker_number=%d, delete %s=%p.",
                     this, m_worker_number, role->get_role_name(), role);
+            role->set_end_reason("shutdown");
             role->uninit();
             adopt_close_client(role);
             delete role;
