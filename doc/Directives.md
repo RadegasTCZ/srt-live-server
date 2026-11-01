@@ -155,8 +155,20 @@ budget of one line per second for the whole process: a refusal over the
 budget is logged at DEBUG instead, and the next one within the budget says how
 many were held back; once a second the main loop also logs `peer lines: N held
 back in the last S s` if any were. `log_level debug` therefore shows every
-attempt. The start of an admitted session (`new publisher[...]`, `new
-player[...]`) is always logged at INFO.
+attempt.
+
+Every admitted session (publisher, player, puller, pusher) logs exactly two INFO
+lines, never rate-limited:
+
+    session start, <kind>, remote=<ip>:<port>, stream=<app>/<stream>.
+    session end, <kind>, remote=<ip>:<port>, stream=<app>/<stream>, duration=<s>s, reason=<why>.
+
+Without `on_event_url` the start is logged when a worker adopts the
+connection; with it, when the hook answers 200. A refused connection (hook
+answer other than 200, no answer, refused at accept) logs neither line. The
+reason is `clean disconnect`, `idle timeout (peer silent)`, `idle timeout (no
+data)`, `shutdown`, `error` or `closed`. The per-session bookkeeping lines
+(map add/remove, epoll, socket close) are DEBUG.
 
 ## admission_timeout (server block)
 
@@ -196,8 +208,9 @@ log. The addresses are looked up again only after a relay connection has
 ended or failed to open, by the main loop (within about 100 ms), never by a
 worker thread and never per packet; if that lookup fails the previous
 addresses stay in use. (With `worker_threads 0` the main thread is also the
-serving thread, so this lookup runs on it and can briefly block serving.) An upstream with a `?` but no `streamid=` is refused
-when the relay tries to connect (error logged, no socket left open).
+serving thread, so this lookup runs on it and can briefly block serving.)
+An upstream with a `?` but no `streamid=` is refused when the relay tries to
+connect (error logged, no socket left open).
 
 ## Command line
 
