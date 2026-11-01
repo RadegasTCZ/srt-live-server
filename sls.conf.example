@@ -129,7 +129,7 @@ srt {
             #    mode loop;                  # loop | hash -- how upstreams are picked
             #    reconnect_interval 10;      # seconds between pull attempts
             #    idle_streams_timeout 30;    # seconds with no player before the pull is
-            #                                # closed; -1 = never close a running pull
+            #                                # closed (default 10); -1 = never close a running pull
             #                                # (avoid it: any player can then keep an
             #                                # outbound connection open indefinitely)
             #    max_pull_streams 16;        # concurrent pulled streams for this app (1-1024)

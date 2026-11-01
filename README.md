@@ -130,8 +130,9 @@ check your config and tooling before you restart.
   data)`, `shutdown`, `error` or `closed`, taken from the socket state;
   `clean disconnect` and `idle timeout (peer silent)` are gone (libsrt reports both
   as one broken state, and the old lines read a stale error code).
-- **Idle timeout default.** An omitted server-block `idle_streams_timeout` is `10`
-  seconds (it was `0`, which dropped idle roles at once); `-1` still disables it.
+- **Idle timeout default.** An omitted `idle_streams_timeout` is `10` seconds, in a
+  server block and in a relay block (it was `0`, which dropped idle roles and pulls
+  at once); `-1` still disables it.
 - **Log file.** `log_file` is opened without following symlinks (mode 0640) and
   must be a plain file you own (when sls starts as root: owned by root) with one link; otherwise, or when it cannot be
   opened, sls refuses to start. Session start/end lines are limited to 20 per

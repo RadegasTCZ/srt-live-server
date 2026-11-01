@@ -214,7 +214,8 @@ publisher that sends no data. Range -1 to 86400; `-1` never drops an idle role.
 Default `10` when the directive is omitted (1.5.3 and the first 1.5.4 builds
 treated an omitted value as `0`, which dropped roles the moment they were idle);
 an explicit value, `0` included, is used as written. A relay block has its own
-`idle_streams_timeout` (see below).
+`idle_streams_timeout` (see below), with the same default of `10` when omitted
+(it too was `0` before).
 
 ## admission_timeout (server block)
 
@@ -233,8 +234,8 @@ pull relay block (one app) pulls at once; a request beyond it is refused
 `user_file` set, only stream names listed there can start a pull.
 
 A pull exists only for its players. It is dropped, with no reconnect, when
-- no player has been attached for `idle_streams_timeout` seconds (`-1` never
-  closes a running pull), or
+- no player has been attached for `idle_streams_timeout` seconds (relay block,
+  -1 to 3600, default 10; `-1` never closes a running pull), or
 - its upstream connection ends and no player is attached (also while it waits
   for `reconnect_interval` to retry).
 While players are attached a broken pull reconnects every `reconnect_interval`

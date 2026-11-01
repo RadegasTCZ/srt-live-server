@@ -60,9 +60,13 @@ SLS_SET_CONF(relay, int,    max_pull_streams,     "pull: max concurrent pulled s
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_MAX_PULL_STREAMS 16
+// seconds, as the server block's (SLS_DEFAULT_IDLE_STREAMS_TIMEOUT): a
+// zero-filled 0 dropped a pull the moment it had no player
+#define SLS_DEFAULT_RELAY_IDLE_STREAMS_TIMEOUT 10
 inline void sls_conf_relay_defaults(sls_conf_relay_t *c)
 {
-    c->max_pull_streams = SLS_DEFAULT_MAX_PULL_STREAMS;
+    c->max_pull_streams     = SLS_DEFAULT_MAX_PULL_STREAMS;
+    c->idle_streams_timeout = SLS_DEFAULT_RELAY_IDLE_STREAMS_TIMEOUT;
 }
 
 // Startup check of a relay block; SLS_OK, or SLS_ERROR with *err set
