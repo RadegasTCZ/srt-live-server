@@ -85,7 +85,9 @@ int CSLSManager::start_listeners()
     }
     //set log file
     if (strlen(conf_srt->log_file) > 0) {
-        sls_set_log_file(conf_srt->log_file);
+        if (0 != sls_set_log_file(conf_srt->log_file)) {
+            return SLS_ERROR;    // fail closed: no log file is better than a hijacked one
+        }
     }
 
     sls_conf_server_t * conf_server = (sls_conf_server_t *)conf_srt->child;

@@ -28,6 +28,10 @@
 #include <stddef.h>
 #include <strings.h>
 #include <atomic>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 #include "SLSLog.hpp"
 #include "SLSLock.hpp"
@@ -199,16 +203,40 @@ void CSLSLog::set_log_level(char * level)
     printf("!!!wrong log level '%s', set default '%s'.\n" , level, LOG_LEVEL_NAME[m_pInstance->m_level]);
 }
 
-void CSLSLog::set_log_file(char * file_name)
+// The log file is opened while sls may still be root (the privilege drop comes
+// later), so a path that an unprivileged user can swap for a symlink, or a file
+// that belongs to someone else, must not be followed or appended to. Like the
+// pid file: O_NOFOLLOW, then fstat on the open descriptor, and fail closed.
+int CSLSLog::set_log_file(char * file_name)
 {
     if (!m_pInstance)
         m_pInstance = new CSLSLog();
 
-    if (strlen(m_pInstance->log_filename) == 0) {
-        snprintf(m_pInstance->log_filename, sizeof(m_pInstance->log_filename), "%s", file_name);
-        m_pInstance->m_log_file = fopen(m_pInstance->log_filename, "a");
+    if (strlen(m_pInstance->log_filename) != 0) {
+        return 0;                // already open
     }
-
-
+    int fd = open(file_name, O_WRONLY|O_APPEND|O_CREAT|O_NOFOLLOW|O_CLOEXEC, 0640);
+    if (fd < 0) {
+        printf("%s ERROR: cannot open log_file '%s' for appending: %s. sls does not follow a symlink for this file; "
+               "set 'log_file' in the srt block to a writable path in an existing directory.\n",
+               APP_NAME, file_name, strerror(errno));
+        return -1;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1 || st.st_uid != geteuid()) {
+        printf("%s ERROR: log_file '%s' is not a plain file owned by this user with a single link; refusing to use it. "
+               "If it is a leftover, delete it and start again.\n", APP_NAME, file_name);
+        close(fd);
+        return -1;
+    }
+    FILE *fp = fdopen(fd, "a");
+    if (!fp) {
+        printf("%s ERROR: cannot use log_file '%s': %s.\n", APP_NAME, file_name, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    snprintf(m_pInstance->log_filename, sizeof(m_pInstance->log_filename), "%s", file_name);
+    m_pInstance->m_log_file = fp;
+    return 0;
 }
 

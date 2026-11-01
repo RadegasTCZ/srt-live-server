@@ -107,7 +107,9 @@ public :
     static int  destory_instance();
     static void log(int level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
     static void set_log_level(char *level);
-    static void set_log_file(char * file_name);
+    // 0, or -1 (reason printed) when the file is a symlink, not a plain file of
+    // this user, or cannot be opened: the caller must then not start
+    static int  set_log_file(char * file_name);
     // sls_peer_log's budget: true if a line at level may be logged now; then
     // *held is the number of peer lines held back since the last one.
     static bool peer_line_allowed(int level, int *held);
