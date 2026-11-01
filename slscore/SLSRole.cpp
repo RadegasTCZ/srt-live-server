@@ -154,7 +154,7 @@ void CSLSRole::release_conn_slot()
 int CSLSRole::invalid_srt()
 {
     if (m_srt) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSRole::invalid_srt, close sock=%d, m_state=%d.", this, get_fd(), m_state);
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::invalid_srt, close sock=%d, m_state=%d.", this, get_fd(), m_state);
         m_srt->libsrt_close();
         delete m_srt;
         m_srt = NULL;
@@ -662,7 +662,7 @@ int CSLSRole::check_http_passed()
 		m_http_passed = true;
 		return SLS_OK;
 	}
-	sls_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_passed, http refused, invalid %s http_url='%s', response_code=%d (0: no usable answer), response='%s'.",
+	sls_peer_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_passed, http refused, invalid %s http_url='%s', response_code=%d (0: no usable answer), response='%s'.",
 			this, m_role_name, sls_url_for_log(m_http_url).c_str(), status, body.c_str());
 	m_http_client->close();
 	delete m_http_client;

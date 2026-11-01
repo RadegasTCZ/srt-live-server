@@ -303,7 +303,7 @@ void CHttpClient::parse_response()
             snprintf(code, sizeof(code), "%d", status);
             m_response_info.m_response_code = code;
             sls_split_string(m_resp_buf.substr(0, header_len - 4), "\r\n", m_response_info.m_response_header);
-            sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_response, status=%d, url='%s', http_method='%s'.",
+            sls_log(SLS_LOG_DEBUG, "[%p]CHttpClient::parse_response, status=%d, url='%s', http_method='%s'.",
                     this, status, m_log_url.c_str(), m_http_method);
         }
         m_response_info.m_response_content_length = (int)content_length;
@@ -544,7 +544,7 @@ int CHttpClient::generate_http_request()
             return SLS_ERROR;
         }
     }
-    sls_log(SLS_LOG_INFO, "[%p]CHttpClient::generate_http_request, ok, m_url='%s', content len=%d.",
+    sls_log(SLS_LOG_DEBUG, "[%p]CHttpClient::generate_http_request, ok, m_url='%s', content len=%d.",
             this, m_log_url.c_str(), post_data_len);
     return SLS_OK;
 }

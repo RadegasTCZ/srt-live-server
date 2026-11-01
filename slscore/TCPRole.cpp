@@ -136,7 +136,7 @@ int CTCPRole::connect(const struct sockaddr_storage *addr, socklen_t addr_len)
     	}
 	}
 
-    sls_log(SLS_LOG_INFO, "[%p]CTCPRole::connect, started, m_fd=%d.", this, m_fd);
+    sls_log(SLS_LOG_DEBUG, "[%p]CTCPRole::connect, started, m_fd=%d.", this, m_fd);
 	return SLS_OK;
 }
 
@@ -174,7 +174,7 @@ int CTCPRole::setup(int family)
         m_fd = 0;
         return SLS_ERROR;
     }
-    sls_log(SLS_LOG_INFO, "[%p]CTCPRole::setup, create sock ok, m_fd=%d.", this, m_fd);
+    sls_log(SLS_LOG_DEBUG, "[%p]CTCPRole::setup, create sock ok, m_fd=%d.", this, m_fd);
 
     int yes = 1;
     int ret = setsockopt(m_fd,
@@ -184,7 +184,7 @@ int CTCPRole::setup(int family)
         sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::setup, setsockopt reused failure, m_fd=%d.", this, m_fd);
         return SLS_ERROR;
     }
-    sls_log(SLS_LOG_INFO, "[%p]CTCPRole::setup, setsockopt reused ok, m_fd=%d.", this, m_fd);
+    sls_log(SLS_LOG_DEBUG, "[%p]CTCPRole::setup, setsockopt reused ok, m_fd=%d.", this, m_fd);
 
     return SLS_OK;
 }
@@ -208,7 +208,7 @@ int CTCPRole::set_nonblock()
         sls_log(SLS_LOG_ERROR, "[%p]CTCPRole::set_nonblock, fcntl set O_NONBLOCK failure, m_fd=%d.", this, m_fd);
         return SLS_ERROR;
     }
-    sls_log(SLS_LOG_INFO, "[%p]CTCPRole::set_nonblock, set O_NONBLOCK ok, m_fd=%d.", this, m_fd);
+    sls_log(SLS_LOG_DEBUG, "[%p]CTCPRole::set_nonblock, set O_NONBLOCK ok, m_fd=%d.", this, m_fd);
     return SLS_OK;
 }
 

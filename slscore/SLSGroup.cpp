@@ -118,7 +118,7 @@ void CSLSGroup::check_new_role() {
         // role's reads/writes, and a failure closes it. No-op for roles without
         // on_event_url (listener, pullers, pushers).
         role->on_connect();
-        sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll fd=%d, role_map.size=%zu.",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll fd=%d, role_map.size=%zu.",
                 this, m_worker_number, role->get_role_name(), role, fd, m_map_role.size());
     } else {
         sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll failed, fd=%d.",
@@ -235,7 +235,7 @@ void CSLSGroup::adopt_close_client(CSLSRole *role)
     w.client      = client;
     w.deadline_ms = sls_gettime_ms() + SLS_ON_CLOSE_TIMEOUT_MS;
     m_list_wait_close.push_back(w);
-    sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::adopt_close_client, worker_number=%d, %s=%p, on_close pending, waiting=%zu.",
+    sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::adopt_close_client, worker_number=%d, %s=%p, on_close pending, waiting=%zu.",
             this, m_worker_number, role->get_role_name(), role, m_list_wait_close.size());
 }
 
@@ -250,7 +250,7 @@ void CSLSGroup::check_wait_close()
         client->handler();
         client->check_timeout(now);
         if (client->has_result() || now >= it->deadline_ms) {
-            sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_wait_close, worker_number=%d, on_close done, status=%d.",
+            sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::check_wait_close, worker_number=%d, on_close done, status=%d.",
                     this, m_worker_number, client->get_status());
             client->close();
             delete client;
@@ -342,14 +342,14 @@ void CSLSGroup::check_invalid_sock()
         int state = role->get_state(cur_time_ms);
         if (SLS_RS_INVALID == state || SLS_RS_UNINIT == state)
 		{
-			sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, invalid sock=%d, state=%d, role_map.size=%zu.",
+			sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, invalid sock=%d, state=%d, role_map.size=%zu.",
 				  this, m_worker_number, role->get_role_name(), role, role->get_fd(), state, m_map_role.size());
 			//check relay: reconnect, or retire its manager
 			relay_ended(role);
 
 			role->uninit();
 			adopt_close_client(role);
-			sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, delete.",
+			sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, delete.",
 				  this, m_worker_number, role->get_role_name(), role);
 			delete role;
 			m_map_role.erase(it_erase);

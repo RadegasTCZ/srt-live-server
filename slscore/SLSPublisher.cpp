@@ -65,13 +65,13 @@ int CSLSPublisher::uninit()
 
 	if (m_map_data) {
         ret = m_map_data->remove(m_map_data_key);
-		sls_log(SLS_LOG_INFO, "[%p]CSLSPublisher::uninit, removed publisher from m_map_data, ret=%d.",
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSPublisher::uninit, removed publisher from m_map_data, ret=%d.",
 				this, ret);
 	}
 
 	if (m_map_publisher) {
         ret = m_map_publisher->remove(this);
-		sls_log(SLS_LOG_INFO, "[%p]CSLSPublisher::uninit, removed publisher from m_map_publisher, ret=%d.",
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSPublisher::uninit, removed publisher from m_map_publisher, ret=%d.",
 				this, ret);
 	}
     return CSLSRole::uninit();
