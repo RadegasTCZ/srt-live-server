@@ -210,7 +210,8 @@ int main(int argc, char* argv[])
         goto EXIT_PROC;
     }
 
-    // copy the path now: the conf is released before the pid file is removed
+    // the pid file is created and locked here and stays in place at exit
+    // (only the lock goes, with the process: see sls_write_pid)
     get_pid_path(conf_srt, pid_path, sizeof(pid_path));
     pid_fd = sls_write_pid(pid_path, getpid());
     if (pid_fd < 0) {
