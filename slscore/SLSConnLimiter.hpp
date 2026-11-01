@@ -104,12 +104,15 @@ public:
     // Handshakes one IP may start per second (a token bucket of that size,
     // refilled at that rate); 0 = no limit. Set before the listeners start.
     // Past max_buckets tracked addresses, the untracked ones share ONE
-    // overflow bucket of 4 x per_sec (max_buckets: for the unit test).
+    // overflow bucket of max(4 x per_sec, max_total) a second (max_buckets:
+    // for the unit test).
     void set_handshake_rate(int per_sec, size_t max_buckets = 65536);
     int  handshake_rate() const { return m_hs_rate; }
     // One handshake from ip at now_ms: true if within the rate (and counted).
     // Never blocks; called on libsrt's receive thread (listen callback).
     bool handshake_allowed(const char *ip, int64_t now_ms);
+    int  overflow_rate() const;
+    size_t tracked_addresses() const;
 
 private:
     int                         m_max_total;
@@ -131,6 +134,7 @@ private:
     std::map<std::string, hs_bucket> m_hs_buckets;
     int64_t                          m_hs_last_prune_ms;
 
+    void prune_refilled_locked(int64_t now_ms);
     static bool take_token(hs_bucket &b, int rate, int64_t now_ms);
     int  verdict_locked(const std::string &ip, int kind, const std::string &stream, int max_stream) const;
 };

@@ -134,8 +134,14 @@ request
   0-100000): connection requests one IP address may make per second, counted
   as a token bucket of that size refilled at that rate (a burst of 20, then 20 a
   second). Every request counts, also one refused for another reason. sls
-  tracks up to 65536 addresses; beyond that the untracked ones share one bucket
-  of 4 x the rate, so a spray of addresses is bounded too;
+  tracks up to 65536 addresses. When that table is full, a new address first
+  makes sls drop every address whose bucket has refilled (that loses nothing;
+  done at most every 50 ms); only if the table is still full is the new address
+  left untracked, and all untracked addresses share one bucket of
+  max(4 x the rate, the connection cap) requests a second. The trade-off: under
+  a spray from more active addresses than the table holds, newcomers share
+  that bounded budget (and may be refused) until buckets refill; handshakes
+  stay bounded rather than unlimited;
 - with a malformed streamid, or one that is neither a publisher nor a player app;
 - over the connection caps above (they are checked again at accept, where the
   slot is taken);

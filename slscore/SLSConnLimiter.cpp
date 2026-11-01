@@ -72,8 +72,38 @@ void CSLSConnLimiter::set_handshake_rate(int per_sec, size_t max_buckets)
 {
     m_hs_rate        = per_sec;
     m_hs_max_buckets = max_buckets > 0 ? max_buckets : 1;
-    m_hs_overflow.tokens  = 4.0 * per_sec;
+    m_hs_overflow.tokens  = overflow_rate();
     m_hs_overflow.last_ms = 0;
+}
+
+// The untracked addresses' shared budget: 4 x the per-IP rate, or the
+// connection cap per second if that is more (so a full map never holds
+// admissions below what the server could take anyway).
+int CSLSConnLimiter::overflow_rate() const
+{
+    int r = 4 * m_hs_rate;
+    return m_max_total > r ? m_max_total : r;
+}
+
+size_t CSLSConnLimiter::tracked_addresses() const
+{
+    CSLSLock lock(&m_mutex);
+    return m_hs_buckets.size();
+}
+
+// Drops every bucket that has refilled by now: a full bucket carries no
+// state, so this loses nothing.
+void CSLSConnLimiter::prune_refilled_locked(int64_t now_ms)
+{
+    m_hs_last_prune_ms = now_ms;
+    for (std::map<std::string, hs_bucket>::iterator p = m_hs_buckets.begin(); p != m_hs_buckets.end();) {
+        const hs_bucket &b = p->second;
+        if (b.tokens + (now_ms - b.last_ms) * (double)m_hs_rate / 1000.0 >= m_hs_rate) {
+            m_hs_buckets.erase(p++);
+        } else {
+            ++p;
+        }
+    }
 }
 
 CSLSConnLimiter::~CSLSConnLimiter()
@@ -189,13 +219,16 @@ bool CSLSConnLimiter::take_token(hs_bucket &b, int rate, int64_t now_ms)
     return true;
 }
 
-// A bucket idle for a second is full again and carries no state: such
-// buckets are pruned once the map is large (at most once a second). Past
-// m_hs_max_buckets addresses (after a prune) a new address is not tracked:
-// it draws from one overflow bucket shared by all untracked addresses
-// (4 x the per-IP rate), so a spray of addresses keeps the map bounded and
-// the handshake rate bounded too, never unlimited.
+// A refilled bucket carries no state: refilled buckets are pruned once the
+// map is large (at most once a second), and whenever a new address finds it
+// full (at most every SLS_HS_FULL_PRUNE_MS, which bounds the cost of the walk
+// under a spray). Only if the map is still full is the new address left
+// untracked: it draws from one overflow bucket shared by all untracked
+// addresses (overflow_rate()), so a spray from more active addresses than
+// the map holds keeps the map and the handshake rate bounded, never
+// unlimited; newcomers then share that budget until buckets refill.
 #define SLS_HS_BUCKETS_PRUNE 4096
+#define SLS_HS_FULL_PRUNE_MS 50
 bool CSLSConnLimiter::handshake_allowed(const char *ip, int64_t now_ms)
 {
     if (m_hs_rate <= 0) {
@@ -207,17 +240,13 @@ bool CSLSConnLimiter::handshake_allowed(const char *ip, int64_t now_ms)
     if (it == m_hs_buckets.end()) {
         size_t prune_at = m_hs_max_buckets < SLS_HS_BUCKETS_PRUNE ? m_hs_max_buckets : SLS_HS_BUCKETS_PRUNE;
         if (m_hs_buckets.size() >= prune_at && now_ms - m_hs_last_prune_ms >= 1000) {
-            m_hs_last_prune_ms = now_ms;
-            for (std::map<std::string, hs_bucket>::iterator p = m_hs_buckets.begin(); p != m_hs_buckets.end();) {
-                if (now_ms - p->second.last_ms >= 1000) {
-                    m_hs_buckets.erase(p++);
-                } else {
-                    ++p;
-                }
-            }
+            prune_refilled_locked(now_ms);
+        }
+        if (m_hs_buckets.size() >= m_hs_max_buckets && now_ms - m_hs_last_prune_ms >= SLS_HS_FULL_PRUNE_MS) {
+            prune_refilled_locked(now_ms);
         }
         if (m_hs_buckets.size() >= m_hs_max_buckets) {
-            return take_token(m_hs_overflow, 4 * m_hs_rate, now_ms);
+            return take_token(m_hs_overflow, overflow_rate(), now_ms);
         }
         hs_bucket b;
         b.tokens  = m_hs_rate - 1;
