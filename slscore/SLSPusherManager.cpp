@@ -227,17 +227,17 @@ int CSLSPusherManager::reconnect_all(int64_t cur_tm_ms, bool no_publisher)
         	all_ret |= ret;
     	    m_map_reconnect_relay[url] = cur_tm_ms;
 	        sls_log(SLS_LOG_INFO, "[%p]CSLSPullerManager::reconnect_all, failed, url=%s, publisher=NULL not exist.",
-	    		this, url.c_str());
+	    		this, sls_url_for_log(url.c_str()).c_str());
         	continue;
         }
     	ret = connect(url.c_str());
     	if (SLS_OK != ret) {
     	    sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::reconnect_all, faild, connect url='%s'.",
-    	    		this, url.c_str());
+    	    		this, sls_url_for_log(url.c_str()).c_str());
     	    m_map_reconnect_relay[url] = cur_tm_ms;
     	} else {
             sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::reconnect_all, ok, connect url='%s', erase item from m_map_reconnect_relay.",
-        		    this, url.c_str());
+        		    this, sls_url_for_log(url.c_str()).c_str());
             m_map_reconnect_relay.erase(it_cur);
     	}
     	all_ret |= ret;

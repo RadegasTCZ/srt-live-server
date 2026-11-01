@@ -137,7 +137,7 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
     //
     if (strlen(url) == 0) {
     	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
-    			this, url);
+    			this, sls_url_for_log(url).c_str());
         return SLS_ERROR;
     }
     snprintf(m_url, sizeof(m_url), "%s", url);
@@ -147,13 +147,13 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
     p = strchr(url, ':');
     if (!p) {
     	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, no ':', url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
-    			this, m_url);
+    			this, sls_url_for_log(m_url).c_str());
         return SLS_ERROR;
     }
     p[0] = 0x00;
     if (strcmp(url, "srt") != 0) {
     	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, not 'srt' prefix, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
-    			this, m_url);
+    			this, sls_url_for_log(m_url).c_str());
         return SLS_ERROR;
     }
     p += 3;//skip 'srt://'
@@ -169,14 +169,14 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
         long   v = strtol(p, &p_end, 10);
         if (p_end == p || v < 1 || v > 65535 || (*p_end != '/' && *p_end != '?')) {
             sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, bad port, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
-                    this, m_url);
+                    this, sls_url_for_log(m_url).c_str());
             return SLS_ERROR;
         }
         port = (int)v;
     }
     else {
     	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, not 'hostname:port', url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
-    			this, m_url);
+    			this, sls_url_for_log(m_url).c_str());
         return SLS_ERROR;
     }
 
@@ -185,31 +185,31 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
     p_tmp = strchr(p, '?');
     if (!p_tmp) {
     	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelay::parse_url='%s', no '?' param, come on.",
-    			this, m_url);
+    			this, sls_url_for_log(m_url).c_str());
         p_tmp = strchr(p, '/');//app
         if (!p_tmp) {//app
         	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
-        			this, m_url);
+        			this, sls_url_for_log(m_url).c_str());
         	return SLS_ERROR;
         }
 		p_tmp ++;
 		p_tmp = strchr(p_tmp, '/');//stream
 		if (!p_tmp) {
 			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
-					this, m_url);
+					this, sls_url_for_log(m_url).c_str());
 			return SLS_ERROR;
 		}
         p_tmp ++;
 		if (strlen(p_tmp)==0) {
 			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
-					this, m_url);
+					this, sls_url_for_log(m_url).c_str());
 			return SLS_ERROR;
 		}
 		p_tmp ++;
 		p_tmp = strchr(p_tmp, '/');//redundant
 		if (p_tmp) {
 			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
-					this, m_url);
+					this, sls_url_for_log(m_url).c_str());
 			return SLS_ERROR;
 		}
     }else{
@@ -222,12 +222,12 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
 		//streamid
 		p_tmp = strchr(p, '=');
 		if (!p_tmp) {
-			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url='%s', no 'stream=', url must like 'hostname:port?streamid=your_stream_id'.", this, url);
+			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url='%s', no 'stream=', url must like 'hostname:port?streamid=your_stream_id'.", this, sls_url_for_log(url).c_str());
 			return SLS_ERROR;
 		}
 		p_tmp[0] = 0;
 		if (strcmp(p, "streamid") != 0) {
-			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url='%s', no 'stream', url must like 'hostname:port?streamid=your_stream_id'.", this, url);
+			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url='%s', no 'stream', url must like 'hostname:port?streamid=your_stream_id'.", this, sls_url_for_log(url).c_str());
 			return SLS_ERROR;
 		}
 		p = p_tmp + 1;
@@ -256,7 +256,7 @@ int CSLSRelay::open(const char * srt_url, SLS_RELAY_INFO *sri) {
     //init listener
     if (NULL != m_srt)
     {
-    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, failure, url='%s', m_srt = %p, not NULL.", this, url, m_srt);
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, failure, url='%s', m_srt = %p, not NULL.", this, sls_url_for_log(url).c_str(), m_srt);
         return SLS_ERROR;
     }
 
@@ -264,11 +264,11 @@ int CSLSRelay::open(const char * srt_url, SLS_RELAY_INFO *sri) {
     if (SLS_OK != parse_url(url, host_name, sizeof(host_name), server_port, streamid, sizeof(streamid))){
         return SLS_ERROR;
     }
-	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelay::open, parse_url ok, url='%s'.", this, m_url);
+	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelay::open, parse_url ok, url='%s'.", this, sls_url_for_log(m_url).c_str());
 
     if (strlen(streamid) == 0)
     {
-    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, url='%s', no 'stream', url must like 'hostname:port?streamid=your_stream_id'.", this, m_url);
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, url='%s', no 'stream', url must like 'hostname:port?streamid=your_stream_id'.", this, sls_url_for_log(m_url).c_str());
         return SLS_ERROR;
     }
 
@@ -333,7 +333,7 @@ int CSLSRelay::close()
 {
 	int ret = SLS_OK;
 	if (m_srt) {
-    	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelay::close, ok, url='%s'.", this, m_url);
+    	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelay::close, ok, url='%s'.", this, sls_url_for_log(m_url).c_str());
 		ret = m_srt->libsrt_close();
 		delete m_srt;
 		m_srt = NULL;

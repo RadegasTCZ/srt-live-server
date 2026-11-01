@@ -51,7 +51,7 @@ int SLS_RELAY_INFO::resolve_all(std::map<std::string, struct sockaddr_in> *out)
 		int  port = 0;
 		if (SLS_OK != sls_relay_split_hostport(m_upstreams[i].c_str(), host, sizeof(host), &port)) {
 			sls_log(SLS_LOG_ERROR, "SLS_RELAY_INFO::resolve_all, upstream='%s' must start with 'hostname:port'.",
-					m_upstreams[i].c_str());
+					sls_url_for_log(m_upstreams[i].c_str()).c_str());
 			return SLS_ERROR;
 		}
 		struct sockaddr_storage ss;
@@ -281,7 +281,7 @@ int CSLSRelayManager::connect(const char *url)
 {
 	int ret = SLS_ERROR;
 	if (url == NULL || strlen(url) == 0) {
-	    sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::connect, failed, url=%s.", this, url?url:"null");
+	    sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::connect, failed, url=%s.", this, url ? sls_url_for_log(url).c_str() : "null");
         return ret;
 	}
 
@@ -330,10 +330,10 @@ int CSLSRelayManager::connect_hash()
 	int ret = connect(szURL);
 	if (SLS_OK != ret) {
 	    sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::connect_hash, faild, connect szURL=%s, m_stream_name=%s.",
-	    		this, szURL, m_stream_name);
+	    		this, sls_url_for_log(szURL).c_str(), m_stream_name);
 	} else {
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelayManager::connect_hash, ok, connect szURL=%s, m_stream_name=%s.",
-    		    this, szURL, m_stream_name);
+    		    this, sls_url_for_log(szURL).c_str(), m_stream_name);
 	}
     return ret;
 }
