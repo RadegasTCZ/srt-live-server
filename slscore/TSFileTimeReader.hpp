@@ -49,6 +49,7 @@ public :
     int64_t  generate_rts_file(const char  *ts_file_name);
 
 private:
+    int             read_records(uint8_t *buf);
     char            m_file_name[URL_MAX_LEN];
     int             m_rts_fd;
     int             m_dts_pid;

@@ -24,7 +24,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 using namespace std;
@@ -70,18 +72,45 @@ struct sls_opt_client_t {
 };
 
 
+// Copy a command line value into a fixed buffer; false (and a message) if it
+// does not fit. The value itself is not logged: a srt url may carry a passphrase.
+static bool copy_arg(char *dst, size_t dst_size, const char *src, const char *flag)
+{
+    int n = snprintf(dst, dst_size, "%s", src);
+    if (n < 0 || (size_t)n >= dst_size) {
+        sls_log(SLS_LOG_ERROR, "srt live client, the value of '%s' is too long (max %zu characters), EXIT!",
+                flag, dst_size - 1);
+        return false;
+    }
+    return true;
+}
+
+// Parse a whole decimal number in [lo, hi].
+static bool parse_int_arg(const char *s, long lo, long hi, long *out, const char *flag)
+{
+    char *end = NULL;
+    errno = 0;
+    long v = strtol(s, &end, 10);
+    if (errno != 0 || end == s || *end != '\0' || v < lo || v > hi) {
+        sls_log(SLS_LOG_ERROR, "srt live client, the value of '%s' must be a number from %ld to %ld, EXIT!",
+                flag, lo, hi);
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
 int main(int argc, char* argv[])
 {
     struct sigaction    sigIntHandler;
     sls_opt_client_t    sls_opt;
 
-    int ret = SLS_OK;
     usage();
 
     //parse cmd line
     if (argc < 3) {
-        sls_log(SLS_LOG_INFO, "srt live client, no enough parameters, EXIT!");
-    	return SLS_OK;
+        sls_log(SLS_LOG_ERROR, "srt live client, no enough parameters, EXIT!");
+        return 1;
     }
 
     //parset argv
@@ -89,30 +118,38 @@ int main(int argc, char* argv[])
     int i = 1;
 	while (i < argc) {
 	    sls_remove_marks(argv[i]);
-		if (strcmp("-r", argv[i]) == 0) {
-			i ++;
-	        sls_remove_marks(argv[i]);
-			strcpy(sls_opt.srt_url, argv[i++]);
-		} else if  (strcmp("-i", argv[i]) == 0) {
-			i ++;
-	        sls_remove_marks(argv[i]);
-			strcpy(sls_opt.ts_file_name, argv[i++]);
-		} else if  (strcmp("-o", argv[i]) == 0) {
-			i ++;
-	        sls_remove_marks(argv[i]);
-			strcpy(sls_opt.out_file_name, argv[i++]);
-		} else if  (strcmp("-c", argv[i]) == 0) {
-			i ++;
-	        sls_remove_marks(argv[i]);
-			sls_opt.worker_count = atoi(argv[i++]);
-		} else if  (strcmp("-l", argv[i]) == 0) {
-			i ++;
-	        sls_remove_marks(argv[i]);
-			sls_opt.loop = atoi(argv[i++]);
+	    const char *flag = argv[i];
+	    if (strcmp("-r", flag) != 0 && strcmp("-i", flag) != 0 && strcmp("-o", flag) != 0
+	        && strcmp("-c", flag) != 0 && strcmp("-l", flag) != 0) {
+	        sls_log(SLS_LOG_ERROR, "srt live client, wrong parameter '%s', EXIT!", flag);
+	        return 1;
+	    }
+	    // every flag takes a value
+	    if (i + 1 >= argc) {
+	        sls_log(SLS_LOG_ERROR, "srt live client, parameter '%s' needs a value, EXIT!", flag);
+	        return 1;
+	    }
+	    char *val = argv[i + 1];
+	    sls_remove_marks(val);
+	    long num = 0;
+		if (strcmp("-r", flag) == 0) {
+			if (!copy_arg(sls_opt.srt_url, sizeof(sls_opt.srt_url), val, flag)) return 1;
+		} else if (strcmp("-i", flag) == 0) {
+			if (!copy_arg(sls_opt.ts_file_name, sizeof(sls_opt.ts_file_name), val, flag)) return 1;
+		} else if (strcmp("-o", flag) == 0) {
+			if (!copy_arg(sls_opt.out_file_name, sizeof(sls_opt.out_file_name), val, flag)) return 1;
+		} else if (strcmp("-c", flag) == 0) {
+			if (!parse_int_arg(val, 0, 256, &num, flag)) return 1;
+			sls_opt.worker_count = (int)num;
 		} else {
-	        sls_log(SLS_LOG_INFO, "srt live client, wrong parameter '%s', EXIT!", argv[i]);
-	    	return SLS_OK;
+			if (!parse_int_arg(val, 0, 1, &num, flag)) return 1;
+			sls_opt.loop = (num != 0);
 		}
+		i += 2;
+	}
+	if (strlen(sls_opt.srt_url) == 0) {
+	    sls_log(SLS_LOG_ERROR, "srt live client, '-r srt_url' is required, EXIT!");
+	    return 1;
 	}
 	CSLSClient sls_client;
 	if (strlen(sls_opt.ts_file_name) > 0) {
@@ -131,10 +168,10 @@ int main(int argc, char* argv[])
 	        if (fpid < 0){
 	            printf("srt live client, error in fork!");
 	        }else if (fpid == 0) {
-	            printf("srt live client, i am the child process, my process id is %d/n",getpid());
+	            printf("srt live client, i am the child process, my process id is %d\n",getpid());
 	            break;
 	        }else {
-	            printf("srt live client, i am the parent process, my process id is %d/n",getpid());
+	            printf("srt live client, i am the parent process, my process id is %d\n",getpid());
 	        }
 	    }
 	}

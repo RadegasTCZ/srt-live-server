@@ -44,7 +44,7 @@
 CSLSClient::CSLSClient()
 {
     m_eid        = 0;
-    m_out_file   = 0;
+    m_out_file   = -1;
     m_data_count = 0;
     m_bit_rate   = 0;
 
@@ -91,7 +91,7 @@ int CSLSClient::play(const char* url, const char *out_file_name)
 {
     m_is_write = false;
     if (out_file_name != NULL && strlen(out_file_name) > 0) {
-    	strcpy(m_out_file_name, out_file_name);
+    	snprintf(m_out_file_name, sizeof(m_out_file_name), "%s", out_file_name);
     }
 
 	return open_url(url);
@@ -150,9 +150,9 @@ int CSLSClient::close()
 {
 
 	int ret = SLS_OK;
-	if (0 != m_out_file) {
+	if (m_out_file >= 0) {
 		::close(m_out_file);
-		m_out_file = 0;
+		m_out_file = -1;
 	}
 	if (0 != m_eid) {
     	sls_log(SLS_LOG_INFO, "[%p]CSLSClient::close, ok, url='%s'.", this, m_url);
@@ -269,17 +269,17 @@ int CSLSClient::read_data_handler()
 		//update invalid begin time
 		//m_invalid_begin_tm = sls_gettime();
 
-        if (0 == m_out_file) {
+        if (m_out_file < 0) {
 			if (strlen(m_out_file_name) > 0) {
 				m_out_file = ::open(m_out_file_name, O_WRONLY|O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IXOTH);
-			    if (0 == m_out_file) {
+			    if (m_out_file < 0) {
 			    	sls_log(SLS_LOG_ERROR, "[%p]CSLSClient::read_data_handler, open file='%s' failed, '%s'.\n", this, m_out_file_name, strerror(errno));
 			    	return SLS_ERROR;
 			    }
 			}
 		}
-        if (0 != m_out_file) {
-            ::write(m_out_file, szData, TS_UDP_LEN);
+        if (m_out_file >= 0) {
+            ::write(m_out_file, szData, n);
         }
         m_data_count += n;
         int64_t cur_tm = sls_gettime_ms();
