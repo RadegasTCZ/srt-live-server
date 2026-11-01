@@ -2,6 +2,16 @@ description for config file.
 
 https://github.com/Edward-Wu/srt-live-server/wiki/Directives
 
+## Streamid format
+
+A streamid is `<domain>/<app>/<stream>`: exactly two `/`, and each of the three
+parts is 1-128 characters from `A-Za-z0-9._-` and not `.` or `..`. Publishers
+use `domain_publisher`/`app_publisher`, players `domain_player`/`app_player`
+(the same pair of values decides the role everywhere, including per-user
+authentication). A connection whose streamid does not parse is refused before
+any state is created; the refusal is logged with the value escaped (non-printable
+bytes as `\xNN`) and truncated.
+
 ## user_file
 
 Path to the per-user passphrase file (format: `sls-users.conf.example`).
@@ -156,6 +166,22 @@ block with an upstream that does not resolve is refused with an error in the
 log. The addresses are looked up again only after a relay connection has
 ended, never per packet. An upstream with a `?` but no `streamid=` is refused
 when the relay tries to connect (error logged, no socket left open).
+
+## Command line
+
+    sls -c sls.conf [-l level]      run the server
+    sls -c sls.conf -s reload       re-read the users file and re-resolve hook/relay hosts (SIGHUP)
+    sls -c sls.conf -s stop         stop the running server (SIGINT)
+
+`-s` finds the running server through the configured `pid_file`, so it needs
+the same `-c` as the server.
+
+    slc -r <srt url> [-o out.ts] [-c n]     play (optionally into a file; -c forks n-1 more players)
+    slc -r <srt url> -i in.ts [-l 1]        push a TS file, -l 1 loops it
+
+Every `slc` flag takes a value. A missing or too long value (over 1023
+characters), an unknown flag, a number out of range (`-c` 0-256, `-l` 0 or 1)
+or a missing `-r` is an error: slc says so and exits with status 1.
 
 ## srt_passphrase
 

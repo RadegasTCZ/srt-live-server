@@ -36,12 +36,15 @@ srt {
     # as (root, when `user` below is set), otherwise startup fails and the error
     # names the path. Under systemd add RuntimeDirectory=sls to the unit.
     # The file is created 0600; keep its directory writable only by root / the
-    # service user (not /tmp). Running as a normal user from a checkout? Point it somewhere you own:
+    # service user (not /tmp). Running as a normal user from a checkout? Point it
+    # at an absolute path you own (a relative one is resolved against the current
+    # directory of each sls invocation, so `sls -s` from elsewhere would miss it):
     #pid_file /run/sls/sls.pid;
+    #pid_file /home/you/sls/sls.pid;
 
     # Optional: POST stream stats as JSON to an external endpoint every N seconds.
     #stat_post_url      http://127.0.0.1:8001/sls/stat;
-    #stat_post_interval 5;      # seconds
+    #stat_post_interval 5;      # seconds (1-60, default 5)
 
     # Drop privileges after bind(). Only applies when sls is started as root;
     # ignored (with a warning) otherwise. If `group` is omitted, the user's
@@ -61,7 +64,9 @@ srt {
         # Stream-id "domain" components. Streamids take the form
         #   <domain_publisher>/<app_publisher>/<name>      for publishers
         #   <domain_player>/<app_player>/<name>            for players
-        # Multiple values allowed (whitespace-separated).
+        # Multiple values allowed (whitespace-separated). Each part of a streamid
+        # (domain, app, name) is 1-128 characters of A-Z a-z 0-9 . _ - ; anything else
+        # is refused.
         domain_publisher uplive.example.com;
         domain_player    live.example.com;
 
