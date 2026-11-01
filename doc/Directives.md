@@ -186,7 +186,8 @@ budget at INFO, not at ERROR.
 Path of the log file, appended to; the directory must exist. sls opens it with
 `O_NOFOLLOW` and mode 0640 before it drops privileges, then checks the open file:
 a symlink, a device or other non-regular file, a file with more than one link, or
-a file owned by another user stops sls from starting (an error names the path),
+a file owned by another user (when sls starts as root, a log pre-created for the
+service user counts) stops sls from starting (an error names the path),
 and so does a file that cannot be opened, which used to leave you with no log
 file and no message. Delete a stale file you do not own and start again.
 
@@ -234,8 +235,11 @@ Each upstream is `host:port?streamid=...` or `host:port/app` (the stream name
 is appended). Hosts are resolved when the configuration is loaded; a relay
 block with an upstream that does not resolve is refused with an error in the
 log. The addresses are looked up again only after a relay connection has
-ended or failed to open, by the main loop (within about 100 ms), never by a
-worker thread and never per packet; if that lookup fails the previous
+failed (it never reached the connected state and carried no data, it broke, or
+the peer went silent) or failed to open, by the main loop (within about 100 ms,
+and at most once per 5 seconds), never by a worker thread and never per packet.
+A relay that connected and ended cleanly (the upstream closed it, or no player
+was left) keeps the cached addresses, so a churn of short pulls costs no lookup; if that lookup fails the previous
 addresses stay in use. (With `worker_threads 0` the main thread is also the
 serving thread, so this lookup runs on it and can briefly block serving.)
 An upstream with a `?` but no `streamid=` is refused when the relay tries to
@@ -248,12 +252,15 @@ connect (error logged, no socket left open).
     sls -c sls.conf -s stop         stop the running server (SIGINT)
 
 `-s` finds the running server through the configured `pid_file`, so it needs
-the same `-c` as the server. A reload does exactly this: it re-reads every
+the same `-c` as the server. It signals the process that holds the lock on that
+file only if that process runs this binary: the same executable, or, because a
+non-dumpable server's `/proc/<pid>/exe` cannot be read, one whose program name
+(`/proc/<pid>/comm`) is this binary's file name. A reload does exactly this: it re-reads every
 `user_file` (a rejected file keeps the previous users) and re-resolves the
 `on_event_url` host of every server block and the `stat_post_url` host (a
 host that does not resolve keeps its previous address); each outcome is logged
 at INFO or ERROR. Relay upstream hosts are not re-resolved by a reload: they
-are looked up again whenever a relay connection ends (see above). Every other
+are looked up again after a relay connection fails (see above). Every other
 `sls.conf` change needs a restart.
 
     slc -r <srt url> [-o out.ts] [-c n]     play (optionally into a file; -c forks n-1 more players)
@@ -288,7 +295,8 @@ passphrases in memory are not reachable through a core dump, `ptrace` or
 `/proc/<pid>/mem` by the same user. The side effects: no core file when it
 crashes, no `gdb -p`, and `/proc/<pid>/exe` and `/proc/<pid>/fd` are unreadable
 (`sls -s reload|stop` copes with that). To debug a crash start sls with the
-environment variable `SLS_DUMPABLE=1`, which leaves the flag alone.
+environment variable `SLS_DUMPABLE=1`, which keeps the process dumpable (also
+after the privilege drop) and logs a WARNING saying so; unset it afterwards.
 
 A lock that cannot be taken aborts the process with a message on stderr instead
 of running the critical section unlocked.
