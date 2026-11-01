@@ -183,14 +183,13 @@ int CSLSRole::invalid_srt()
 // call came before, often for another socket. libsrt reports a peer that
 // closed and a peer that went silent (SRTO_PEERIDLETIMEO) the same way, as
 // SRTS_BROKEN, so the two are one reason; sls's own idle timer, a shutdown
-// and an error are set where they happen.
+// and an error are set where they happen. On a socket sls still holds,
+// CLOSED/NONEXIST only mean libsrt's GC retired it after it broke: the peer
+// went away too.
 const char *CSLSRole::end_reason_of_sock_state(int st)
 {
-    if (SRTS_BROKEN == st) {
+    if (SRTS_BROKEN == st || SRTS_CLOSED == st || SRTS_NONEXIST == st) {
         return "peer disconnected";
-    }
-    if (SRTS_CLOSED == st || SRTS_NONEXIST == st) {
-        return "closed";
     }
     return "error";          // still connected (or no socket): sls dropped it on an error
 }
