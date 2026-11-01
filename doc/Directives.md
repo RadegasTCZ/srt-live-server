@@ -119,6 +119,22 @@ connection-attempt line, see below). Outbound relay connections
 (pull and push) never count. A slot is given back when the connection closes,
 whichever way it closes.
 
+## Before the handshake: the listen callback, max_handshakes_per_ip_per_sec (srt block)
+
+Every connection request first reaches sls's listen callback, before libsrt
+completes the handshake (and before it checks a passphrase). The callback
+refuses, with an SRT reject reason (`1402` overload for the limits below), a
+request
+- over `max_handshakes_per_ip_per_sec` (default `20`, `0` = no limit,
+  0-100000): connection requests one IP address may make per second, counted
+  as a token bucket of that size refilled at that rate (a burst of 20, then 20 a
+  second). Every request counts, also one refused for another reason;
+- with a malformed streamid, or one that is neither a publisher nor a player app;
+- over the connection caps above (they are checked again at accept, where the
+  slot is taken);
+- with `user_file`, for an unknown user.
+Refusals are logged as `listen_callback, refused ...` through the refusal budget.
+
 ## on_event_url, on_event_timeout (server block)
 
 `on_event_url http://host[:port][/path][?query];` makes sls call a webhook

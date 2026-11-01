@@ -589,6 +589,15 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     int  peer_port = 0;
     sls_peer_of(peeraddr, peer_ip, sizeof(peer_ip), &peer_port);
 
+    // Every connection request counts, first: also the ones refused below.
+    if (NULL != self->m_admission_limiter &&
+        !self->m_admission_limiter->handshake_allowed(peer_ip, sls_gettime_ms())) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: handshake rate limit (%d per second per IP) reached.",
+                self, peer_ip, peer_port, self->m_admission_limiter->handshake_rate());
+        srt_setrejectreason(ns, SRT_REJX_OVERLOAD);
+        return -1;
+    }
+
     if (!streamid || !*streamid) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, empty streamid; rejecting.", self);
         return -1;

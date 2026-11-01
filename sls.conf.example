@@ -33,6 +33,9 @@ srt {
                                 # over the cap a new connection is closed at accept.
     max_connections_per_ip 16;  # max concurrent accepted connections from one IP
                                 # address (default 16; 0 = unlimited). Relays don't count.
+    max_handshakes_per_ip_per_sec 20; # connection requests one IP may make per second,
+                                # refused before the handshake completes (default 20;
+                                # 0 = unlimited).
     #reserved_publisher_connections 16; # slots players may never use, so viewers cannot
                                 # lock publishers out (default: cap/10, at most 16, at
                                 # least 1; 0 = none).

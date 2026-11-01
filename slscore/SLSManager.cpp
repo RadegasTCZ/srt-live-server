@@ -123,10 +123,12 @@ int CSLSManager::start_listeners()
             return SLS_ERROR;
         }
         m_conn_limiter = new CSLSConnLimiter(max_total, conf_srt->max_connections_per_ip, reserved);
+        m_conn_limiter->set_handshake_rate(conf_srt->max_handshakes_per_ip_per_sec);
         sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, connection limits: total=%d (worker_connections=%d x %d), per_ip=%d%s, "
-                "reserved for publishers=%d (players may hold %d).",
+                "reserved for publishers=%d (players may hold %d), handshakes per IP=%d/s%s.",
                 this, max_total, conf_srt->worker_connections, threads, conf_srt->max_connections_per_ip,
-                conf_srt->max_connections_per_ip == 0 ? " (unlimited)" : "", reserved, max_total - reserved);
+                conf_srt->max_connections_per_ip == 0 ? " (unlimited)" : "", reserved, max_total - reserved,
+                conf_srt->max_handshakes_per_ip_per_sec, conf_srt->max_handshakes_per_ip_per_sec == 0 ? " (unlimited)" : "");
     }
 
     //create listeners according config, delete by groups

@@ -98,7 +98,10 @@ check your config and tooling before you restart.
   it: passphrase-checked, or admitted by the hook; without any authentication it
   does not stop someone who merely names a publisher stream), and `max_players_per_stream`
   (default unlimited; the example sets 100) caps the players of one stream. Over
-  a cap the connection is closed at accept. An accepted connection waits at most `admission_timeout` ms (default
+  a cap the connection is closed at accept, and refused before the handshake
+  completes when the listen callback (now always installed) sees it first.
+  `max_handshakes_per_ip_per_sec` (default 20, 0 = unlimited) limits the
+  connection requests of one IP address. An accepted connection waits at most `admission_timeout` ms (default
   5000) for a worker slot. Per-attempt connection lines are DEBUG now, and
   refusals are logged at most once per second (with a count of the rest);
   `log_level debug` shows them all.

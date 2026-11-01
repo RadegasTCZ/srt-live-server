@@ -27,6 +27,7 @@
 
 #include <map>
 #include <string>
+#include <stdint.h>
 
 #include "SLSLock.hpp"
 
@@ -93,6 +94,14 @@ public:
     // what players and unverified publishers may hold at most; 0 = unlimited
     int  max_players() const { return m_max_total > 0 ? m_max_total - m_reserved : 0; }
 
+    // Handshakes one IP may start per second (a token bucket of that size,
+    // refilled at that rate); 0 = no limit. Set before the listeners start.
+    void set_handshake_rate(int per_sec) { m_hs_rate = per_sec; }
+    int  handshake_rate() const { return m_hs_rate; }
+    // One handshake from ip at now_ms: true if within the rate (and counted).
+    // Never blocks; called on libsrt's receive thread (listen callback).
+    bool handshake_allowed(const char *ip, int64_t now_ms);
+
 private:
     int                         m_max_total;
     int                         m_max_per_ip;
@@ -102,6 +111,14 @@ private:
     std::map<std::string, int>  m_per_ip;
     std::map<std::string, int>  m_per_stream;   // players per stream key
     mutable CSLSMutex           m_mutex;
+
+    struct hs_bucket {
+        double  tokens;
+        int64_t last_ms;
+    };
+    int                              m_hs_rate;
+    std::map<std::string, hs_bucket> m_hs_buckets;
+    int64_t                          m_hs_last_prune_ms;
 
     int  verdict_locked(const std::string &ip, int kind, const std::string &stream, int max_stream) const;
 };

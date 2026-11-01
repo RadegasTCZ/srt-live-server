@@ -32,6 +32,8 @@ CSLSConnLimiter::CSLSConnLimiter(int max_total, int max_per_ip, int reserved_pub
     m_reserved   = (max_total > 0 && reserved_publishers > 0 && reserved_publishers < max_total) ? reserved_publishers : 0;
     m_total      = 0;
     m_shared     = 0;
+    m_hs_rate    = 0;
+    m_hs_last_prune_ms = 0;
 }
 
 CSLSConnLimiter::~CSLSConnLimiter()
@@ -127,6 +129,57 @@ void CSLSConnLimiter::release(const char *ip, int kind, const std::string &strea
         // a release without a matching acquire is a bookkeeping bug
         sls_log(SLS_LOG_ERROR, "[%p]CSLSConnLimiter::release, no slot held for ip='%s'.", this, key.c_str());
     }
+}
+
+// A bucket idle for a second is full again and carries no state: such
+// buckets are pruned once the map is large (at most once a second). Past
+// SLS_HS_BUCKETS_MAX addresses (after a prune) a new address is let through
+// untracked: the other caps still hold and the map cannot grow without
+// bound. A handshake has to answer libsrt's cookie, so every address here is
+// a real, reachable one.
+#define SLS_HS_BUCKETS_PRUNE 4096
+#define SLS_HS_BUCKETS_MAX   65536
+bool CSLSConnLimiter::handshake_allowed(const char *ip, int64_t now_ms)
+{
+    if (m_hs_rate <= 0) {
+        return true;
+    }
+    std::string key = ip ? ip : "";
+    CSLSLock lock(&m_mutex);
+    std::map<std::string, hs_bucket>::iterator it = m_hs_buckets.find(key);
+    if (it == m_hs_buckets.end()) {
+        if (m_hs_buckets.size() >= SLS_HS_BUCKETS_PRUNE && now_ms - m_hs_last_prune_ms >= 1000) {
+            m_hs_last_prune_ms = now_ms;
+            for (std::map<std::string, hs_bucket>::iterator p = m_hs_buckets.begin(); p != m_hs_buckets.end();) {
+                if (now_ms - p->second.last_ms >= 1000) {
+                    m_hs_buckets.erase(p++);
+                } else {
+                    ++p;
+                }
+            }
+        }
+        if (m_hs_buckets.size() >= SLS_HS_BUCKETS_MAX) {
+            return true;
+        }
+        hs_bucket b;
+        b.tokens  = m_hs_rate - 1;
+        b.last_ms = now_ms;
+        m_hs_buckets[key] = b;
+        return true;
+    }
+    hs_bucket &b = it->second;
+    if (now_ms > b.last_ms) {
+        b.tokens += (now_ms - b.last_ms) * (double)m_hs_rate / 1000.0;
+        if (b.tokens > m_hs_rate) {
+            b.tokens = m_hs_rate;
+        }
+        b.last_ms = now_ms;
+    }
+    if (b.tokens < 1.0) {
+        return false;
+    }
+    b.tokens -= 1.0;
+    return true;
 }
 
 int CSLSConnLimiter::total() const
