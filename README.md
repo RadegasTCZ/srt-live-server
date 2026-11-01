@@ -95,8 +95,8 @@ check your config and tooling before you restart.
   0 = unlimited) caps one address. `reserved_publisher_connections` (default a
   tenth of the cap, at most 16, at least 1) keeps slots that players may not use,
   so viewers can no longer lock publishers out (only verified publishers may use
-  it: passphrase-checked, or admitted by the hook; without any authentication it
-  does not stop someone who merely names a publisher stream), and `max_players_per_stream`
+  it: a non-empty publish passphrase enforced on the connection, or admitted by
+  the hook; on a server with neither it protects no publisher), and `max_players_per_stream`
   (default unlimited; the example sets 100) caps the players of one stream. Over
   a cap the connection is closed at accept, and refused before the handshake
   completes when the listen callback (now always installed) sees it first.

@@ -93,15 +93,17 @@ players together may hold at most the cap minus the reserve, publishers may use
 every slot. So the viewers of a public stream, or the players of one streamer who
 knows their own `play_pass`, can no longer fill the server and lock every
 publisher out. Default when omitted: a tenth of the cap, at most 16 and at least
-1 (300 x 1 worker: 16). Only a verified publisher may use the reserve: with
-`user_file` or `srt_passphrase` libsrt checks the publish passphrase before the
-connection is accepted; with only `on_event_url`, a publisher holds a shared slot
-(like a player) until the hook answers 200, so publishers the hook has not
-admitted can fill the shared slots but never the reserve (over them:
-`refused ... shared connection limit ... reached by a publisher the hook has not
-admitted yet`). On a server without any authentication anyone who names a
-publisher stream counts as a publisher: there the reserve only keeps viewers
-from locking publishers out, not fake publishers. `0` reserves nothing; a value that leaves no slot for
+1 (300 x 1 worker: 16). Only a verified publisher may use the reserve, decided
+per connection: one on whose handshake libsrt enforced a passphrase, i.e. a
+`user_file` user whose `publish_pass` is set (not `-`), or any publisher when
+the server block has `srt_passphrase` and no `user_file`. Every other publisher
+(a `-` user, a server without a passphrase) holds a shared slot like a player;
+with `on_event_url` it moves to the reserve once the hook answers 200, without a
+hook it stays shared. So someone who merely names a publisher stream fills
+shared slots at most, never the reserve (over them: `refused ... shared
+connection limit ... reached by a publisher without a verified passphrase or hook
+admission`). On a server without any passphrase or hook the reserve therefore
+protects no publisher. `0` reserves nothing; a value that leaves no slot for
 players (the cap or more) stops sls at startup. The startup line
 `connection limits: ... reserved for publishers=N (players may hold M)` shows
 the values in use.

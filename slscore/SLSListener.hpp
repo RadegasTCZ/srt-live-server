@@ -181,7 +181,7 @@ private:
     // the limiter's per-stream key of a player of key_stream_name
     std::string player_stream_key(const char *key_stream_name) const;
     // the SLS_SLOT_KIND an accepted publisher takes (see the .cpp)
-    int  publisher_slot_kind() const;
+    int  publisher_slot_kind(const std::string &user);
     // Role of a parsed streamid by host/app (never by app name alone); on
     // PUBLISHER/PLAYER *app_key_out is the publisher-side "host/app" key.
     sls_sid_role_t classify_sid(const sls_sid_t &sid, std::string *app_key_out);
