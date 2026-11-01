@@ -180,8 +180,9 @@ bool CSLSRelayManager::relay_ended(CSLSRelay *relay, bool may_reconnect)
 		return entry;
 	}
 	// nobody will hold a reconnect entry: do not leave a manager that
-	// neither runs nor waits
-	if (retires_when_idle()) {
+	// neither runs nor waits (a push manager too: it would keep counting
+	// against max_push_streams with nothing left to retire it)
+	if (retires_when_idle() || (0 == m_live_relays && !m_reconnect_pending)) {
 		retire_locked("relay torn down outside its worker");
 	}
 	return false;
