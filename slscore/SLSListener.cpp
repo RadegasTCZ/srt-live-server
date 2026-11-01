@@ -24,6 +24,7 @@
 
 
 #include <errno.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <fstream>
 #include <sstream>
@@ -314,6 +315,18 @@ int CSLSListener::load_users(const char *path, std::string *err)
     std::ifstream f(path);
     if (!f.is_open()) {
         snprintf(msg, sizeof(msg), "cannot open '%s': %s", path, strerror(errno));
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        snprintf(msg, sizeof(msg), "cannot open '%s': %s", path, strerror(errno));
+        if (err) *err = msg;
+        return SLS_ERROR;
+    }
+    if (st.st_mode & 077) {
+        snprintf(msg, sizeof(msg), "'%s' is accessible to group or others (mode %03o): it holds passphrases, "
+                 "refusing to use it; run chmod 600 on it", path, (unsigned)(st.st_mode & 0777));
+        if (err) *err = msg;
+        return SLS_ERROR;
+    }
         if (err) *err = msg;
         return SLS_ERROR;
     }
