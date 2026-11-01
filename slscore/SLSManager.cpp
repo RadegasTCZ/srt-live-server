@@ -292,13 +292,23 @@ void CSLSManager::refresh_relay_upstreams()
     }
 }
 
+bool CSLSManager::listener_lost()
+{
+    for (std::list<CSLSListener *>::iterator it = m_servers.begin(); it != m_servers.end(); it++) {
+        if (*it && (*it)->is_lost()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int CSLSManager::reload_users()
 {
     int reloaded = 0, failed = 0;
     for (std::list<CSLSListener *>::iterator it = m_servers.begin();
          it != m_servers.end(); it++) {
         CSLSListener *server = *it;
-        if (server) {
+        if (server && !server->is_lost()) {
             if (SLS_OK == server->reload_users()) reloaded++;
             else failed++;
         }

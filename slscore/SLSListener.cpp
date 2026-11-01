@@ -56,6 +56,7 @@ CSLSListener::CSLSListener()
     m_back_log  = 1024;
     m_is_write  = 0;
     m_port      = 0;
+    m_lost      = false;
 
     m_list_role     = NULL;
     m_map_publisher = NULL;

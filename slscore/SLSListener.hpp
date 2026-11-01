@@ -27,6 +27,7 @@
 #define _SLSListener_INCLUDE_
 
 #include <map>
+#include <atomic>
 #include <string>
 
 #include <sys/socket.h>
@@ -122,6 +123,12 @@ public :
     virtual int  handler();
     // The worker's epoll holds the socket now: accept what queued before (see the .cpp)
     virtual int  on_added_to_epoll();
+    virtual bool is_listener() const { return true; }
+    // A worker dropped this listener (its socket broke or the epoll add
+    // failed): it no longer accepts, and the manager stops sls. It stays
+    // allocated until its group's clear(), so the manager's pointer stays valid.
+    void         set_lost() { m_lost = true; }
+    bool         is_lost() const { return m_lost; }
     // SIGHUP: re-resolve the on_event_url host (failure keeps the previous address)
     void reload_hook();
 
@@ -135,6 +142,7 @@ public :
 
 private:
     CSLSRoleList      * m_list_role;
+    std::atomic<bool>   m_lost;
     CSLSMapPublisher  * m_map_publisher;
     CSLSMapRelay      * m_map_puller;
     CSLSMapRelay      * m_map_pusher;

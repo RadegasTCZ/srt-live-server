@@ -296,6 +296,12 @@ int main(int argc, char* argv[])
 			sls_manager->refresh_relay_upstreams();
 			// peer lines held back by the 1/s limit: a summary once a second
 			sls_peer_log_flush();
+			// fail closed: a server that stopped listening on a port must not run on deaf
+			if (sls_manager->listener_lost()) {
+				sls_log(SLS_LOG_ERROR, "a listener stopped listening, EXIT!");
+				exit_code = 1;
+				break;
+			}
 		}
 
 		/*for test reload...

@@ -74,6 +74,8 @@ private:
     std::list<CloseWait>           m_list_wait_close;
     std::map<int, CSLSRole *>      m_map_role;
     std::list<CSLSRelayManager *>  m_list_reconnect_relay_manager;
+    std::list<CSLSRole *>          m_list_lost_listeners;   // freed in clear(), see drop_role()
+    void  drop_role(CSLSRole *role);
 
 
     void  idle_check();

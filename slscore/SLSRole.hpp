@@ -79,6 +79,9 @@ public :
     // Called by the worker right after add_to_epoll() succeeded. Non-zero
     // return: the role is dropped as if the add had failed.
     virtual int on_added_to_epoll() { return 0; }
+    // A listener is owned by the manager too (it holds the pointer for
+    // reloads): a group must never free one before its clear().
+    virtual bool is_listener() const { return false; }
     int         remove_from_epoll();
     int         get_state(int64_t cur_time_microsec = 0);
     int         get_sock_state();

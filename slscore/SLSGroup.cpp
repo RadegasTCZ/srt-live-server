@@ -29,6 +29,7 @@
 
 #include "SLSGroup.hpp"
 #include "SLSLog.hpp"
+#include "SLSListener.hpp"
 
 #define POLLING_TIME 1 /// Time in milliseconds between interrupt check
 
@@ -127,7 +128,7 @@ void CSLSGroup::check_new_role() {
         sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll or on_added_to_epoll failed, fd=%d.",
                 this, m_worker_number, role->get_role_name(), role, fd);
         relay_ended(role);
-        delete role;
+        drop_role(role);
     }
 }
 
@@ -360,7 +361,7 @@ void CSLSGroup::check_invalid_sock()
 			adopt_close_client(role);
 			sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, delete.",
 				  this, m_worker_number, role->get_role_name(), role);
-			delete role;
+			drop_role(role);
 			m_map_role.erase(it_erase);
 			continue;
 		}
@@ -370,6 +371,22 @@ void CSLSGroup::check_invalid_sock()
         CSLSLock lock(&m_mutex_stat);
         m_stat_info.swap(stat_info);
     }
+}
+
+// Frees a role the worker gave up on. A listener is only closed and kept:
+// the manager still holds its pointer (SIGHUP reloads it from the main
+// thread), and it is marked lost, which makes the main loop stop sls.
+void CSLSGroup::drop_role(CSLSRole *role)
+{
+    if (role->is_listener()) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSGroup::drop_role, worker_number=%d, listener=%p stopped listening; sls stops.",
+                this, m_worker_number, role);
+        ((CSLSListener *)role)->set_lost();   // first: the main loop stops reloading it
+        role->uninit();
+        m_list_lost_listeners.push_back(role);
+        return;
+    }
+    delete role;
 }
 
 void CSLSGroup::clear()
@@ -389,6 +406,11 @@ void CSLSGroup::clear()
         }
     }
     m_map_role.clear();
+
+    for (std::list<CSLSRole *>::iterator it_l = m_list_lost_listeners.begin(); it_l != m_list_lost_listeners.end(); it_l++) {
+        delete *it_l;
+    }
+    m_list_lost_listeners.clear();
 
     std::list<CSLSRelayManager *>::iterator it_rm;
     for (it_rm = m_list_reconnect_relay_manager.begin(); it_rm != m_list_reconnect_relay_manager.end(); it_rm++) {

@@ -105,6 +105,8 @@ public :
     int  single_thread_handler();
     int  check_invalid();
     bool is_single_thread();
+    // a worker dropped a listener after startup: sls no longer listens there
+    bool listener_lost();
 
     void       get_stat_info(std::string &info);
     static int stat_client_callback(void *p, HTTP_CALLBACK_TYPE type, void *v, void* context);
