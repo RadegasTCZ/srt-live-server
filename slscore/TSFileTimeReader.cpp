@@ -226,6 +226,17 @@ int CTSFileTimeReader::read_records(uint8_t *buf)
     return n - (int)(n % RTS_PACK_LEN);
 }
 
+// One rts record: the 8-byte time stamp, then one TS_UDP_LEN unit. False on a
+// failed or short write (disk full): the rts file is then incomplete.
+static bool write_rts_record(int fd, int64_t rts, const uint8_t *data)
+{
+    errno = 0;               // stays 0 for a short write
+    if (write(fd, &rts, sizeof(rts)) != (ssize_t)sizeof(rts)) {
+        return false;
+    }
+    return write(fd, data, TS_UDP_LEN) == (ssize_t)TS_UDP_LEN;
+}
+
 int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
 {
     int ret = SLS_ERROR;
@@ -268,6 +279,8 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
     int ts_index = 0;
     int dts_index = 0;
     struct { int es_pid; int64_t dts; int64_t pts; } ti = {INVALID_PID, INVALID_DTS_PTS, INVALID_DTS_PTS};
+    bool write_ok = true;
+    int  write_errno = 0;
     while(true) {
     	int n = read(ts_fd, ts_pack, TS_PACK_LEN);
     	if (n < TS_PACK_LEN)
@@ -313,8 +326,10 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
                     printf("ts2es: m_array_data.get, wrong n=%d, not %d.\n", n, TS_UDP_LEN);
                     break;
                 }
-                write(m_rts_fd, &rts, sizeof(rts));
-                write(m_rts_fd, rts_data, TS_UDP_LEN);
+                if (write_ok && !write_rts_record(m_rts_fd, rts, rts_data)) {
+                    write_ok = false;
+                    write_errno = errno;
+                }
                 rts += m_udp_duration;
             }
             m_dts = ti.dts;
@@ -341,8 +356,10 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
 			if (n != TS_UDP_LEN) {
 				break;
 			}
-			write(m_rts_fd, &rts, sizeof(rts));
-			write(m_rts_fd, udp_data, TS_UDP_LEN);
+			if (write_ok && !write_rts_record(m_rts_fd, rts, udp_data)) {
+				write_ok = false;
+				write_errno = errno;
+			}
 			rts += m_udp_duration;
 		}
 	}
@@ -356,13 +373,22 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
 		    udp_data[i+2] = 0xFF;
 			i += TS_PACK_LEN;
 		}
-		write(m_rts_fd, &rts, sizeof(rts));
-		write(m_rts_fd, udp_data, TS_UDP_LEN);
+		if (write_ok && !write_rts_record(m_rts_fd, rts, udp_data)) {
+			write_ok = false;
+			write_errno = errno;
+		}
 	}
 
     ::close(ts_fd);
     ::close(m_rts_fd);
     m_rts_fd = -1;
+    if (!write_ok) {
+        // an existing rts file is reused as it is: never leave a truncated one
+        sls_log(SLS_LOG_ERROR, "[%p]CTSFileTimeReader::generate_rts_file, write to file='%s' failed, '%s'; removed.",
+                this, rts_file_name, write_errno ? strerror(write_errno) : "short write");
+        ::unlink(rts_file_name);
+        return SLS_ERROR;
+    }
 	sls_log(SLS_LOG_INFO, "[%p]CTSFileTimeReader::generate_rts_file, ok, file='%s'.\n",
 			this, rts_file_name);
 

@@ -278,8 +278,10 @@ int CSLSClient::read_data_handler()
 			    }
 			}
 		}
-        if (m_out_file >= 0) {
-            ::write(m_out_file, szData, n);
+        if (m_out_file >= 0 && ::write(m_out_file, szData, n) != (ssize_t)n) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSClient::read_data_handler, write to file='%s' failed, '%s'.",
+                    this, m_out_file_name, strerror(errno));
+            return SLS_ERROR;
         }
         m_data_count += n;
         int64_t cur_tm = sls_gettime_ms();
