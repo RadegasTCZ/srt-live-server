@@ -128,8 +128,7 @@ int CSLSRole::uninit()
 	if (SLS_RS_UNINIT != m_state)
 	{
         m_state = SLS_RS_UNINIT;
-	    remove_from_epoll();
-	    invalid_srt();
+	    invalid_srt();       // leaves the epoll, then closes
 	}
 	session_end();
 	on_close();      // no-op unless on_connect was sent and on_close has not been
@@ -159,6 +158,10 @@ int CSLSRole::invalid_srt()
 {
     if (m_srt) {
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::invalid_srt, close sock=%d, m_state=%d.", this, get_fd(), m_state);
+        // Out of the epoll first: libsrt keeps a closed socket subscribed until
+        // it collects it, and the epoll reports it (as broken) on every wait,
+        // a busy loop that logs once per round for a socket no role owns.
+        remove_from_epoll();
         m_srt->libsrt_close();
         delete m_srt;
         m_srt = NULL;

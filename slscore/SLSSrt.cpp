@@ -411,15 +411,14 @@ int CSLSSrt::libsrt_remove_from_epoll()
     int eid = m_sc.eid;
 
     if (!eid) {
-        sls_log(SLS_LOG_ERROR, "CSLSSrt::remove_from_epoll failed, m_eid=%d.", eid);
-        return SLS_ERROR;
+        return SLS_ERROR;      // never added to an epoll: nothing to remove
     }
 
     ret = srt_epoll_remove_usock(eid, fd);
     if (ret < 0) {
-        sls_log(SLS_LOG_ERROR, "CSLSSrt::remove_from_epoll, srt_epoll_remove_usock failed, m_eid=%d, fd=%d.",
-                eid, fd);
-        return libsrt_neterrno();
+        sls_log(SLS_LOG_DEBUG, "CSLSSrt::remove_from_epoll, srt_epoll_remove_usock failed, m_eid=%d, fd=%d, err=%d.",
+                eid, fd, srt_getlasterror(NULL));
+        return SLS_ERROR;
     }
     return ret;
 }
