@@ -100,6 +100,10 @@ public :
     void        session_start();
     void        session_end();
     void        set_end_reason(const char *why) { if (NULL == m_end_reason) m_end_reason = why; }
+    // The socket reached the connected state or carried data. A relay that
+    // never did, or that ended on an error or a silent peer, tells the manager
+    // its upstream address may have changed (CSLSRelayManager::relay_ended).
+    bool        end_was_failure() const;
     bool        hook_pending() const { return m_connect_sent && !m_http_passed; }
     // one JSON object for the stats document; empty for roles that are not reported (listeners)
     std::string get_stat_info();
@@ -148,6 +152,7 @@ protected:
     bool         m_http_passed;
     bool         m_connect_sent;   // on_connect was sent: on_close is owed, whatever the hook answered (Ruling R18)
     bool         m_close_sent;
+    bool         m_ever_connected;    // connected state seen, or data carried
     bool         m_session_started;   // the start line was logged: the end line is owed
     int64_t      m_session_start_ms;
     const char * m_end_reason;        // first reason set wins; a string literal

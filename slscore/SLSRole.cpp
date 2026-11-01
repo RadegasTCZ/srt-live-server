@@ -50,6 +50,7 @@ CSLSRole::CSLSRole()
     m_stat_remote_port       = 0;
     m_stat_start_ms          = 0;
     m_session_started        = false;
+    m_ever_connected         = false;
     m_session_start_ms       = 0;
     m_end_reason             = NULL;
     m_idle_streams_timeout   = 10;//unit: s, -1: unlimited
@@ -192,6 +193,9 @@ int CSLSRole::get_state(int64_t cur_time_ms)
     }
 
 	int ret = get_sock_state();
+	if (SRTS_CONNECTED == ret) {
+		m_ever_connected = true;
+	}
 	if (SLS_ERROR == ret || SRTS_BROKEN == ret || SRTS_CLOSED == ret || SRTS_NONEXIST == ret) {
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::get_state, get_sock_state, ret=%d, call invalid_srt.",
         		this, ret);
@@ -413,6 +417,7 @@ int CSLSRole::handler_read_data(int64_t *last_read_time)
 	    return SLS_ERROR;
 	}
 
+	m_ever_connected = true;
 	m_stat_bitrate_datacount += n;
 	//update invalid begin time
 	m_invalid_begin_tm = sls_gettime_ms();
@@ -507,6 +512,7 @@ int CSLSRole::handler_write_data()
         }
         m_data_pos += TS_UDP_LEN;
         write_size += TS_UDP_LEN;
+        m_ever_connected = true;
         remainer = m_data_len - m_data_pos;
     }
 
@@ -522,6 +528,15 @@ int CSLSRole::handler_write_data()
     m_data_pos = m_data_len = 0;
 
     return write_size ;
+}
+
+bool CSLSRole::end_was_failure() const
+{
+	if (!m_ever_connected || NULL == m_end_reason) {
+		return true;      // never connected, or ended with no recorded reason
+	}
+	return 0 == strcmp(m_end_reason, "error") ||
+	       0 == strcmp(m_end_reason, "idle timeout (peer silent)");
 }
 
 void CSLSRole::session_start()

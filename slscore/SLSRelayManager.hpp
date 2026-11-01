@@ -38,6 +38,8 @@
 #include "conf.hpp"
 #include "SLSRoleList.hpp"
 
+// at most one upstream lookup per this many ms, whatever the relays do
+#define SLS_RELAY_REFRESH_MIN_MS 5000
 struct SLS_RELAY_INFO {
     std::vector<std::string>      m_upstreams;
     char     m_type[32];
@@ -48,7 +50,7 @@ struct SLS_RELAY_INFO {
     std::atomic<int> m_live_relays; // relay roles alive for this block (all its managers)
 
     SLS_RELAY_INFO() : m_mode(0), m_reconnect_interval(0), m_idle_streams_timeout(0),
-                       m_max_pull_streams(0), m_live_relays(0), m_stale(false) { m_type[0] = 0; }
+                       m_max_pull_streams(0), m_live_relays(0), m_stale(false), m_last_refresh_ms(0) { m_type[0] = 0; }
 
     // Upstream addresses are resolved here, once, when the relay is configured,
     // and cached per "host:port"; relay opens only read the cache (no DNS on
@@ -69,6 +71,7 @@ private:
     std::mutex                                 m_addr_mutex;
     std::map<std::string, struct sockaddr_in>  m_addrs;
     std::atomic<bool>                          m_stale;
+    int64_t                                    m_last_refresh_ms;     // main thread only
     int  resolve_all(std::map<std::string, struct sockaddr_in> *out);
 };
 

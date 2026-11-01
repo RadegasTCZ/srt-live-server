@@ -88,9 +88,18 @@ int SLS_RELAY_INFO::lookup(const char *host, int port, struct sockaddr_in *out)
 
 void SLS_RELAY_INFO::refresh_if_stale()
 {
-	if (!m_stale.exchange(false)) {
+	if (!m_stale.load()) {
 		return;
 	}
+	// at most one lookup per SLS_RELAY_REFRESH_MIN_MS, whatever the failures do;
+	// the flag stays set, so a later tick resolves
+	int64_t now = sls_gettime_ms();
+	if (now - m_last_refresh_ms < SLS_RELAY_REFRESH_MIN_MS) {
+		return;
+	}
+	m_stale = false;
+	m_last_refresh_ms = now;
+	sls_log(SLS_LOG_DEBUG, "SLS_RELAY_INFO::refresh_if_stale, resolving the upstreams again.");
 	// no lock across the DNS calls; a failed refresh keeps the old addresses
 	resolve_upstreams();
 }
@@ -159,6 +168,11 @@ bool CSLSRelayManager::relay_ended(CSLSRelay *relay, bool may_reconnect)
 		return false;
 	}
 	if (may_reconnect) {
+		// A relay that never connected, or ended on an error or a silent peer,
+		// may have lost its upstream address: resolve again before the retry. A
+		// relay that connected and ended cleanly keeps the cache, so a churn of
+		// short pulls costs no lookup.
+		if (m_sri && relay->end_was_failure()) m_sri->mark_stale();
 		bool entry = do_on_relay_closed(relay);
 		if (entry) {
 			m_reconnect_pending = true;   // the caller's reconnect entry: WAITING
