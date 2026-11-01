@@ -118,6 +118,8 @@ public :
     virtual int stop();
 
     virtual int  handler();
+    // Starts listening only now that the worker's epoll holds the socket (see the .cpp)
+    virtual int  on_added_to_epoll();
     // SIGHUP: re-resolve the on_event_url host (failure keeps the previous address)
     void reload_hook();
 

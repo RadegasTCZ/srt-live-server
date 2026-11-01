@@ -76,6 +76,9 @@ public :
     int         write(const char *buf, int size);
 
     int         add_to_epoll(int eid);
+    // Called by the worker right after add_to_epoll() succeeded. Non-zero
+    // return: the role is dropped as if the add had failed.
+    virtual int on_added_to_epoll() { return 0; }
     int         remove_from_epoll();
     int         get_state(int64_t cur_time_microsec = 0);
     int         get_sock_state();

@@ -108,7 +108,7 @@ void CSLSGroup::check_new_role() {
     }
 
     //add to epoll
-    if (0 == role->add_to_epoll(m_eid)) {
+    if (0 == role->add_to_epoll(m_eid) && 0 == role->on_added_to_epoll()) {
         m_map_role[fd] = role;
         // Announce the role only now that a worker owns it, so on_connect and
         // on_close always pair: a queued role that expires (or is erased at

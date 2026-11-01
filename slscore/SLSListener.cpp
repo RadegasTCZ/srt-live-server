@@ -675,11 +675,7 @@ int CSLSListener::start()
                 this, m_users.size());
     }
 
-    ret = m_srt->libsrt_listen(m_back_log);
-    if (SLS_OK != ret) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_listen failure.", this);
-        return ret;
-    }
+    // srt_listen() is deliberately NOT called here: see on_added_to_epoll().
 
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, m_list_role=%p.", this, m_list_role);
     if (NULL == m_list_role) {
@@ -702,6 +698,23 @@ int CSLSListener::stop()
  	return ret;
 }
 
+
+// libsrt raises the listener's readable event only for a connection that
+// completes while the socket is subscribed to the epoll; adding an already
+// listening socket does not report the connections queued before. So the
+// socket must be in the worker's epoll BEFORE it listens, otherwise a client
+// whose handshake lands between srt_listen() and the worker's first
+// check_new_role() (a few ms; ASan builds, a busy host) is never accepted and
+// sits connected-but-unserved until it times out.
+int CSLSListener::on_added_to_epoll()
+{
+    int ret = m_srt->libsrt_listen(m_back_log);
+    if (SLS_OK != ret) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::on_added_to_epoll, libsrt_listen failure.", this);
+        return ret;
+    }
+    return SLS_OK;
+}
 
 int CSLSListener::handler()
 {
