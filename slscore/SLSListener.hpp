@@ -80,7 +80,7 @@ SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_ADMISSION_TIMEOUT 5000
 #define SLS_DEFAULT_ON_EVENT_TIMEOUT  2000
-// connections accepted at most by the listener's one-off drain (on_added_to_epoll)
+// connections accepted at most by the listener's one-off startup drain (on_added_to_epoll)
 #define SLS_LISTENER_DRAIN_MAX 1024
 #define SLS_DEFAULT_IDLE_STREAMS_TIMEOUT 10   // seconds; 0 would drop a role the moment it is idle
 inline void sls_conf_server_defaults(sls_conf_server_t *c)
@@ -122,6 +122,7 @@ public :
     virtual int  handler();
     // The worker's epoll holds the socket now: accept what queued before (see the .cpp)
     virtual int  on_added_to_epoll();
+    void         release_startup_epoll();
     // SIGHUP: re-resolve the on_event_url host (failure keeps the previous address)
     void reload_hook();
 
@@ -135,6 +136,7 @@ public :
 
 private:
     CSLSRoleList      * m_list_role;
+    int                 m_startup_eid;   // start() .. first worker poll, see on_added_to_epoll()
     CSLSMapPublisher  * m_map_publisher;
     CSLSMapRelay      * m_map_puller;
     CSLSMapRelay      * m_map_pusher;
