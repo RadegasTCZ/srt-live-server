@@ -176,13 +176,6 @@ std::string CSLSListener::player_stream_key(const char *key_stream_name) const
 }
 
 namespace {
-// add_relay_manager's reference, dropped when handler() returns
-struct sls_relay_manager_ref {
-    CSLSRelayManager *mgr;
-    explicit sls_relay_manager_ref(CSLSRelayManager *m) : mgr(m) {}
-    ~sls_relay_manager_ref() { if (mgr) mgr->release(); }
-};
-
 // The admission slot taken at accept: given back when accept_one() returns,
 // unless it was handed to the role that now owns the socket.
 struct sls_slot_guard {
@@ -1014,6 +1007,16 @@ int CSLSListener::accept_one()
         return client_count;
     }
 
+    // Where a role becomes visible to others (CSLSRole::admit): now when
+    // there is no hook, else once the hook answers 200 (S2).
+    sls_admit_ctx_t admit_ctx;
+    admit_ctx.map_data      = m_map_data;
+    admit_ctx.map_publisher = m_map_publisher;
+    admit_ctx.map_puller    = m_map_puller;
+    admit_ctx.map_pusher    = m_map_pusher;
+    admit_ctx.role_list     = m_list_role;
+    admit_ctx.port          = m_port;
+
     //3.is player?
     if (SLS_SID_PLAYER == role) {
         snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
@@ -1026,75 +1029,22 @@ int CSLSListener::accept_one()
             return client_count;
         }
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
-        // Only test pub against NULL / log its value: a publisher found here
-        // can be closed and deleted by its worker (or by CSLSRoleList::expire
-        // while still queued) as soon as the map lock is dropped.
-        CSLSRole * pub = m_map_publisher->get_publisher(key_stream_name);
-        if (NULL == pub) {
-        	//*
-        	//3.1 check pullers
-        	if (NULL == m_map_puller) {
-    			sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s', publisher is NULL and m_map_puller is NULL.",
-    						this, peer_name, peer_port, key_stream_name);
-    			srt->libsrt_close();
-    			delete srt;
-    			return client_count;
-        	}
-        	// with user_file set, only listed stream names may trigger a pull
-        	// (the listen callback already refuses others; this is the backstop)
-        	if (has_users) {
-        		if (!m_userdb->contains(psid.stream)) {
-    				sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s': not in user_file, no pull.",
-    							this, peer_name, peer_port, key_stream_name);
-    				srt->libsrt_close();
-    				delete srt;
-    				return client_count;
-        		}
-        	}
-        	bool created = false;
-        	CSLSRelayManager *puller_manager = m_map_puller->add_relay_manager(app_uplive.c_str(), stream_name, &created);
-        	if (NULL == puller_manager) {
-    			sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, m_map_puller->add_relay_manager failed, new role[%s:%d], stream='%s', publisher is NULL, no puller_manager.",
-    						this, peer_name, peer_port, key_stream_name);
-    			srt->libsrt_close();
-    			delete srt;
-    			return client_count;
-        	}
-        	sls_relay_manager_ref puller_ref(puller_manager);   // add_relay_manager's reference
-
-        	puller_manager->configure(m_map_data, m_map_publisher, m_list_role, m_port);
-
-        	if (SLS_OK != puller_manager->start()) {
-    			sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, puller_manager->start failed, new client[%s:%d], stream='%s'.",
-    						this, peer_name, peer_port, key_stream_name);
-    			// One this request created has no puller to keep it: it must not
-    			// keep counting against max_pull_streams. An existing one may be
-    			// waiting to reconnect for players already attached: it stays.
-    			puller_manager->start_failed(created, "first pull failed");
-    			srt->libsrt_close();
-    			delete srt;
-    			return client_count;
-            }
-    	    sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, puller_manager->start ok, new client[%s:%d], stream=%s.",
-	            this, peer_name, peer_port, key_stream_name);
-
-    	    pub = m_map_publisher->get_publisher(key_stream_name);
-            if (NULL == pub) {
-        	    sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, m_map_publisher->get_publisher failed, new client[%s:%d], stream=%s.",
-    	            this, peer_name, peer_port, key_stream_name);
-    			srt->libsrt_close();
-    			delete srt;
-    			return client_count;
-            } else {
-        	    sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, m_map_publisher->get_publisher ok, pub=%p, new client[%s:%d], stream=%s.",
-    	            this, pub, peer_name, peer_port, key_stream_name);
-            }
+        // with user_file set, only listed stream names may trigger a pull
+        // (the listen callback already refuses others; this is the backstop)
+        if (has_users && !m_userdb->contains(psid.stream)) {
+            sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s': not in user_file, no pull.",
+                         this, peer_name, peer_port, key_stream_name);
+            srt->libsrt_close();
+            delete srt;
+            return client_count;
         }
-
-        //3.2 handle new play
-        if (!m_map_data->is_exist(key_stream_name)) {
-            sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream=%s,but publisher data doesn't exist in m_map_data.",
-                        this, peer_name, peer_port, key_stream_name);
+        // A stream with no publisher (a hook-pending publisher is not
+        // registered yet: the same) can only be pulled. Without a pull relay
+        // the player is refused here, before it costs a hook request.
+        if (NULL == m_map_publisher->get_publisher(key_stream_name) &&
+            (NULL == m_map_puller || NULL == m_map_puller->get_relay_conf(app_uplive))) {
+            sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s', publisher is NULL and the app has no pull relay.",
+                         this, peer_name, peer_port, key_stream_name);
             srt->libsrt_close();
             delete srt;
             return client_count;
@@ -1112,7 +1062,7 @@ int CSLSListener::accept_one()
 		player->set_idle_streams_timeout(m_idle_streams_timeout_role);
 		player->set_srt(srt);
 		player->set_map_data(key_stream_name, m_map_data);
-		player->attach_reader();
+		player->set_admit_ctx(admit_ctx, app_uplive, psid.stream);
 		//stat info
 	    player->set_stat_identity(key_stream_name, peer_name, peer_port);
 	    if (has_users) {
@@ -1121,13 +1071,18 @@ int CSLSListener::accept_one()
 	    // on_connect is sent by the worker that adopts the role (Ruling R17):
 	    // a role that expires while queued has announced nothing
 	    attach_hook(player);
+	    // no hook: attached (and its pull started) now; else when admitted
+	    if (!player->awaits_hook() && SLS_OK != player->admit()) {
+	        player->uninit();   // closes the socket, gives the slot back
+	        delete player;
+	        return client_count;
+	    }
 
-		// pub (and, once pushed, player) may already be gone: another thread
-		// can tear a role down right after the lookup, so log pointer values
-		// and the key, never what they point to
+		// player may already be gone once pushed: another thread can tear a
+		// role down right after, so log pointer values and the key only
 		m_list_role->push(player);
-		sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new player[%p]=[%s:%d], key_stream_name=%s, publisher=%p, m_list_role->size=%d.",
-				this, player, peer_name, peer_port, key_stream_name, pub, m_list_role->size());
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new player[%p]=[%s:%d], key_stream_name=%s, m_list_role->size=%d.",
+				this, player, peer_name, peer_port, key_stream_name, m_list_role->size());
         return client_count;
     }
 
@@ -1150,6 +1105,8 @@ int CSLSListener::accept_one()
         return client_count;
 	}
 
+	// Only an admitted publisher is in the map: a hook-pending one never
+	// blocks another attempt (the first one admitted wins, CSLSPublisher::admit).
 	CSLSRole * publisher = m_map_publisher->get_publisher(key_stream_name);
 	if (NULL != publisher) {
 		sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, stream busy: new publisher[%s:%d], stream='%s' already has publisher=%p.",
@@ -1166,6 +1123,9 @@ int CSLSListener::accept_one()
 	pub->set_conf(ca);
 	pub->init();
 	pub->set_idle_streams_timeout(m_idle_streams_timeout_role);
+	pub->set_map_publisher(m_map_publisher);
+	pub->set_map_data(key_stream_name, m_map_data);
+	pub->set_admit_ctx(admit_ctx, app_uplive, psid.stream);
 	//stat info
     pub->set_stat_identity(key_stream_name, peer_name, peer_port);
     if (has_users) {
@@ -1176,48 +1136,17 @@ int CSLSListener::accept_one()
 	sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new pub=%p, key_stream_name=%s.",
 			this, pub, key_stream_name);
 
-	//init data array
-	if (SLS_OK != m_map_data->add(key_stream_name)) {
-		sls_log(SLS_LOG_WARNING, "[%p]CSLSListener::handler, m_map_data->add failed, new pub[%s:%d], stream=%s.",
-				this, peer_name, peer_port, key_stream_name);
-		pub->uninit();
+	// No hook: registered (map data, publisher entry, pushes) now. With a
+	// hook: nothing until it answers 200; a refusal leaves nothing behind.
+	if (!pub->awaits_hook() && SLS_OK != pub->admit()) {
+		pub->uninit();      // closes the socket, gives the slot back
 		delete pub;
-		pub = NULL;
 		return client_count;
 	}
-
-	if (SLS_OK != m_map_publisher->set_push_2_pushlisher(key_stream_name, pub)) {
-		sls_log(SLS_LOG_WARNING, "[%p]CSLSListener::handler, m_map_publisher->set_push_2_pushlisher failed, key_stream_name=%s.",
-					this, key_stream_name);
-		pub->uninit();
-		delete pub;
-		pub = NULL;
-		return client_count;
-	}
-	pub->set_map_publisher(m_map_publisher);
-	pub->set_map_data(key_stream_name, m_map_data);
 	// on_connect: sent by the adopting worker, see CSLSGroup::check_new_role
 	m_list_role->push(pub);
 	sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new publisher[%s:%d], key_stream_name=%s.",
 			this, peer_name, peer_port, key_stream_name);
-
-	//5. check pusher
-	if (NULL == m_map_pusher) {
-        return client_count;
-	}
-	CSLSRelayManager *pusher_manager = m_map_pusher->add_relay_manager(app_uplive.c_str(), stream_name);
-	if (NULL == pusher_manager) {
-		sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, m_map_pusher->add_relay_manager failed, new role[%s:%d], key_stream_name=%s.",
-					this, peer_name, peer_port, key_stream_name);
-		return client_count;
-	}
-	sls_relay_manager_ref pusher_ref(pusher_manager);   // add_relay_manager's reference
-	pusher_manager->configure(m_map_data, m_map_publisher, m_list_role, m_port);
-
-	if (SLS_OK != pusher_manager->start()) {
-		sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, pusher_manager->start failed, new role[%s:%d], key_stream_name=%s.",
-					this, peer_name, peer_port, key_stream_name);
-	}
 	return client_count;
 }
 

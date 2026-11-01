@@ -664,6 +664,14 @@ int  CSLSRole::get_peer_info(char *peer_name, int &peer_port)
     return ret;
 }
 
+void  CSLSRole::set_admit_ctx(const sls_admit_ctx_t &ctx, const std::string &app_uplive,
+                              const std::string &stream_name)
+{
+	m_admit        = ctx;
+	m_admit_app    = app_uplive;
+	m_admit_stream = stream_name;
+}
+
 void  CSLSRole::set_http_url(const char *http_url, const struct sockaddr_storage *addr, socklen_t addr_len, int timeout_ms)
 {
 	if (NULL == http_url || strlen(http_url) == 0 || NULL == addr || addr_len == 0 || addr_len > sizeof(m_http_addr)) {
@@ -783,6 +791,14 @@ int CSLSRole::check_http_passed()
 		m_http_client->close();
 		delete m_http_client;
 		m_http_client = NULL;
+		// Only now does the role become visible (S2). A refusal here (the
+		// stream got a publisher meanwhile: the first one admitted wins) is
+		// closed like a hook refusal; on_close is still owed (R18).
+		if (SLS_OK != admit()) {
+			set_end_reason("refused at admission");
+			invalid_srt();
+			return SLS_ERROR;
+		}
 		m_http_passed = true;
 		promote_conn_slot(); // a verified publisher now: it may use the reserve
 		session_start();     // admitted by the hook

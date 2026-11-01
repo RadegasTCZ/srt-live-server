@@ -50,6 +50,28 @@ enum SLS_ROLE_STATE {
 
 const int DATA_BUFF_SIZE    = 100 * 1316;
 const int UNLIMITED_TIMEOUT = -1;
+
+class CSLSMapPublisher;
+class CSLSMapRelay;
+class CSLSRoleList;
+
+/**
+ * What a listener-accepted role needs to become visible to others
+ * (CSLSRole::admit): its server block's maps, role queue and port. They
+ * are the manager's and freed only after every worker has stopped, so a
+ * role may keep them for its whole life (never a pointer to the listener,
+ * which another worker may free first at shutdown).
+ */
+struct sls_admit_ctx_t {
+    CSLSMapData      *map_data;
+    CSLSMapPublisher *map_publisher;
+    CSLSMapRelay     *map_puller;
+    CSLSMapRelay     *map_pusher;
+    CSLSRoleList     *role_list;
+    int               port;
+    sls_admit_ctx_t() : map_data(NULL), map_publisher(NULL), map_puller(NULL),
+                        map_pusher(NULL), role_list(NULL), port(0) {}
+};
 /**
  * CSLSRole , the base of player, publisher and listener
  */
@@ -118,6 +140,8 @@ public :
     // upstream address may have changed (CSLSRelayManager::relay_ended).
     bool        end_was_failure() const;
     bool        hook_pending() const { return m_connect_sent && !m_http_passed; }
+    // the role has an on_connect hook that has not admitted it (yet)
+    bool        awaits_hook() const { return !m_http_passed; }
     // one JSON object for the stats document; empty for roles that are not reported (listeners)
     std::string get_stat_info();
     virtual int get_peer_info(char *peer_name, int &peer_port);
@@ -128,6 +152,17 @@ public :
     std::string build_event_url(const char *event);
     // the owning worker polls this every tick while hook_pending()
     int         check_http_passed();
+
+    // Admission (S2): a role becomes visible to others (a publisher's map
+    // data, publisher entry and pushes; a player's reader and pull) only in
+    // admit(), called once the role is admitted: by the listener at accept
+    // when there is no on_event_url hook, else by the owning worker when
+    // the hook answers 200. Until then nothing was registered, so a refused
+    // or timed-out role has nothing to undo. SLS_ERROR: refused (logged);
+    // the caller closes the role.
+    void        set_admit_ctx(const sls_admit_ctx_t &ctx, const std::string &app_uplive,
+                              const std::string &stream_name);
+    virtual int admit() { return SLS_OK; }
     // The pending fire-and-forget on_close request, ownership passes to the caller
     // (the worker group, which keeps polling it after the role is gone); NULL if none.
     CHttpClient *take_close_client();
@@ -204,6 +239,9 @@ protected:
     int64_t       m_stat_start_ms;
     CHttpClient  *m_http_client;     // the on_connect request, while pending
     CHttpClient  *m_close_client;    // the on_close request, until the group takes it
+    sls_admit_ctx_t m_admit;         // set_admit_ctx
+    std::string   m_admit_app;       // "<domain>/<app>" of the publisher side
+    std::string   m_admit_stream;    // the stream name
 
     int  handler_write_data();
     int  handler_read_data(int64_t *last_read_time=NULL);

@@ -66,8 +66,14 @@ public :
     virtual int uninit();
 
     virtual int  handler();
+    // registers the stream (publisher entry, then map data) and starts its
+    // pushes; refused with "stream busy" if the stream has a publisher
+    virtual int  admit();
 private:
     CSLSMapPublisher  * m_map_publisher;
+    bool                m_registered;     // admit() registered the stream: uninit unregisters it
+
+    void start_pushers();
 
 };
 

@@ -232,7 +232,20 @@ may carry `Content-Length`, be chunked, or be delimited by the close.
   else - another status, a malformed answer, a connection error, no answer
   within `on_event_timeout` - closes it (`http refused` in the log).
   `on_event_timeout` is in ms (100-30000, default 2000). Waiting for a hook
-  never blocks other roles of the worker.
+  never blocks other roles of the worker, and the answer is applied within a
+  worker tick (a few ms), also for a publisher that sends nothing until it is
+  admitted.
+- Nothing a connection does is visible before the hook admits it. A publisher
+  is registered (other publishers of the name get `stream busy`, players can
+  attach) and its push relays start only after the 200; a player attaches to
+  its stream, and starts a pull relay for a stream without a publisher, only
+  then. So a peer the hook has not admitted cannot squat a stream name, open
+  outbound relay connections or take a `max_pull_streams` slot. Of two
+  publishers waiting for the hook on one name, the first one admitted gets it
+  and the other is closed with `stream busy` (its `on_close` is still sent). A
+  player asking for a stream whose publisher is still waiting sees no
+  publisher, as before the publisher connected: without a pull relay it is
+  refused at once, without a hook request.
 - `on_close` is sent once for every `on_connect` that was sent, also when the
   hook refused or timed out, after the connection is gone. It is
   fire-and-forget: the answer is not used and the request is dropped after 2 s.

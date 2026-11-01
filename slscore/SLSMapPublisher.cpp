@@ -63,7 +63,8 @@ int CSLSMapPublisher::set_push_2_pushlisher(std::string app_streamname, CSLSRole
     if (it != m_map_push_2_pushlisher.end()) {
     	CSLSRole *cur_role = it->second;
     	if (NULL != cur_role) {
-            sls_log(SLS_LOG_INFO, "[%p]CSLSMapPublisher::set_push_2_pushlisher, failed, cur_role=%p, exist, app_streamname=%s, m_map_push_2_pushlisher.size()=%zu.",
+            // the caller logs the refusal (peer-budgeted)
+            sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapPublisher::set_push_2_pushlisher, failed, cur_role=%p, exist, app_streamname=%s, m_map_push_2_pushlisher.size()=%zu.",
                 this, cur_role, app_streamname.c_str(), m_map_push_2_pushlisher.size());
             return SLS_ERROR;
     	}

@@ -42,10 +42,15 @@ public :
     // count this player as a reader of its stream (after set_map_data);
     // undone exactly once, in uninit or the destructor
     void        attach_reader();
+    // Attaches the player to its stream; with no publisher, a pull relay
+    // (if the app has one) is started first. Refused if the stream still
+    // has no data then.
+    virtual int admit();
 
 private:
     bool        m_reader_attached;
     void        detach_reader();
+    int         start_pull();
 
 
 };
