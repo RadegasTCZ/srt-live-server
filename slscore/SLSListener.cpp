@@ -795,7 +795,7 @@ int CSLSListener::handler()
     			delete srt;
     			return client_count;
             }
-    	    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, puller_manager->start ok, new client[%s:%d], stream=%s.",
+    	    sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, puller_manager->start ok, new client[%s:%d], stream=%s.",
 	            this, peer_name, peer_port, key_stream_name);
 
     	    pub = m_map_publisher->get_publisher(key_stream_name);
@@ -806,7 +806,7 @@ int CSLSListener::handler()
     			delete srt;
     			return client_count;
             } else {
-        	    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, m_map_publisher->get_publisher ok, pub=%p, new client[%s:%d], stream=%s.",
+        	    sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, m_map_publisher->get_publisher ok, pub=%p, new client[%s:%d], stream=%s.",
     	            this, pub, peer_name, peer_port, key_stream_name);
             }
         }

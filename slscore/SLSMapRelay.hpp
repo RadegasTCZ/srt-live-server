@@ -52,7 +52,7 @@ public:
 
     int add_relay_conf(std::string app_uplive, sls_conf_relay_t * cr);
     // Main thread only (blocking DNS): re-resolve the upstreams of every relay
-    // block a relay end marked stale. The relay blocks are fixed between
+    // block a failed open marked stale. The relay blocks are fixed between
     // start-up and stop(), both on the main thread, so no lock is needed.
     // With worker_threads 0 the main thread is also the only serving thread,
     // so this DNS blocks serving for its duration.

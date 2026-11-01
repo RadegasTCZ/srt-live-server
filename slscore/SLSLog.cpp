@@ -104,12 +104,49 @@ bool CSLSLog::peer_line_allowed(int level, int *held)
     return true;
 }
 
+// sls_session_log budget: a fixed one-second window, process-wide. The window
+// start and the count in it are separate atomics; a race at a window edge can
+// let a line or two more than the limit through, never unbounded.
+static std::atomic<int64_t> s_sess_window_ms(0);
+static std::atomic<int>     s_sess_count(0);
+static std::atomic<int>     s_sess_held(0);
+
+bool CSLSLog::session_line_allowed(int level, int *held)
+{
+    *held = 0;
+    if (!m_pInstance) {
+        m_pInstance = new CSLSLog();
+    }
+    if (level > m_pInstance->m_level) {
+        return false;            // not logged at this level anyway: no budget used
+    }
+    int64_t now = sls_gettime_ms();
+    int64_t w   = s_sess_window_ms.load();
+    if (now - w >= 1000 && s_sess_window_ms.compare_exchange_strong(w, now)) {
+        s_sess_count.store(0);
+    }
+    if (s_sess_count.fetch_add(1) >= SLS_SESSION_LINES_PER_SEC) {
+        s_sess_held++;
+        return false;
+    }
+    *held = s_sess_held.exchange(0);
+    return true;
+}
+
 void CSLSLog::peer_flush()
 {
+    int64_t now = sls_gettime_ms();
+    if (s_sess_held.load() > 0 && now - s_sess_window_ms.load() >= 1000) {
+        // the window has run out: nothing more will carry the count
+        int held = s_sess_held.exchange(0);
+        if (held > 0) {
+            log(SLS_LOG_INFO, "session lines: %d suppressed in the last second(s) (start/end lines over %d/s; log_level debug shows each).",
+                held, SLS_SESSION_LINES_PER_SEC);
+        }
+    }
     if (0 == s_peer_held.load()) {
         return;
     }
-    int64_t now  = sls_gettime_ms();
     int64_t last = s_peer_last_ms.load();
     if (now - last < 1000 || !s_peer_last_ms.compare_exchange_strong(last, now)) {
         return;

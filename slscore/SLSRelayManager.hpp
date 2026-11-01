@@ -53,10 +53,11 @@ struct SLS_RELAY_INFO {
     // Upstream addresses are resolved here, once, when the relay is configured,
     // and cached per "host:port"; relay opens only read the cache (no DNS on
     // the connect path, which runs on a worker under the manager's mutex). A
-    // relay that ended, or a failed open, marks the cache stale (an atomic
+    // failed open marks the cache stale (an atomic
     // flag, any thread); the main loop's ~100 ms tick then resolves again
     // (CSLSManager::refresh_relay_upstreams), so a moved upstream is picked up
-    // after a failure, never per packet and never on a worker.
+    // after a failure, never per packet and never on a worker. A clean end
+    // does not: a churn of short pulls must not cost a lookup each.
     int  resolve_upstreams();     // SLS_ERROR: an upstream is malformed or cannot be resolved
     int  lookup(const char *host, int port, struct sockaddr_in *out);
     void mark_stale() { m_stale = true; }

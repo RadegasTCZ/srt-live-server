@@ -100,7 +100,7 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapRelay::add, cur_mananger=%p, exist, app_uplive=%s, stream_name=%s.",
                 this, cur_mananger, app_uplive, stream_name);
     } else if (cur_mananger) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, ok, app_uplive=%s, stream_name=%s, cur_mananger=%p%s.",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapRelay::add_relay_manager, ok, app_uplive=%s, stream_name=%s, cur_mananger=%p%s.",
                 this, app_uplive, stream_name, cur_mananger,
                 is_pull ? (std::string(", pull managers=") + std::to_string(count) + "/" + std::to_string(sri->m_max_pull_streams)).c_str() : "");
     } else if (is_pull) {
@@ -129,7 +129,7 @@ int CSLSMapRelay::remove_relay_manager(const char *app_uplive, const char *strea
     if (NULL == mgr) {
         return SLS_ERROR;
     }
-    sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::remove_relay_manager, ok, app_uplive=%s, stream_name=%s, manager=%p.",
+    sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapRelay::remove_relay_manager, ok, app_uplive=%s, stream_name=%s, manager=%p.",
             this, app_uplive, stream_name, mgr);
     mgr->release();   // the map's reference; holders keep it alive
     return SLS_OK;

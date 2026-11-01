@@ -265,7 +265,7 @@ int CSLSRole::remove_from_epoll()
     int ret = SLS_ERROR;
     if (m_srt) {
         ret = m_srt->libsrt_remove_from_epoll();
-        sls_log(SLS_LOG_INFO, "[%p]CSLSRole::remove_from_epoll, %s, sock=%d, ret=%d.",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::remove_from_epoll, %s, sock=%d, ret=%d.",
                 this, m_role_name, get_fd(), ret);
     }
     return ret;
@@ -502,7 +502,7 @@ int CSLSRole::handler_write_data()
     while (remainer >= TS_UDP_LEN) {
         ret = write(m_data + m_data_pos, TS_UDP_LEN);
         if (ret < TS_UDP_LEN) {
-            sls_log(SLS_LOG_INFO, "[%p]CSLSRole::handler_write_data, write data failed, ret=%d, not %d.", this, ret, TS_UDP_LEN);
+            sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::handler_write_data, write data failed, ret=%d, not %d.", this, ret, TS_UDP_LEN);
             break;
         }
         m_data_pos += TS_UDP_LEN;
@@ -531,7 +531,7 @@ void CSLSRole::session_start()
 	}
 	m_session_started  = true;
 	m_session_start_ms = sls_gettime_ms();
-	sls_log(SLS_LOG_INFO, "[%p]session start, %s, remote=%s:%d, stream=%s.",
+	sls_session_log("[%p]session start, %s, remote=%s:%d, stream=%s.",
 			this, m_role_name, m_stat_remote_ip.c_str(), m_stat_remote_port, m_stat_stream.c_str());
 }
 
@@ -541,7 +541,7 @@ void CSLSRole::session_end()
 		return;
 	}
 	m_session_started = false;
-	sls_log(SLS_LOG_INFO, "[%p]session end, %s, remote=%s:%d, stream=%s, duration=%.1fs, reason=%s.",
+	sls_session_log("[%p]session end, %s, remote=%s:%d, stream=%s, duration=%.1fs, reason=%s.",
 			this, m_role_name, m_stat_remote_ip.c_str(), m_stat_remote_port, m_stat_stream.c_str(),
 			(sls_gettime_ms() - m_session_start_ms) / 1000.0, m_end_reason ? m_end_reason : "closed");
 }

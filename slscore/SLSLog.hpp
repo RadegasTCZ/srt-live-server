@@ -58,9 +58,8 @@ static const char APP_NAME[] __attribute__((unused)) = "SLS";
  * Peer-triggered lines: refusals of a handshake, an admission or a request
  * (including a player request that cannot start a pull). Per-attempt lines
  * that are not refusals are DEBUG, and an admitted session's start and end
- * lines are plain INFO (CSLSRole::session_start/end), so neither uses up this
- * budget. A
- * remote peer can cause any number of them (one per handshake), so
+ * lines have their own budget (sls_session_log), so neither uses up this one.
+ * A remote peer can cause any number of them (one per handshake), so
  * they share one budget of one line per second, process-wide, whatever
  * thread logs them (libsrt's receive thread runs the listen callback). A
  * line over the budget is logged at DEBUG instead, so `log_level debug`
@@ -81,6 +80,19 @@ static const char APP_NAME[] __attribute__((unused)) = "SLS";
         }                                                                          \
     } while (0)
 #define sls_peer_log_flush CSLSLog::peer_flush
+
+/*
+ * An admitted session's start and end line (CSLSRole::session_start/end).
+ * Normal operation logs every one. A peer that connects and leaves in a loop
+ * can make any number of them, so they have a budget of SLS_SESSION_LINES_PER_SEC
+ * per second, process-wide and separate from sls_peer_log's, which refusals
+ * cannot use up. A line over the budget is logged at DEBUG instead and
+ * counted; the next line within the budget, or the main loop's
+ * sls_peer_log_flush(), reports how many were suppressed. fmt must be a
+ * string literal.
+ */
+#define SLS_SESSION_LINES_PER_SEC 20
+#define sls_session_log(fmt, ...) do {                                                     int sls_sess_held_ = 0;                                                            if (CSLSLog::session_line_allowed(SLS_LOG_INFO, &sls_sess_held_)) {                    if (sls_sess_held_ > 0)                                                                CSLSLog::log(SLS_LOG_INFO, fmt " [%d session line(s) suppressed, see log_level debug]",                              ##__VA_ARGS__, sls_sess_held_);                                   else                                                                                   CSLSLog::log(SLS_LOG_INFO, fmt, ##__VA_ARGS__);                            } else {                                                                               CSLSLog::log(SLS_LOG_DEBUG, fmt, ##__VA_ARGS__);                               }                                                                              } while (0)
 /**
  * CSLSLog
  */
@@ -99,7 +111,10 @@ public :
     // sls_peer_log's budget: true if a line at level may be logged now; then
     // *held is the number of peer lines held back since the last one.
     static bool peer_line_allowed(int level, int *held);
-    // a summary line for peer lines held back, once the budget allows one
+    // sls_session_log's budget: the same, for session start/end lines
+    static bool session_line_allowed(int level, int *held);
+    // a summary line for peer lines held back and session lines suppressed,
+    // once their budgets allow one
     static void peer_flush();
 
 private:

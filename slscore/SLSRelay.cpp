@@ -184,7 +184,7 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
 	bool b_streamid = false;
     p_tmp = strchr(p, '?');
     if (!p_tmp) {
-    	sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url='%s', no '?' param, come on.",
+    	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelay::parse_url='%s', no '?' param, come on.",
     			this, m_url);
         p_tmp = strchr(p, '/');//app
         if (!p_tmp) {//app
@@ -264,7 +264,7 @@ int CSLSRelay::open(const char * srt_url, SLS_RELAY_INFO *sri) {
     if (SLS_OK != parse_url(url, host_name, sizeof(host_name), server_port, streamid, sizeof(streamid))){
         return SLS_ERROR;
     }
-	sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::open, parse_url ok, url='%s'.", this, m_url);
+	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelay::open, parse_url ok, url='%s'.", this, m_url);
 
     if (strlen(streamid) == 0)
     {
@@ -333,7 +333,7 @@ int CSLSRelay::close()
 {
 	int ret = SLS_OK;
 	if (m_srt) {
-    	sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::close, ok, url='%s'.", this, m_url);
+    	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelay::close, ok, url='%s'.", this, m_url);
 		ret = m_srt->libsrt_close();
 		delete m_srt;
 		m_srt = NULL;

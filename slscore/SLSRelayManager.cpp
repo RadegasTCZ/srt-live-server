@@ -129,7 +129,7 @@ void CSLSRelayManager::add_ref()
 void CSLSRelayManager::release()
 {
 	if (--m_refs == 0) {
-		sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::release, last reference gone, delete, app_uplive=%s, stream_name=%s.",
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelayManager::release, last reference gone, delete, app_uplive=%s, stream_name=%s.",
 				this, m_app_uplive, m_stream_name);
 		delete this;
 	}
@@ -141,7 +141,7 @@ void CSLSRelayManager::relay_attached_locked(CSLSRelay *relay)
 	relay->set_live_counted(true);
 	m_live_relays++;
 	int n = m_sri ? ++m_sri->m_live_relays : 0;
-	sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::relay_attached, live relays app=%s n=%d max_pull_streams=%d, stream_name=%s.",
+	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelayManager::relay_attached, live relays app=%s n=%d max_pull_streams=%d, stream_name=%s.",
 			this, m_app_uplive, n, m_sri ? m_sri->m_max_pull_streams : 0, m_stream_name);
 }
 
@@ -152,14 +152,13 @@ bool CSLSRelayManager::relay_ended(CSLSRelay *relay, bool may_reconnect)
 		relay->set_live_counted(false);
 		m_live_relays--;
 		int n = m_sri ? --m_sri->m_live_relays : 0;
-		sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::relay_detached, live relays app=%s n=%d, stream_name=%s.",
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelayManager::relay_detached, live relays app=%s n=%d, stream_name=%s.",
 				this, m_app_uplive, n, m_stream_name);
 	}
 	if (m_retired) {
 		return false;
 	}
 	if (may_reconnect) {
-		if (m_sri) m_sri->mark_stale();    // resolve the upstreams again before the retry
 		bool entry = do_on_relay_closed(relay);
 		if (entry) {
 			m_reconnect_pending = true;   // the caller's reconnect entry: WAITING
@@ -290,7 +289,7 @@ int CSLSRelayManager::connect(const char *url)
 		return ret;
 	}
 	// no DNS here (a worker, under m_mutex): open() only reads the cache,
-	// which the main loop refreshes once a relay end marked it stale
+	// which the main loop refreshes once a failed open marked it stale
 
 	CSLSRelay * cur_relay = create_relay();//new relay;
     cur_relay->init();
@@ -333,7 +332,7 @@ int CSLSRelayManager::connect_hash()
 	    sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::connect_hash, faild, connect szURL=%s, m_stream_name=%s.",
 	    		this, szURL, m_stream_name);
 	} else {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::connect_hash, ok, connect szURL=%s, m_stream_name=%s.",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelayManager::connect_hash, ok, connect szURL=%s, m_stream_name=%s.",
     		    this, szURL, m_stream_name);
 	}
     return ret;

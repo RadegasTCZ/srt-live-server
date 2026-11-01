@@ -213,7 +213,7 @@ int CSLSMapData::get(char *key, char *data, int len, SLSRecycleArrayID *read_id,
     ret = array_data->get(data, len, read_id, aligned, &resynced);
     if (resynced) {
         ret = get_ts_info(key, data, len);
-        sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::get, reader resynced, key=%s, bootstrap len=%d.",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapData::get, reader resynced, key=%s, bootstrap len=%d.",
                     this, key, ret);
     }
     return ret;
