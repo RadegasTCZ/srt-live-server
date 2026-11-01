@@ -129,11 +129,14 @@ request carries `Content-Type: application/json`; the response is ignored.
   integer in kbit/s, averaged over the last second the role moved data.
 - Strings are JSON-escaped; all numbers are JSON numbers.
 
-The stat host is resolved once, when sls starts, and is not re-resolved on a
-reload: change `stat_post_url` and restart to point at a different address.
-Unlike the webhook host, a stat host that does not resolve (or a URL that is
-not `http://`) is not fatal: an error is logged and posting stays disabled
-for that run.
+The stat host is resolved when sls starts and again on a reload (`-s
+reload`), like the webhook host: if the re-resolution fails the previous
+address stays in use and an error is logged; after a successful one the next
+POST goes to the new address. The URL itself is read only at start: change
+`stat_post_url` and restart to post somewhere else. Unlike the webhook host, a
+stat host that does not resolve at start (or a URL that is not `http://`) is
+not fatal: an error is logged and posting stays disabled until a restart (a
+reload does not enable it).
 
 ## Connection-attempt log lines
 
@@ -191,11 +194,17 @@ when the relay tries to connect (error logged, no socket left open).
 ## Command line
 
     sls -c sls.conf [-l level]      run the server
-    sls -c sls.conf -s reload       re-read the users file and re-resolve hook/relay hosts (SIGHUP)
+    sls -c sls.conf -s reload       re-read user_file, re-resolve the on_event_url and stat_post_url hosts (SIGHUP)
     sls -c sls.conf -s stop         stop the running server (SIGINT)
 
 `-s` finds the running server through the configured `pid_file`, so it needs
-the same `-c` as the server.
+the same `-c` as the server. A reload does exactly this: it re-reads every
+`user_file` (a rejected file keeps the previous users) and re-resolves the
+`on_event_url` host of every server block and the `stat_post_url` host (a
+host that does not resolve keeps its previous address); each outcome is logged
+at INFO or ERROR. Relay upstream hosts are not re-resolved by a reload: they
+are looked up again whenever a relay connection ends (see above). Every other
+`sls.conf` change needs a restart.
 
     slc -r <srt url> [-o out.ts] [-c n]     play (optionally into a file; -c forks n-1 more players)
     slc -r <srt url> -i in.ts [-l 1]        push a TS file, -l 1 loops it

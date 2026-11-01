@@ -65,6 +65,9 @@ public :
 	int         open(const char *url, const struct sockaddr_storage *addr, socklen_t addr_len, const char *method="GET", int interval=0);
 	int         close();
 	int         reopen();
+	// the server the next open()/reopen() connects to (a reload re-resolved
+	// the host); a request in flight keeps its connection
+	void        set_server_addr(const struct sockaddr_storage *addr, socklen_t addr_len);
 
 	int         send();
 	int         recv();

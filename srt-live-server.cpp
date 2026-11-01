@@ -85,6 +85,20 @@ static void get_pid_path(const sls_conf_srt_t *conf_srt, char *out, size_t size)
 }
 
 /*
+ * stat_post_url's server: parsed and resolved at start and on reload, on the
+ * main thread (the HTTP client never resolves names itself).
+ */
+static int resolve_stat_url(const char *url, struct sockaddr_storage *addr, socklen_t *addr_len)
+{
+    std::string host, uri;
+    int         port = 0;
+    if (SLS_OK != sls_parse_http_url(url, &host, &port, &uri)) {
+        return SLS_ERROR;
+    }
+    return sls_resolve(host.c_str(), port, addr, addr_len);
+}
+
+/*
  * 'sls -c <conf> -s reload|stop': read pid_file from the conf and signal the
  * running server. Returns the process exit code.
  */
@@ -130,6 +144,7 @@ int main(int argc, char* argv[])
     sls_conf_srt_t * conf_srt = NULL;
     char pid_path[URL_MAX_LEN] = {0};
     int  pid_fd               = -1;      // locked pid file, held open until exit
+    bool stat_posting         = false;   // stat_post_url resolved at start: the client runs
 
     usage();
 
@@ -230,18 +245,16 @@ int main(int argc, char* argv[])
     }
 
     if (strlen(conf_srt->stat_post_url) > 0) {
-        // resolved once, here; the client never does DNS itself
-        std::string stat_host, stat_uri;
-        int         stat_port = 0;
+        // resolved here and on reload; the client never does DNS itself
         struct sockaddr_storage stat_addr;
         socklen_t   stat_addr_len = 0;
-        if (SLS_OK != sls_parse_http_url(conf_srt->stat_post_url, &stat_host, &stat_port, &stat_uri) ||
-            SLS_OK != sls_resolve(stat_host.c_str(), stat_port, &stat_addr, &stat_addr_len)) {
+        if (SLS_OK != resolve_stat_url(conf_srt->stat_post_url, &stat_addr, &stat_addr_len)) {
             sls_log(SLS_LOG_ERROR, "stat_post_url='%s' is not a usable http:// URL or does not resolve; stat posting is disabled.",
                     conf_srt->stat_post_url);
         } else {
             http_stat_client->set_stage_callback(CSLSManager::stat_client_callback, sls_manager);
             http_stat_client->open(conf_srt->stat_post_url, &stat_addr, stat_addr_len, stat_method, conf_srt->stat_post_interval);
+            stat_posting = true;
         }
     }
 
@@ -311,10 +324,22 @@ int main(int argc, char* argv[])
 
 		if (b_reload) {
             // SIGHUP => live-reload user_file credentials on all listeners,
-            // without tearing down the listener sockets. Other config
-            // changes still require a restart.
+            // without tearing down the listener sockets, and re-resolve the
+            // on_event_url host (per listener) and the stat_post_url host;
+            // a host that does not resolve keeps its previous address. Other
+            // config changes still require a restart.
             b_reload = 0;
             sls_log(SLS_LOG_INFO, "reload srt live server...");
+            if (stat_posting) {
+                struct sockaddr_storage stat_addr;
+                socklen_t   stat_addr_len = 0;
+                if (SLS_OK == resolve_stat_url(conf_srt->stat_post_url, &stat_addr, &stat_addr_len)) {
+                    http_stat_client->set_server_addr(&stat_addr, stat_addr_len);
+                    sls_log(SLS_LOG_INFO, "reload, stat_post_url host re-resolved.");
+                } else {
+                    sls_log(SLS_LOG_ERROR, "reload, cannot resolve the stat_post_url host, keeping the previous address.");
+                }
+            }
             if (NULL != sls_manager) {
                 if (SLS_OK == sls_manager->reload_users()) {
                     sls_log(SLS_LOG_INFO, "reload successfully.");

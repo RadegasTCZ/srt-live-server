@@ -170,6 +170,15 @@ int  CHttpClient::reopen()
     return open(url.c_str(), &m_addr, m_addr_len, method, m_interval);
 }
 
+void CHttpClient::set_server_addr(const struct sockaddr_storage *addr, socklen_t addr_len)
+{
+    if (NULL == addr || addr_len == 0 || addr_len > sizeof(m_addr)) {
+        return;
+    }
+    memcpy(&m_addr, addr, addr_len);
+    m_addr_len = addr_len;
+}
+
 // SLS_OK once the request is over: it finished, or it ran out of time (then it
 // has failed unless a status line had already arrived).
 int  CHttpClient::check_timeout(int64_t cur_tm_ms)

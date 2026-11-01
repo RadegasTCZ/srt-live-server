@@ -102,8 +102,12 @@ check your config and tooling before you restart.
   starting. The query parameter is `on_event=`.
 - **Stats POST.** `stat_post_url` receives a JSON document (`stat_post_interval`
   seconds, default 5) instead of the broken body 1.5.3 sent; see
-  `doc/Directives.md` for the schema. The stats host is resolved once at start; an
-  unresolvable one only disables posting.
+  `doc/Directives.md` for the schema. The stats host is resolved at start and
+  re-resolved on reload (a failure keeps the previous address); one that does not
+  resolve at start only disables posting.
+- **Reload** (`sls -s reload`, SIGHUP) re-reads `user_file` and re-resolves the
+  `on_event_url` and `stat_post_url` hosts, nothing else; relay upstreams are
+  re-resolved after a relay connection ends. Other config changes need a restart.
 - **Relays.** A relay block without `upstreams` is a configuration error. Upstream
   hosts are resolved when the configuration loads, `host:port/app` honours the
   port, and a pull is capped by `max_pull_streams` (default 16). A pull now lives
