@@ -163,6 +163,17 @@ request
 - with `user_file`, for an unknown user.
 Refusals are logged as `listen_callback, refused ...` through the refusal budget.
 
+With `user_file`, the callback notes which user and passphrase each request
+was let through with, until the accept picks the connection up (that is what a
+reload checks a running session against, see `user_file`). The note is kept
+for 5 s at most: a handshake completes in milliseconds after the callback, and
+a caller gives up after its connect timeout (3 s by default). sls keeps up to
+4096 of them; when that many handshakes are in progress, the oldest note is
+dropped instead of refusing the new request, so incomplete handshakes cannot
+lock anyone out. A connection whose note was dropped is refused at accept
+(`no handshake record for user ...`); the handshake rate limit bounds how fast
+one address can add notes.
+
 ## on_event_url, on_event_timeout (server block)
 
 `on_event_url http://host[:port][/path][?query];` makes sls call a webhook

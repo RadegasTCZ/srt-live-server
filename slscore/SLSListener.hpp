@@ -44,6 +44,7 @@
 #include "SLSLock.hpp"
 #include "SLSStreamId.hpp"
 #include "SLSUserDb.hpp"
+#include "SLSSockTable.hpp"
 
 /**
  * server conf
@@ -108,10 +109,11 @@ struct sls_inflight_t {
     bool        publish;
     uint64_t    gen;       // CSLSUserDb generation of that direction's passphrase
     uint64_t    epoch;     // CSLSUserDb epoch of the lookup
-    int64_t     t_ms;      // when the callback ran
 };
-#define SLS_INFLIGHT_MAX     4096    // handshakes between callback and accept; over it: refused
-#define SLS_INFLIGHT_TTL_MS  30000   // a record no accept took (failed handshake) is dropped
+// handshakes between callback and accept; past it the oldest record is
+// dropped, and one older than the TTL too (CSLSSockTable, R43)
+#define SLS_INFLIGHT_MAX     4096
+#define SLS_INFLIGHT_TTL_MS  5000
 
 
 /**
@@ -178,12 +180,7 @@ private:
     // user_file's users; shared with every role admitted through them (S4)
     std::shared_ptr<CSLSUserDb>            m_userdb;
     // listen callback -> accept, keyed by the new socket (see sls_inflight_t)
-    CSLSMutex                              m_inflight_mutex;
-    std::map<SRTSOCKET, sls_inflight_t>    m_inflight;
-    int64_t                                m_inflight_pruned_ms;
-    // false if the table is full (the callback then refuses the connection)
-    bool inflight_put(SRTSOCKET ns, const sls_inflight_t &rec, int64_t now_ms);
-    bool inflight_take(SRTSOCKET ns, sls_inflight_t *rec);
+    CSLSSockTable<sls_inflight_t>          m_inflight;
 
     int  init_conf_app();
     // One accept and its admission: 1 = a socket came off the queue (admitted

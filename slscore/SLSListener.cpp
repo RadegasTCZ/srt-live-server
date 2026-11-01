@@ -54,6 +54,7 @@ SLS_CONF_DYNAMIC_IMPLEMENT_DEFAULTS(server, sls_conf_server_defaults)
  */
 
 CSLSListener::CSLSListener()
+    : m_inflight(SLS_INFLIGHT_MAX, SLS_INFLIGHT_TTL_MS)
 {
     m_conf      = NULL;
     m_back_log  = 1024;
@@ -74,7 +75,6 @@ CSLSListener::CSLSListener()
     memset(&m_hook_addr, 0, sizeof(m_hook_addr));
     m_hook_addr_len = 0;
     m_userdb.reset(new CSLSUserDb);
-    m_inflight_pruned_ms = 0;
 
     sprintf(m_role_name, "listener");
 }
@@ -696,52 +696,13 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
                 self, stream.c_str(), direction);
     }
     // Last, once nothing else can refuse: what the accept will admit this
-    // socket with. The table is bounded; full means that many handshakes
-    // are between here and their accept, and one more is refused.
-    rec.t_ms = sls_gettime_ms();
-    if (!self->inflight_put(ns, rec, rec.t_ms)) {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: %d handshakes in progress.",
-                self, peer_ip, peer_port, SLS_INFLIGHT_MAX);
-        srt_setrejectreason(ns, SRT_REJX_OVERLOAD);
-        return -1;
+    // socket with. Never a refusal (R43): a full table drops its oldest
+    // record, whose session (if it ever completes) the accept then refuses.
+    if (self->m_inflight.put(ns, rec, sls_gettime_ms())) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, %d handshakes in progress: dropped the oldest one's record.",
+                self, SLS_INFLIGHT_MAX);
     }
     return 0;
-}
-
-// Runs on libsrt's receive thread: the mutex covers only map operations,
-// never a system call or a log line.
-bool CSLSListener::inflight_put(SRTSOCKET ns, const sls_inflight_t &rec, int64_t now_ms)
-{
-    CSLSLock lock(&m_inflight_mutex);
-    // A record whose handshake failed (a wrong passphrase, the peer gave
-    // up) is never taken: drop those once a second, and when full.
-    if (now_ms - m_inflight_pruned_ms >= 1000 || m_inflight.size() >= SLS_INFLIGHT_MAX) {
-        m_inflight_pruned_ms = now_ms;
-        for (std::map<SRTSOCKET, sls_inflight_t>::iterator it = m_inflight.begin(); it != m_inflight.end();) {
-            if (now_ms - it->second.t_ms >= SLS_INFLIGHT_TTL_MS) {
-                m_inflight.erase(it++);
-            } else {
-                ++it;
-            }
-        }
-    }
-    if (m_inflight.size() >= SLS_INFLIGHT_MAX && 0 == m_inflight.count(ns)) {
-        return false;
-    }
-    m_inflight[ns] = rec;   // libsrt may reuse a socket id: the newest wins
-    return true;
-}
-
-bool CSLSListener::inflight_take(SRTSOCKET ns, sls_inflight_t *rec)
-{
-    CSLSLock lock(&m_inflight_mutex);
-    std::map<SRTSOCKET, sls_inflight_t>::iterator it = m_inflight.find(ns);
-    if (it == m_inflight.end()) {
-        return false;
-    }
-    *rec = it->second;
-    m_inflight.erase(it);
-    return true;
 }
 
 int CSLSListener::start()
@@ -941,7 +902,7 @@ int CSLSListener::accept_one()
     const char *user_file = ((sls_conf_server_t*)m_conf)->user_file;
     bool        has_users = (user_file && *user_file);
     sls_inflight_t auth;
-    bool        has_auth  = has_users && inflight_take(fd_client, &auth);
+    bool        has_auth  = has_users && m_inflight.take(fd_client, &auth);
 
     //2.check streamid, split it
 	srt = new CSLSSrt;
@@ -986,8 +947,9 @@ int CSLSListener::accept_one()
     sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, [%s:%d], sid '%s/%s/%s'",
             this, peer_name, peer_port, psid.host.c_str(), psid.app.c_str(), stream_name);
     // Fail closed: a user_file session must be one the callback let through
-    // for this very user. A missing record (it outlived SLS_INFLIGHT_TTL_MS)
-    // or another user would admit a session nothing can revoke.
+    // for this very user. A missing record (older than SLS_INFLIGHT_TTL_MS,
+    // or dropped from a full table) or another user would admit a session
+    // nothing can revoke.
     if (has_users && (!has_auth || auth.user != psid.stream)) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], refused: no handshake record for user '%s'.",
                 this, peer_name, peer_port, stream_name);
