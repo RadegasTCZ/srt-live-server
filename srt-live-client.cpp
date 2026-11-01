@@ -47,17 +47,14 @@ static void ctrl_c_handler(int s){
 /**
  * usage information
  */
-#define SLS_MAJOR_VERSION "1"
-#define SLS_MIN_VERSION "1"
-#define SLS_TEST_VERSION "x"
 static void usage()
 {
     printf("-------------------------------------------------\n");
     printf("           srt-live-client \n");
-    printf("                    v%s.%s.%s \n", SLS_MAJOR_VERSION, SLS_MIN_VERSION, SLS_TEST_VERSION);
+    printf("                    v%s \n", SLS_VERSION_STRING);
     printf("-------------------------------------------------\n");
     printf("    -r srt_url [-o out_file_name] [-c worker_count] \n");
-    printf("    -r srt_url -i ts_file_name \n");
+    printf("    -r srt_url -i ts_file_name [-l 0|1] \n");
     printf("    \n");
 }
 
