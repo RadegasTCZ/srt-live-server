@@ -155,11 +155,20 @@ void CSLSListener::log_admission_refusal(const char *where, const char *peer_nam
 // on_event_url hook it is promoted when the hook answers 200
 // (CSLSRole::check_http_passed); without a hook it stays shared, so
 // someone who merely names a publisher stream can never use the reserve.
-int CSLSListener::publisher_slot_kind(const std::string &user)
+//
+// At accept, with user_file, the answer is the one the callback acted on
+// (sls_inflight_t::verified), never a new lookup: a reload in between that
+// switched the user's publish_pass between '-' and a passphrase would
+// otherwise give this handshake a slot kind libsrt did not enforce (the
+// session is revoked on its first worker pass anyway, S4, but it must not
+// hold a reserve slot until then).
+int CSLSListener::publisher_slot_kind(const std::string &user, const bool *verified_at_callback)
 {
     const sls_conf_server_t *c = (const sls_conf_server_t *)m_conf;
     bool verified = false;
-    if (c->user_file[0] != 0) {
+    if (c->user_file[0] != 0 && NULL != verified_at_callback) {
+        verified = *verified_at_callback;
+    } else if (c->user_file[0] != 0) {
         std::string pass;
         verified = m_userdb->lookup(user, true, &pass, NULL, NULL) && !pass.empty();
     } else {
@@ -687,6 +696,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         return -1;
     }
     bool pass_empty = pass_value.empty();
+    rec.verified    = !pass_empty;
 
     if (!pass_empty) {
         // Key length first (it must be in place before the passphrase derives the
@@ -1089,7 +1099,8 @@ int CSLSListener::accept_one()
     //4. is publisher?
     app_uplive = key_app;
 	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
-	if (!slot.take(m_admission_limiter, peer_name, publisher_slot_kind(psid.stream), std::string(), 0, &why)) {
+	if (!slot.take(m_admission_limiter, peer_name, publisher_slot_kind(psid.stream, has_users ? &auth.verified : NULL),
+	               std::string(), 0, &why)) {
 		log_admission_refusal("handler", peer_name, peer_port, why, key_stream_name);
 		srt->libsrt_close();
 		delete srt;

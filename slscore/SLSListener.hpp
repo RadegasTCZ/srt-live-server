@@ -109,6 +109,8 @@ struct sls_inflight_t {
     bool        publish;
     uint64_t    gen;       // CSLSUserDb generation of that direction's passphrase
     uint64_t    epoch;     // CSLSUserDb epoch of the lookup
+    bool        verified;  // libsrt enforced a non-empty passphrase on this handshake (R40/R41)
+    sls_inflight_t() : publish(false), gen(0), epoch(0), verified(false) {}
 };
 // handshakes between callback and accept; past it the oldest record is
 // dropped, and one older than the TTL too (CSLSSockTable, R43)
@@ -190,8 +192,9 @@ private:
     void log_admission_refusal(const char *where, const char *peer_name, int peer_port, int why, const char *stream);
     // the limiter's per-stream key of a player of key_stream_name
     std::string player_stream_key(const char *key_stream_name) const;
-    // the SLS_SLOT_KIND an accepted publisher takes (see the .cpp)
-    int  publisher_slot_kind(const std::string &user);
+    // the SLS_SLOT_KIND an accepted publisher takes (see the .cpp); with
+    // user_file, verified is what the callback enforced on its handshake
+    int  publisher_slot_kind(const std::string &user, const bool *verified = NULL);
     // Role of a parsed streamid by host/app (never by app name alone); on
     // PUBLISHER/PLAYER *app_key_out is the publisher-side "host/app" key.
     sls_sid_role_t classify_sid(const sls_sid_t &sid, std::string *app_key_out);
