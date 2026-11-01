@@ -194,7 +194,7 @@ int CSLSRelayManager::start()
 {
 	CSLSLock lock(&m_mutex);
 	if (m_retired) {
-		sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::start, retired, app_uplive=%s, stream_name=%s.",
+		sls_peer_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::start, retired, app_uplive=%s, stream_name=%s.",
 				this, m_app_uplive, m_stream_name);
 		return SLS_ERROR;
 	}

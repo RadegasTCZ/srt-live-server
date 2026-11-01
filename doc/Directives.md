@@ -73,8 +73,8 @@ together) exist at once. `max_connections_per_ip` (default 16, 0 = unlimited,
 
 Both are checked at accept: over either cap the new socket is closed at once
 and one INFO line is logged (`refused [ip:port]: per-IP connection limit (N)
-reached` or `... total connection limit (N) reached`; at most one such line per
-second, with the count of refusals not logged). Outbound relay connections
+reached` or `... total connection limit (N) reached`; rate-limited like every
+other connection-attempt line, see below). Outbound relay connections
 (pull and push) never count. A slot is given back when the connection closes,
 whichever way it closes.
 
@@ -132,6 +132,18 @@ reload: change `stat_post_url` and restart to point at a different address.
 Unlike the webhook host, a stat host that does not resolve (or a URL that is
 not `http://`) is not fatal: an error is logged and posting stays disabled
 for that run.
+
+## Connection-attempt log lines
+
+Lines a remote peer causes once per handshake - refusals (bad or unknown
+streamid, unknown user, no such stream, stream busy, connection limits, pull
+refused) and the per-attempt accept lines (`accept user`, `new client`) - share
+one budget of one line per second for the whole process. A line over the
+budget is logged at DEBUG instead, and the next line within the budget says
+how many were held back; once a second the main loop also logs
+`peer lines: N held back in the last S s` if any were. `log_level debug`
+therefore shows every attempt. The start of an admitted session (`new
+publisher[...]`, `new player[...]`) is always logged at INFO.
 
 ## admission_timeout (server block)
 

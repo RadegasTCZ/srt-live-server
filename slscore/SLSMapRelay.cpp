@@ -51,7 +51,7 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
     //find conf info
 	SLS_RELAY_INFO * sri = get_relay_conf(std::string(app_uplive));
 	if (NULL == sri) {
-    	sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, no relay conf info, app_uplive=%s, stream_name=%s.",
+    	sls_peer_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, no relay conf info, app_uplive=%s, stream_name=%s.",
                 this, app_uplive, stream_name);
 		return NULL;
 	}
@@ -94,14 +94,14 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
     }
 
     if (existed) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, cur_mananger=%p, exist, app_uplive=%s, stream_name=%s.",
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, cur_mananger=%p, exist, app_uplive=%s, stream_name=%s.",
                 this, cur_mananger, app_uplive, stream_name);
     } else if (cur_mananger) {
         sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, ok, app_uplive=%s, stream_name=%s, cur_mananger=%p%s.",
                 this, app_uplive, stream_name, cur_mananger,
                 is_pull ? (std::string(", pull managers=") + std::to_string(count) + "/" + std::to_string(sri->m_max_pull_streams)).c_str() : "");
     } else if (is_pull) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, refused, app_uplive=%s, stream_name=%s: max_pull_streams=%d reached.",
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, refused, app_uplive=%s, stream_name=%s: max_pull_streams=%d reached.",
                 this, app_uplive, stream_name, sri->m_max_pull_streams);
     } else {
         sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, failed, wrong type='%s', app_uplive=%s, stream_name=%s.",

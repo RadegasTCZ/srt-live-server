@@ -103,7 +103,7 @@ int CSLSPullerManager::do_start()
 	if (NULL != m_map_publisher) {
 	    CSLSRole * publisher = m_map_publisher->get_publisher(key_stream_name);
 	    if (NULL != publisher) {
-	        sls_log(SLS_LOG_INFO, "[%p]CSLSPullerManager::start, failed, key_stream_name=%s, publisher=%p exist.",
+	        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSPullerManager::start, failed, key_stream_name=%s, publisher=%p exist.",
 	    		this, key_stream_name, publisher);
 	        return ret;
 	    }

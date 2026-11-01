@@ -27,6 +27,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <strings.h>
+#include <atomic>
 
 #include "SLSLog.hpp"
 #include "SLSLock.hpp"
@@ -77,6 +78,48 @@ void CSLSLog::log(int level, const char *fmt, ...)
 	va_end (vl);
 }
 
+
+// sls_peer_log budget, process-wide: the time of the last peer line logged
+// and the number held back since. Lock-free: callers include libsrt's
+// receive thread, which must never wait on a worker.
+static std::atomic<int64_t> s_peer_last_ms(0);
+static std::atomic<int>     s_peer_held(0);
+
+bool CSLSLog::peer_line_allowed(int level, int *held)
+{
+    *held = 0;
+    if (!m_pInstance) {
+        m_pInstance = new CSLSLog();
+    }
+    if (level > m_pInstance->m_level) {
+        return false;            // not logged at this level anyway: no budget used
+    }
+    int64_t now  = sls_gettime_ms();
+    int64_t last = s_peer_last_ms.load();
+    if (now - last < 1000 || !s_peer_last_ms.compare_exchange_strong(last, now)) {
+        s_peer_held++;
+        return false;
+    }
+    *held = s_peer_held.exchange(0);
+    return true;
+}
+
+void CSLSLog::peer_flush()
+{
+    if (0 == s_peer_held.load()) {
+        return;
+    }
+    int64_t now  = sls_gettime_ms();
+    int64_t last = s_peer_last_ms.load();
+    if (now - last < 1000 || !s_peer_last_ms.compare_exchange_strong(last, now)) {
+        return;
+    }
+    int held = s_peer_held.exchange(0);
+    if (held > 0) {
+        log(SLS_LOG_INFO, "peer lines: %d held back in the last %.1f s (handshake refusals / connection attempts, at most 1 line/s; log_level debug shows each).",
+            held, (now - last) / 1000.0);
+    }
+}
 
 void CSLSLog::print_log(int level, const char *fmt, va_list vl)
 {

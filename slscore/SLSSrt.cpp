@@ -296,7 +296,8 @@ int CSLSSrt::libsrt_accept()
     }
     addrtmp = (struct sockaddr_in *)&scl;
     inet_ntop(AF_INET, &addrtmp->sin_addr, ip, sizeof(ip));
-    sls_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_accept ok, new sock=%d, %s:%d.",
+    // DEBUG: once per connection attempt; the listener logs the admitted ones
+    sls_log(SLS_LOG_DEBUG, "[%p]CSLSSrt::libsrt_accept ok, new sock=%d, %s:%d.",
                this, new_sock, ip, ntohs(addrtmp->sin_port));
 
     return new_sock;
@@ -305,7 +306,8 @@ int CSLSSrt::libsrt_accept()
 int CSLSSrt::libsrt_close()
 {
     if (m_sc.fd) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_close, fd=%d.", this, m_sc.fd);
+        // DEBUG: once per socket, including every refused attempt
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSSrt::libsrt_close, fd=%d.", this, m_sc.fd);
       srt_close(m_sc.fd);
       m_sc.fd = 0;
     }

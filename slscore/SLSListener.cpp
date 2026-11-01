@@ -111,25 +111,16 @@ void CSLSListener::set_admission_limiter(CSLSConnLimiter *limiter)
     m_admission_limiter = limiter;
 }
 
-// Process-wide: a flood from many listeners still logs one line per second.
-static std::atomic<int64_t> s_refusal_log_ms(0);
-static std::atomic<int>     s_refusal_unlogged(0);
-
+// Rate-limited with every other peer-triggered line (sls_peer_log): a flood
+// from many listeners still logs one line per second.
 void CSLSListener::log_admission_refusal(const char *peer_name, int peer_port, int why)
 {
-    int64_t now  = sls_gettime_ms();
-    int64_t last = s_refusal_log_ms.load();
-    if (now - last < 1000 || !s_refusal_log_ms.compare_exchange_strong(last, now)) {
-        s_refusal_unlogged++;
-        return;
-    }
-    int unlogged = s_refusal_unlogged.exchange(0);
     if (SLS_CONN_PER_IP == why) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: per-IP connection limit (%d) reached; %d other refusal(s) not logged.",
-                this, peer_name, peer_port, m_admission_limiter->max_per_ip(), unlogged);
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: per-IP connection limit (%d) reached.",
+                     this, peer_name, peer_port, m_admission_limiter->max_per_ip());
     } else {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: total connection limit (%d) reached; %d other refusal(s) not logged.",
-                this, peer_name, peer_port, m_admission_limiter->max_total(), unlogged);
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: total connection limit (%d) reached.",
+                     this, peer_name, peer_port, m_admission_limiter->max_total());
     }
 }
 
@@ -480,14 +471,14 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     CSLSListener *self = static_cast<CSLSListener*>(opaq);
 
     if (!streamid || !*streamid) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, empty streamid; rejecting.", self);
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, empty streamid; rejecting.", self);
         return -1;
     }
 
     // Expect streamid of the form "host/app/stream" with strict charset.
     sls_sid_t sid;
     if (!sls_sid_parse(streamid, &sid)) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, refused: streamid must be host/app/stream, sid='%s'.",
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, refused: streamid must be host/app/stream, sid='%s'.",
                 self, sls_escape_for_log(streamid).c_str());
         return -1;
     }
@@ -496,7 +487,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     std::string app_key;
     sls_sid_role_t role = self->classify_sid(sid, &app_key);
     if (SLS_SID_REJECT == role) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused: '%s/%s' is neither a publisher nor a player app (user '%s').",
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused: '%s/%s' is neither a publisher nor a player app (user '%s').",
                 self, sid.host.c_str(), sid.app.c_str(), stream.c_str());
         return -1;
     }
@@ -511,7 +502,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         CSLSLock lock(&self->m_users_lock, 0); // read lock
         std::map<std::string, sls_user_t>::iterator it = self->m_users.find(stream);
         if (it == self->m_users.end()) {
-            sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
+            sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
                     self, stream.c_str());
             return -1;
         }
@@ -525,28 +516,28 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         int pbkeylen = ((sls_conf_server_t*)self->m_conf)->srt_pbkeylen;
         if (pbkeylen > 0 &&
             srt_setsockflag(ns, SRTO_PBKEYLEN, &pbkeylen, sizeof(pbkeylen)) < 0) {
-            sls_log(SLS_LOG_ERROR,
+            sls_peer_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_PBKEYLEN=%d for user '%s' (%s) failed: %s.",
                     self, pbkeylen, stream.c_str(), direction, srt_getlasterror_str());
             return -1;
         }
         if (srt_setsockflag(ns, SRTO_PASSPHRASE, pass_value.c_str(), (int)pass_value.length()) < 0) {
-            sls_log(SLS_LOG_ERROR,
+            sls_peer_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_PASSPHRASE for user '%s' (%s) failed: %s.",
                     self, stream.c_str(), direction, srt_getlasterror_str());
             return -1;
         }
         int enforce = 1;
         if (srt_setsockflag(ns, SRTO_ENFORCEDENCRYPTION, &enforce, sizeof(enforce)) < 0) {
-            sls_log(SLS_LOG_ERROR,
+            sls_peer_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_ENFORCEDENCRYPTION for user '%s' (%s) failed: %s.",
                     self, stream.c_str(), direction, srt_getlasterror_str());
             return -1;
         }
-        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, encrypted).",
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, encrypted).",
                 self, stream.c_str(), direction);
     } else {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, plaintext).",
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, plaintext).",
                 self, stream.c_str(), direction);
     }
     return 0;
@@ -706,10 +697,10 @@ int CSLSListener::handler()
         return client_count;
     }
     sls_slot_guard slot(m_admission_limiter, peer_name);
-    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
+    sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
 
     if (0 != srt->libsrt_getsockopt(SRTO_STREAMID, "SRTO_STREAMID", &sid, &sid_size)) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], fd=%d, get streamid info failed.",
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], fd=%d, get streamid info failed.",
                 this, peer_name, peer_port, srt->libsrt_get_fd());
     	srt->libsrt_close();
         delete srt;
@@ -717,14 +708,14 @@ int CSLSListener::handler()
     }
 
     if (!sls_sid_parse(sid, &psid)) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], refused: streamid must be host/app/stream, sid='%s'.",
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], refused: streamid must be host/app/stream, sid='%s'.",
                 this, peer_name, peer_port, sls_escape_for_log(sid).c_str());
     	srt->libsrt_close();
     	delete srt;
     	return client_count;
     }
     const char *stream_name = psid.stream.c_str();
-    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, [%s:%d], sid '%s/%s/%s'",
+    sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, [%s:%d], sid '%s/%s/%s'",
             this, peer_name, peer_port, psid.host.c_str(), psid.app.c_str(), stream_name);
 
     // app exist?
@@ -734,7 +725,7 @@ int CSLSListener::handler()
     sls_conf_app_t * ca = NULL;
     sls_sid_role_t role = classify_sid(psid, &app_uplive);
     if (SLS_SID_REJECT == role) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], '%s' is neither a publisher nor a player app.",
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], '%s' is neither a publisher nor a player app.",
                 this, peer_name, peer_port, key_app);
         srt->libsrt_close();
         delete srt;
@@ -752,7 +743,7 @@ int CSLSListener::handler()
         	//*
         	//3.1 check pullers
         	if (NULL == m_map_puller) {
-    			sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s', publisher is NULL and m_map_puller is NULL.",
+    			sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s', publisher is NULL and m_map_puller is NULL.",
     						this, peer_name, peer_port, key_stream_name);
     			srt->libsrt_close();
     			delete srt;
@@ -768,7 +759,7 @@ int CSLSListener::handler()
         			known = m_users.count(psid.stream) > 0;
         		}
         		if (!known) {
-    				sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s': not in user_file, no pull.",
+    				sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s': not in user_file, no pull.",
     							this, peer_name, peer_port, key_stream_name);
     				srt->libsrt_close();
     				delete srt;
@@ -777,7 +768,7 @@ int CSLSListener::handler()
         	}
         	CSLSRelayManager *puller_manager = m_map_puller->add_relay_manager(app_uplive.c_str(), stream_name);
         	if (NULL == puller_manager) {
-    			sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, m_map_puller->add_relay_manager failed, new role[%s:%d], stream='%s', publisher is NULL, no puller_manager.",
+    			sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, m_map_puller->add_relay_manager failed, new role[%s:%d], stream='%s', publisher is NULL, no puller_manager.",
     						this, peer_name, peer_port, key_stream_name);
     			srt->libsrt_close();
     			delete srt;
@@ -788,7 +779,7 @@ int CSLSListener::handler()
         	puller_manager->configure(m_map_data, m_map_publisher, m_list_role, m_port);
 
         	if (SLS_OK != puller_manager->start()) {
-    			sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, puller_manager->start failed, new client[%s:%d], stream='%s'.",
+    			sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, puller_manager->start failed, new client[%s:%d], stream='%s'.",
     						this, peer_name, peer_port, key_stream_name);
     			// no puller to keep it: do not leave it counting against max_pull_streams
     			puller_manager->retire_if_idle("first pull failed");
@@ -801,7 +792,7 @@ int CSLSListener::handler()
 
     	    pub = m_map_publisher->get_publisher(key_stream_name);
             if (NULL == pub) {
-        	    sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, m_map_publisher->get_publisher failed, new client[%s:%d], stream=%s.",
+        	    sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, m_map_publisher->get_publisher failed, new client[%s:%d], stream=%s.",
     	            this, peer_name, peer_port, key_stream_name);
     			srt->libsrt_close();
     			delete srt;
@@ -814,7 +805,7 @@ int CSLSListener::handler()
 
         //3.2 handle new play
         if (!m_map_data->is_exist(key_stream_name)) {
-            sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream=%s,but publisher data doesn't exist in m_map_data.",
+            sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream=%s,but publisher data doesn't exist in m_map_data.",
                         this, peer_name, peer_port, key_stream_name);
             srt->libsrt_close();
             delete srt;
@@ -854,7 +845,7 @@ int CSLSListener::handler()
 	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
     ca = (sls_conf_app_t *)m_map_publisher->get_ca(app_uplive);
 	if (NULL == ca) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s',but no sls_conf_app_t info.",
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s',but no sls_conf_app_t info.",
                     this, peer_name, peer_port, key_stream_name);
         srt->libsrt_close();
         delete srt;
@@ -863,7 +854,7 @@ int CSLSListener::handler()
 
 	CSLSRole * publisher = m_map_publisher->get_publisher(key_stream_name);
 	if (NULL != publisher) {
-		sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, stream busy: new publisher[%s:%d], stream='%s' already has publisher=%p.",
+		sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, stream busy: new publisher[%s:%d], stream='%s' already has publisher=%p.",
 					this, peer_name, peer_port, key_stream_name, publisher);
 		srt->libsrt_close();
 		delete srt;
