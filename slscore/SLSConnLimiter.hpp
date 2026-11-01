@@ -108,7 +108,8 @@ public:
     // for the unit test).
     void set_handshake_rate(int per_sec, size_t max_buckets = 65536);
     int  handshake_rate() const { return m_hs_rate; }
-    // One handshake from ip at now_ms: true if within the rate (and counted).
+    // One handshake from ip at now_ms (sls_monotonic_ms(): a wall-clock step
+    // must not freeze the refill): true if within the rate (and counted).
     // Never blocks; called on libsrt's receive thread (listen callback).
     bool handshake_allowed(const char *ip, int64_t now_ms);
     int  overflow_rate() const;

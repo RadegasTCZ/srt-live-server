@@ -88,6 +88,11 @@ using namespace std;
 
 
 int64_t sls_gettime_ms(void);//rturn millisecond
+// Milliseconds on CLOCK_MONOTONIC (an arbitrary origin; only differences
+// mean anything). For every rate, throttle and TTL state: a step of the wall
+// clock (VM resume, a manual date set, an NTP step) must neither freeze a
+// limit nor expire one early. Wall time (sls_gettime_ms) is for timestamps.
+int64_t sls_monotonic_ms(void);
 int64_t sls_gettime(void);//rturn microsecond
 void    sls_gettime_fmt(char *dst, int64_t cur_time_sec, char *fmt);
 void    sls_gettime_default_string(char *cur_time);

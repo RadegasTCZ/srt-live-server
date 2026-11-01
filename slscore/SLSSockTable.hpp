@@ -51,6 +51,8 @@ class CSLSSockTable
 public:
     CSLSSockTable(size_t max_records, int ttl_ms) : m_max(max_records), m_ttl_ms(ttl_ms), m_seq(0) {}
 
+    // now_ms is sls_monotonic_ms() (the age order below relies on a clock
+    // that never goes back).
     // Store v for ns (replacing an older record of the same socket id).
     // Returns true if the table was full and its oldest record was dropped.
     bool put(int ns, const V &v, int64_t now_ms)

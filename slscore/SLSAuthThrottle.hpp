@@ -73,6 +73,8 @@ public:
                      int block_ms = SLS_AUTH_BLOCK_MS, size_t max_addrs = SLS_AUTH_MAX_ADDRS,
                      size_t max_pending = SLS_AUTH_MAX_PENDING);
 
+    // Every now_ms is sls_monotonic_ms(), so a wall-clock step neither
+    // lengthens a block nor freezes a window.
     // Is ip blocked at now_ms? *left_ms (if given): how much longer.
     bool   blocked(const char *ip, int64_t now_ms, int *left_ms = NULL);
     // A handshake on socket ns from ip on which libsrt will check a

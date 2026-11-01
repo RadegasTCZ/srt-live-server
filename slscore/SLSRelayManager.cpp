@@ -93,7 +93,7 @@ void SLS_RELAY_INFO::refresh_if_stale()
 	}
 	// at most one lookup per SLS_RELAY_REFRESH_MIN_MS, whatever the failures do;
 	// the flag stays set, so a later tick resolves
-	int64_t now = sls_gettime_ms();
+	int64_t now = sls_monotonic_ms();
 	if (now - m_last_refresh_ms < SLS_RELAY_REFRESH_MIN_MS) {
 		return;
 	}

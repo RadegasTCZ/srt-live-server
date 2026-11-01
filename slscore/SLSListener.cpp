@@ -578,7 +578,7 @@ static void sls_peer_of(const struct sockaddr *sa, char *ip, size_t ip_len, int 
 static void sls_on_bad_secret(int ns)
 {
     std::string ip;
-    if (sls_auth_throttle().bad_secret(ns, sls_gettime_ms(), &ip)) {
+    if (sls_auth_throttle().bad_secret(ns, sls_monotonic_ms(), &ip)) {
         sls_peer_log(SLS_LOG_INFO, "CSLSListener, %d wrong passphrases from %s within %d s: refusing that address for %d s.",
                      SLS_AUTH_FAIL_MAX, ip.c_str(), SLS_AUTH_FAIL_WINDOW_MS / 1000, SLS_AUTH_BLOCK_MS / 1000);
     }
@@ -599,7 +599,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
 
     // Every connection request counts, first: also the ones refused below.
     if (NULL != self->m_admission_limiter &&
-        !self->m_admission_limiter->handshake_allowed(peer_ip, sls_gettime_ms())) {
+        !self->m_admission_limiter->handshake_allowed(peer_ip, sls_monotonic_ms())) {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: handshake rate limit (%d per second per IP) reached.",
                 self, peer_ip, peer_port, self->m_admission_limiter->handshake_rate());
         srt_setrejectreason(ns, SRT_REJX_OVERLOAD);
@@ -636,7 +636,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     const char *user_file = ((sls_conf_server_t*)self->m_conf)->user_file;
     bool        has_users = (user_file && *user_file);
     int blocked_ms = 0;
-    if (sls_auth_throttle().blocked(peer_ip, sls_gettime_ms(), &blocked_ms)) {
+    if (sls_auth_throttle().blocked(peer_ip, sls_monotonic_ms(), &blocked_ms)) {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: too many wrong passphrases from this address, %d s left.",
                 self, peer_ip, peer_port, (blocked_ms + 999) / 1000);
         srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
@@ -670,7 +670,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     // the handshake for the wrong-passphrase throttle.
     if (!has_users) {
         if (((sls_conf_server_t*)self->m_conf)->srt_passphrase[0] != 0) {
-            sls_auth_throttle().note_handshake(ns, peer_ip, sls_gettime_ms());
+            sls_auth_throttle().note_handshake(ns, peer_ip, sls_monotonic_ms());
         }
         return 0;
     }
@@ -712,7 +712,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
                     self, stream.c_str(), direction, srt_getlasterror_str());
             return -1;
         }
-        sls_auth_throttle().note_handshake(ns, peer_ip, sls_gettime_ms());
+        sls_auth_throttle().note_handshake(ns, peer_ip, sls_monotonic_ms());
         // per attempt, so DEBUG: the admitted session logs its start at INFO
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, encrypted).",
                 self, stream.c_str(), direction);
@@ -723,7 +723,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     // Last, once nothing else can refuse: what the accept will admit this
     // socket with. Never a refusal (R43): a full table drops its oldest
     // record, whose session (if it ever completes) the accept then refuses.
-    if (self->m_inflight.put(ns, rec, sls_gettime_ms())) {
+    if (self->m_inflight.put(ns, rec, sls_monotonic_ms())) {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, %d handshakes in progress: dropped the oldest one's record.",
                 self, SLS_INFLIGHT_MAX);
     }

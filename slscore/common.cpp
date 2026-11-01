@@ -84,6 +84,13 @@ int64_t sls_gettime_ms(void)//rturn millisecond
 	return sls_gettime()/1000;
 }
 
+int64_t sls_monotonic_ms(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 int64_t sls_gettime(void)//rturn micro-second
 {
 #if HAVE_GETTIMEOFDAY

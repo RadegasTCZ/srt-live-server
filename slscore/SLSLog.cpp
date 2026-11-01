@@ -98,7 +98,7 @@ bool CSLSLog::peer_line_allowed(int level, int *held)
     if (level > m_pInstance->m_level) {
         return false;            // not logged at this level anyway: no budget used
     }
-    int64_t now  = sls_gettime_ms();
+    int64_t now  = sls_monotonic_ms();
     int64_t last = s_peer_last_ms.load();
     if (now - last < 1000 || !s_peer_last_ms.compare_exchange_strong(last, now)) {
         s_peer_held++;
@@ -121,7 +121,7 @@ static SLSWindowBudget s_sess = {{0}, {0}, {0}};
 
 static bool window_line_allowed(SLSWindowBudget &b, int per_sec, int *held)
 {
-    int64_t now = sls_gettime_ms();
+    int64_t now = sls_monotonic_ms();
     int64_t w   = b.window_ms.load();
     if (now - w >= 1000 && b.window_ms.compare_exchange_strong(w, now)) {
         b.count.store(0);
@@ -158,7 +158,7 @@ bool CSLSLog::session_line_allowed(int level, int *held)
 
 void CSLSLog::peer_flush()
 {
-    int64_t now = sls_gettime_ms();
+    int64_t now = sls_monotonic_ms();
     int held = window_take_held(s_sess, now);
     if (held > 0) {
         log(SLS_LOG_INFO, "session lines: %d suppressed in the last second(s) (start/end lines over %d/s; log_level debug shows each).",
