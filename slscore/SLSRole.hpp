@@ -126,6 +126,7 @@ public :
     int         on_connect();
     int         on_close();
     std::string build_event_url(const char *event);
+    // the owning worker polls this every tick while hook_pending()
     int         check_http_passed();
     // The pending fire-and-forget on_close request, ownership passes to the caller
     // (the worker group, which keeps polling it after the role is gone); NULL if none.

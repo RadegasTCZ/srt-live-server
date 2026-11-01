@@ -123,9 +123,9 @@ void CSLSGroup::check_new_role() {
         // Announce the role only now that a worker owns it, so on_connect and
         // on_close always pair: a queued role that expires (or is erased at
         // shutdown) sent neither, and an announced one always gets its on_close
-        // (even when the hook refused it or timed out). The admission gate is
-        // unchanged: until the hook answers 200, check_http_passed holds the
-        // role's reads/writes, and a failure closes it. No-op for roles without
+        // (even when the hook refused it or timed out). Until the hook answers
+        // 200 the role's reads/writes are held; check_invalid_sock polls the
+        // answer every tick, and a failure closes it. No-op for roles without
         // on_event_url (listener, pullers, pushers).
         role->on_connect();
         if (!role->hook_pending()) {
@@ -356,6 +356,14 @@ void CSLSGroup::check_invalid_sock()
                 }
                 stat_info += role_info;
             }
+        }
+
+        // The on_connect answer is polled here, every tick, not from the
+        // role's SRT handler: a publisher that sends nothing until it is
+        // admitted has no event to run that handler (F5). A refusal closes
+        // the role, which get_state() below then reports.
+        if (role->hook_pending()) {
+            role->check_http_passed();
         }
 
         int state = role->get_state(cur_time_ms);

@@ -461,7 +461,8 @@ int CSLSRole::handler_read_data(int64_t *last_read_time)
 	// room for the carried partial packet plus one SRT message
 	uint8_t szData[TS_PACK_LEN + TS_UDP_LEN];
 
-	if (SLS_OK != check_http_passed()) {
+	// held until the hook admits the role (polled on the worker tick)
+	if (!m_http_passed) {
 		return SLS_OK;
 	}
 
@@ -534,7 +535,8 @@ int CSLSRole::handler_write_data()
 	int ret = 0;
 	int write_size = 0;
 
-	if (check_http_passed()) {
+	// held until the hook admits the role (polled on the worker tick)
+	if (!m_http_passed) {
 		return SLS_OK;
 	}
 
@@ -750,8 +752,11 @@ int  CSLSRole::on_close()
 }
 
 // SLS_OK once the on_connect hook has answered 200 (or there is no hook). While it is
-// pending the caller holds the role's reads/writes; a non-200 answer, a connect
-// failure, a malformed answer or no answer within on_event_timeout refuses the role.
+// pending the role's reads/writes are held; a non-200 answer, a connect failure, a
+// malformed answer or no answer within on_event_timeout refuses the role. Called by
+// the owning worker on every tick while hook_pending() (CSLSGroup::check_invalid_sock),
+// so the answer is applied whether or not the role's socket has an SRT event: a
+// publisher that sends nothing until it is admitted is admitted (or refused) at once.
 int CSLSRole::check_http_passed()
 {
 	if (m_http_passed)
