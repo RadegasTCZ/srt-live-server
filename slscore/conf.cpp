@@ -239,9 +239,13 @@ static bool sls_conf_line_is_secret(const string& raw)
     return b != string::npos && raw.compare(b, sizeof(key) - 1, key) == 0;
 }
 
+// Any text from the config shown in a log line goes through here. A value may be
+// a URL with a token in its query or userinfo even where sls does not expect
+// one (a mistyped directive name, a relay upstream with ?streamid=...), so the
+// query and userinfo are cut from every line, not only the known URL directives.
 static string sls_conf_show(bool secret, const string& l)
 {
-    return secret ? string("srt_passphrase ***") : l;
+    return secret ? string("srt_passphrase ***") : sls_url_for_log(l.c_str());
 }
 
 /*
@@ -326,10 +330,6 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
         //remove #
         index = str_line.find('#');
         if (index != -1) {
-            str_line = str_line.substr(0, index);
-        }
-         //trim and replace '\t'
-        str_line = replace_all(str_line, "\t", " ");
             if (secret && index > 0 && str_line[index - 1] != ' ' && str_line[index - 1] != 9) {
                 // would cut the passphrase short without a word
                 sls_log(SLS_LOG_ERROR, "line:%d, srt_passphrase: '#' inside the value (it starts a comment, so the "
@@ -337,6 +337,10 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
                 ret = SLS_ERROR;
                 break;
             }
+            str_line = str_line.substr(0, index);
+        }
+         //trim and replace '\t'
+        str_line = replace_all(str_line, "\t", " ");
         str_line = trim(str_line);
         if (str_line.length() == 0) {
             sls_log(SLS_LOG_TRACE, "line:%d='%s', is comment.", line, sls_conf_show_line(secret, url, str_line).c_str());
@@ -371,17 +375,18 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
 
             sls_conf_cmd_t * it = sls_conf_find(n.c_str(), p_runtime->conf_cmd, p_runtime->conf_cmd_size);
             if (!it) {
-                sls_log(SLS_LOG_ERROR, "line:%d='%s', wrong name='%s'.", line, sls_conf_show_line(secret, url, str_line).c_str() ,n.c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d='%s', wrong name='%s'.", line, sls_conf_show_line(secret, url, str_line).c_str(),
+                        sls_conf_show(secret, n).c_str());
                 ret = SLS_ERROR;
                 break;
             }
             const char * r = it->set(v.c_str(), it, b);
             if (r != SLS_CONF_OK) {
-                sls_log(SLS_LOG_ERROR, "line:%d, set failed, %s, name='%s', value='%s'.", line, r ,n.c_str(), (secret ? string("***") : url ? sls_url_for_log(v.c_str()) : v).c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d, set failed, %s, name='%s', value='%s'.", line, r ,n.c_str(), (secret ? string("***") : sls_url_for_log(v.c_str())).c_str());
                 ret = SLS_ERROR;
                 break;
             }
-            sls_log(SLS_LOG_TRACE, "line:%d, set name='%s', value='%s'.", line, n.c_str(), (secret ? string("***") : url ? sls_url_for_log(v.c_str()) : v).c_str());
+            sls_log(SLS_LOG_TRACE, "line:%d, set name='%s', value='%s'.", line, n.c_str(), (secret ? string("***") : sls_url_for_log(v.c_str())).c_str());
 
         } else  if (line_end_flag == "{") {
             str_line = str_line.substr(0, str_line.length() - 1);
