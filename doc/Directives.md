@@ -80,8 +80,10 @@ Security model:
 
 ## worker_connections, max_connections_per_ip (srt block)
 
-`worker_connections` is the number of roles one worker thread holds. It also
-caps admission: at most `worker_connections x max(1, worker_threads)`
+`worker_connections` is the number of roles one worker thread holds (1-1024,
+default `300` when the directive is omitted; before 1.5.4 an omitted value was
+`0`, and sls then never listened and logged no error; an explicit `0` is refused
+at startup with the allowed range). It also caps admission: at most `worker_connections x max(1, worker_threads)`
 listener-accepted connections (publishers and players, on all `server` blocks
 together) exist at once. `max_connections_per_ip` (default 16, 0 = unlimited,
 0-10000) caps the concurrent accepted connections from one IP address.

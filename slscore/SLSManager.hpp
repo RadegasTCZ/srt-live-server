@@ -65,7 +65,7 @@ SLS_CONF_CMD_DYNAMIC_DECLARE_BEGIN(srt)
 SLS_SET_CONF(srt, string, log_file,                    "save log file name.", 1, URL_MAX_LEN-1),
 SLS_SET_CONF(srt, string, log_level,                   "log level", 1, URL_MAX_LEN-1),
 SLS_SET_CONF(srt, int,    worker_threads,              "count of worker thread, if 0, only main thread.", 0, 100),
-SLS_SET_CONF(srt, int,    worker_connections,          "max roles per worker; worker_connections x max(1, worker_threads) caps accepted connections", 1, 1024),
+SLS_SET_CONF(srt, int,    worker_connections,          "max roles per worker (default 300); worker_connections x max(1, worker_threads) caps accepted connections", 1, 1024),
 SLS_SET_CONF(srt, string, stat_post_url,               "statistic info post url", 1, URL_MAX_LEN-1),
 SLS_SET_CONF(srt, int,    stat_post_interval,          "interval of statistic info post.", 1, 60),
 SLS_SET_CONF(srt, string, user,                        "drop privileges to this user after bind", 1, SHORT_STR_MAX_LEN-1),
@@ -76,9 +76,12 @@ SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_MAX_CONNECTIONS_PER_IP 16
 #define SLS_DEFAULT_STAT_POST_INTERVAL 5   // seconds
+// roles per worker; 0 (an omitted directive, before) let a worker adopt nothing: no listener, no error
+#define SLS_DEFAULT_WORKER_CONNECTIONS 300
 inline void sls_conf_srt_defaults(sls_conf_srt_t *c)
 {
     c->stat_post_interval = SLS_DEFAULT_STAT_POST_INTERVAL;
+    c->worker_connections = SLS_DEFAULT_WORKER_CONNECTIONS;
     c->max_connections_per_ip = SLS_DEFAULT_MAX_CONNECTIONS_PER_IP;
 }
 
