@@ -142,7 +142,7 @@ int CSLSSrt::libsrt_neterrno()
 
     switch (err) {
         case SRT_ECONNLOST:
-            sls_peer_log(SLS_LOG_INFO,
+            sls_log(SLS_LOG_DEBUG,
                     "CSLSSrt: peer disconnected (err=%d, %s).", err, msg);
             break;
         case SRT_ETIMEOUT:
