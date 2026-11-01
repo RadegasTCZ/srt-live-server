@@ -29,6 +29,9 @@
 #include <vector>
 #include <string>
 #include <atomic>
+#include <map>
+#include <mutex>
+#include <netinet/in.h>
 
 #include "SLSRelay.hpp"
 #include "SLSMapPublisher.hpp"
@@ -43,6 +46,25 @@ struct SLS_RELAY_INFO {
     int      m_idle_streams_timeout;//unit: s
     int      m_max_pull_streams;   // pull: concurrent managers per relay block
     std::atomic<int> m_live_relays; // relay roles alive for this block (all its managers)
+
+    SLS_RELAY_INFO() : m_mode(0), m_reconnect_interval(0), m_idle_streams_timeout(0),
+                       m_max_pull_streams(0), m_live_relays(0), m_stale(false) { m_type[0] = 0; }
+
+    // Upstream addresses are resolved here, once, when the relay is configured,
+    // and cached per "host:port"; relay opens only read the cache (no DNS on
+    // the connect path). A relay that ended marks the cache stale and the next
+    // connect attempt resolves again, so a moved upstream is picked up after a
+    // failure and never per packet.
+    int  resolve_upstreams();     // SLS_ERROR: an upstream is malformed or cannot be resolved
+    int  lookup(const char *host, int port, struct sockaddr_in *out);
+    void mark_stale() { m_stale = true; }
+    void refresh_if_stale();
+
+private:
+    std::mutex                                 m_addr_mutex;
+    std::map<std::string, struct sockaddr_in>  m_addrs;
+    std::atomic<bool>                          m_stale;
+    int  resolve_all(std::map<std::string, struct sockaddr_in> *out);
 };
 
 class CSLSMapRelay;

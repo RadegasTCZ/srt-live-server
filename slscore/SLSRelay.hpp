@@ -69,6 +69,13 @@ inline void sls_conf_relay_defaults(sls_conf_relay_t *c)
 // (e.g. no upstreams: hash mode would divide by zero).
 int sls_relay_conf_check(sls_conf_relay_t *cr, std::string *err);
 
+// Splits "host:port" (optionally followed by "/..." or "?...") of an upstream
+// or of the part of an srt url after "srt://". SLS_ERROR unless there is a
+// non-empty host and a port in 1..65535.
+int sls_relay_split_hostport(const char *s, char *host, size_t host_size, int *port);
+
+struct SLS_RELAY_INFO;
+
 
 enum SLS_PULL_MODE {
 	SLS_PM_LOOP  = 0,
@@ -97,7 +104,9 @@ public :
     void *get_relay_manager();
     char *get_url();
 
-    int           open(const char *url);
+    // sri supplies the upstream address, resolved when the relay was configured.
+    // Without one (the srt-live-client tool) the host is resolved here.
+    int           open(const char *url, SLS_RELAY_INFO *sri = NULL);
     virtual int   close();
     virtual int   get_peer_info(char *peer_name, int &peer_port);
 protected:

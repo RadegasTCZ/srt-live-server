@@ -33,6 +33,69 @@
 
 
 /**
+ * SLS_RELAY_INFO: cached upstream addresses
+ */
+static std::string upstream_key(const char *host, int port)
+{
+	char buf[16];
+	snprintf(buf, sizeof(buf), ":%d", port);
+	return std::string(host) + buf;
+}
+
+// Resolves every upstream of this relay block. Nothing is stored here, so a
+// failed refresh leaves the cache as it was.
+int SLS_RELAY_INFO::resolve_all(std::map<std::string, struct sockaddr_in> *out)
+{
+	for (size_t i = 0; i < m_upstreams.size(); i ++) {
+		char host[256];
+		int  port = 0;
+		if (SLS_OK != sls_relay_split_hostport(m_upstreams[i].c_str(), host, sizeof(host), &port)) {
+			sls_log(SLS_LOG_ERROR, "SLS_RELAY_INFO::resolve_all, upstream='%s' must start with 'hostname:port'.",
+					m_upstreams[i].c_str());
+			return SLS_ERROR;
+		}
+		struct sockaddr_storage ss;
+		socklen_t len = 0;
+		if (SLS_OK != sls_resolve(host, port, &ss, &len, AF_INET)) {
+			return SLS_ERROR;
+		}
+		(*out)[upstream_key(host, port)] = *(struct sockaddr_in *)&ss;
+	}
+	return SLS_OK;
+}
+
+int SLS_RELAY_INFO::resolve_upstreams()
+{
+	std::map<std::string, struct sockaddr_in> addrs;
+	if (SLS_OK != resolve_all(&addrs)) {
+		return SLS_ERROR;
+	}
+	std::lock_guard<std::mutex> lock(m_addr_mutex);
+	m_addrs.swap(addrs);
+	return SLS_OK;
+}
+
+int SLS_RELAY_INFO::lookup(const char *host, int port, struct sockaddr_in *out)
+{
+	std::lock_guard<std::mutex> lock(m_addr_mutex);
+	std::map<std::string, struct sockaddr_in>::iterator it = m_addrs.find(upstream_key(host, port));
+	if (it == m_addrs.end()) {
+		return SLS_ERROR;
+	}
+	*out = it->second;
+	return SLS_OK;
+}
+
+void SLS_RELAY_INFO::refresh_if_stale()
+{
+	if (!m_stale.exchange(false)) {
+		return;
+	}
+	// no lock across the DNS calls; a failed refresh keeps the old addresses
+	resolve_upstreams();
+}
+
+/**
  * CSLSRelayManager class implementation
  */
 CSLSRelayManager::CSLSRelayManager()
@@ -95,6 +158,7 @@ bool CSLSRelayManager::relay_ended(CSLSRelay *relay, bool may_reconnect)
 		return false;
 	}
 	if (may_reconnect) {
+		if (m_sri) m_sri->mark_stale();    // resolve the upstreams again before the retry
 		return do_on_relay_closed(relay);
 	}
 	// nobody will hold a reconnect entry: do not leave a manager that
@@ -199,9 +263,14 @@ int CSLSRelayManager::connect(const char *url)
         return ret;
 	}
 
+	if (NULL == m_sri) {
+		return ret;
+	}
+	m_sri->refresh_if_stale();
+
 	CSLSRelay * cur_relay = create_relay();//new relay;
     cur_relay->init();
-    ret = cur_relay->open(url);
+    ret = cur_relay->open(url, m_sri);
     if (SLS_OK == ret) {
     	cur_relay->set_idle_streams_timeout(m_sri->m_idle_streams_timeout);
 
@@ -223,6 +292,7 @@ int CSLSRelayManager::connect(const char *url)
     	cur_relay->uninit();
     	delete cur_relay ;
     	cur_relay = NULL;
+    	m_sri->mark_stale();
     }
 	return ret;
 }

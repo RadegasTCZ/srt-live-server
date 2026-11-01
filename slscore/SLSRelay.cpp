@@ -24,7 +24,9 @@
 
 
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
 
 
 #include "SLSRelay.hpp"
@@ -42,6 +44,23 @@ int sls_relay_conf_check(sls_conf_relay_t *cr, std::string *err)
         if (err) *err = std::string("relay type='") + cr->type + "' has no upstreams";
         return SLS_ERROR;
     }
+    return SLS_OK;
+}
+
+int sls_relay_split_hostport(const char *s, char *host, size_t host_size, int *port)
+{
+    const char *colon = strchr(s, ':');
+    if (!colon || colon == s || (size_t)(colon - s) >= host_size) {
+        return SLS_ERROR;
+    }
+    char *end = NULL;
+    long v = strtol(colon + 1, &end, 10);
+    if (end == colon + 1 || v < 1 || v > 65535 || (*end != '\0' && *end != '/' && *end != '?')) {
+        return SLS_ERROR;
+    }
+    memcpy(host, s, colon - s);
+    host[colon - s] = '\0';
+    *port = (int)v;
     return SLS_OK;
 }
 
@@ -117,7 +136,7 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
 {
     //
     if (strlen(url) == 0) {
-    	sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
     			this, url);
         return SLS_ERROR;
     }
@@ -127,13 +146,13 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
     //protocal
     p = strchr(url, ':');
     if (!p) {
-    	sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url, no ':', url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, no ':', url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
     			this, m_url);
         return SLS_ERROR;
     }
     p[0] = 0x00;
     if (strcmp(url, "srt") != 0) {
-    	sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url, not 'srt' prefix, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, not 'srt' prefix, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
     			this, m_url);
         return SLS_ERROR;
     }
@@ -145,9 +164,18 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
         p_tmp[0] = 0x00;
         snprintf(host_name, host_name_size, "%s", p);
         p = p_tmp + 1;
+        // the port ends at '/' (app/stream form) or '?' (streamid form)
+        char * p_end = NULL;
+        long   v = strtol(p, &p_end, 10);
+        if (p_end == p || v < 1 || v > 65535 || (*p_end != '/' && *p_end != '?')) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, bad port, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
+                    this, m_url);
+            return SLS_ERROR;
+        }
+        port = (int)v;
     }
     else {
-    	sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url, not 'hostname:port', url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, not 'hostname:port', url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
     			this, m_url);
         return SLS_ERROR;
     }
@@ -160,27 +188,27 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
     			this, m_url);
         p_tmp = strchr(p, '/');//app
         if (!p_tmp) {//app
-        	sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
+        	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
         			this, m_url);
         	return SLS_ERROR;
         }
 		p_tmp ++;
 		p_tmp = strchr(p_tmp, '/');//stream
 		if (!p_tmp) {
-			sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
+			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
 					this, m_url);
 			return SLS_ERROR;
 		}
         p_tmp ++;
 		if (strlen(p_tmp)==0) {
-			sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
+			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
 					this, m_url);
 			return SLS_ERROR;
 		}
 		p_tmp ++;
 		p_tmp = strchr(p_tmp, '/');//redundant
 		if (p_tmp) {
-			sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
+			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url, url='%s', url must like 'srt://hostname:port?streamid=your_stream_id' or 'srt://hostname:port/app/stream_name'.",
 					this, m_url);
 			return SLS_ERROR;
 		}
@@ -190,17 +218,16 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
 
     if (b_streamid) {
         p_tmp[0] = 0;
-        port = atoi(p);
         p = p_tmp + 1;
 		//streamid
 		p_tmp = strchr(p, '=');
-		if (!p) {
-			sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url='%s', no 'stream=', url must like 'hostname:port?streamid=your_stream_id'.", this, url);
+		if (!p_tmp) {
+			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url='%s', no 'stream=', url must like 'hostname:port?streamid=your_stream_id'.", this, url);
 			return SLS_ERROR;
 		}
 		p_tmp[0] = 0;
 		if (strcmp(p, "streamid") != 0) {
-			sls_log(SLS_LOG_INFO, "[%p]CSLSRelay::parse_url='%s', no 'stream', url must like 'hostname:port?streamid=your_stream_id'.", this, url);
+			sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::parse_url='%s', no 'stream', url must like 'hostname:port?streamid=your_stream_id'.", this, url);
 			return SLS_ERROR;
 		}
 		p = p_tmp + 1;
@@ -214,16 +241,14 @@ int CSLSRelay::parse_url(char* url, char *host_name, size_t host_name_size, int&
 
 }
 
-int CSLSRelay::open(const char * srt_url) {
+int CSLSRelay::open(const char * srt_url, SLS_RELAY_INFO *sri) {
 
-    int yes = 1;
     int no = 0;
-    char host_name[128] = "192.168.31.56";//test
+    char host_name[128] = "";
     char server_ip[128] = "";
-    int server_port = 8080;
-    char streamid[1024] = "uplive.sls.net/live/1234";//test
+    int server_port = 0;
+    char streamid[1024] = "";
     char url[1024] = {0};
-    int latency = 10;
 
     snprintf(m_url, sizeof(m_url), "%s", srt_url);
     snprintf(url, sizeof(url), "%s", srt_url);
@@ -247,63 +272,54 @@ int CSLSRelay::open(const char * srt_url) {
         return SLS_ERROR;
     }
 
+    // the address was resolved when the relay was configured; no DNS here
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof sa);
+    if (sri) {
+        if (SLS_OK != sri->lookup(host_name, server_port, &sa)) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, host='%s' port=%d is not a resolved upstream of this relay.", this, host_name, server_port);
+            return SLS_ERROR;
+        }
+    } else {
+        struct sockaddr_storage resolved;
+        socklen_t resolved_len = 0;
+        if (SLS_OK != sls_resolve(host_name, server_port, &resolved, &resolved_len, AF_INET)) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, cannot resolve host='%s'.", this, host_name);
+            return SLS_ERROR;
+        }
+        sa = *(struct sockaddr_in *)&resolved;
+    }
+    inet_ntop(AF_INET, &sa.sin_addr, server_ip, sizeof(server_ip));
+
     SRTSOCKET fd = srt_create_socket();
+    if (SRT_INVALID_SOCK == fd) {
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, srt_create_socket failure. err=%s.", this, srt_getlasterror_str());
+        return SLS_ERROR;
+    }
 
-    int status = srt_setsockopt(fd, 0, SRTO_SNDSYN, &no, sizeof no); // for async write
-    if (status == SRT_ERROR) {
+    // every failure below closes the socket
+    if (srt_setsockopt(fd, 0, SRTO_SNDSYN, &no, sizeof no) == SRT_ERROR) { // for async write
     	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, srt_setsockopt SRTO_SNDSYN failure. err=%s.", this, srt_getlasterror_str());
+        srt_close(fd);
         return SLS_ERROR;
     }
 
-    status = srt_setsockopt(fd, 0, SRTO_RCVSYN, &no, sizeof no); // for async read
-    if (status == SRT_ERROR) {
-    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, srt_setsockopt SRTO_SNDSYN failure. err=%s.", this, srt_getlasterror_str());
+    if (srt_setsockopt(fd, 0, SRTO_RCVSYN, &no, sizeof no) == SRT_ERROR) { // for async read
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, srt_setsockopt SRTO_RCVSYN failure. err=%s.", this, srt_getlasterror_str());
+        srt_close(fd);
         return SLS_ERROR;
     }
-
-//    srt_setsockflag(fd, SRTO_SENDER, &m_is_write, sizeof m_is_write);
-/*
-    status = srt_setsockopt(fd, 0, SRTO_TSBPDMODE, &yes, sizeof yes); //
-    if (status == SRT_ERROR) {
-    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, srt_setsockopt SRTO_TSBPDMODE failure. err=%s.", this, srt_getlasterror_str());
-        return SLS_ERROR;
-    }
-    /*
-    SRT_TRANSTYPE tt = SRTT_LIVE;
-    status = srt_setsockopt(fd, 0, SRTO_TRANSTYPE, &tt, sizeof tt);
-    if (status == SRT_ERROR) {
-    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, srt_setsockopt SRTO_TRANSTYPE failure. err=%s.", this, srt_getlasterror_str());
-        return SLS_ERROR;
-    }
-*/
 
     if (srt_setsockopt(fd, 0, SRTO_STREAMID, streamid, strlen(streamid)) < 0) {
     	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, srt_setsockopt SRTO_STREAMID failure. err=%s.", this, srt_getlasterror_str());
+        srt_close(fd);
         return SLS_ERROR;
     }
 
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof sa);
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(server_port);
-
-    struct sockaddr_storage resolved;
-    socklen_t resolved_len = 0;
-    if (SLS_OK != sls_resolve(host_name, server_port, &resolved, &resolved_len, AF_INET)) {
-    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, cannot resolve host='%s'.", this, host_name);
-        return SLS_ERROR;
-    }
-    sa.sin_addr = ((struct sockaddr_in *)&resolved)->sin_addr;
-    inet_ntop(AF_INET, &sa.sin_addr, server_ip, sizeof(server_ip));
-    if (inet_pton(AF_INET, server_ip, &sa.sin_addr) != 1) {
-    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, inet_pton failure. server_ip=%s, server_port=%d.", this, server_ip, server_port);
-        return SLS_ERROR;
-    }
-
-    struct sockaddr *psa = (struct sockaddr *) &sa;
-    status = srt_connect(fd, psa, sizeof sa);
+    int status = srt_connect(fd, (struct sockaddr *) &sa, sizeof sa);
     if (status == SRT_ERROR) {
-    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, srt_connect failure. server_ip=%s, server_port=%d.", this, server_ip, server_port);
+    	sls_log(SLS_LOG_ERROR, "[%p]CSLSRelay::open, srt_connect failure. server_ip=%s, server_port=%d. err=%s.", this, server_ip, server_port, srt_getlasterror_str());
+        srt_close(fd);
         return SLS_ERROR;
     }
     m_srt = new CSLSSrt();

@@ -201,6 +201,12 @@ int CSLSMapRelay::add_relay_conf(std::string app_uplive, sls_conf_relay_t * cr)
         delete sri;
         return SLS_ERROR;
     }
+    if (SLS_OK != sri->resolve_upstreams()) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSMapRelay::add_app_conf, cannot resolve the upstreams '%s', relay refused, app_uplive=%s.",
+                this, cr->upstreams, app_uplive.c_str());
+        delete sri;
+        return SLS_ERROR;
+    }
     m_map_relay_info[app_uplive] = sri;
     return SLS_OK;
 
