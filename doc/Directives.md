@@ -121,7 +121,10 @@ hook it stays shared. So someone who merely names a publisher stream fills
 shared slots at most, never the reserve (over them: `refused ... shared
 connection limit ... reached by a publisher without a verified passphrase or hook
 admission`). On a server without any passphrase or hook the reserve therefore
-protects no publisher. `0` reserves nothing; a value that leaves no slot for
+protects no publisher. With a shared `srt_passphrase` (no `user_file`) every
+player holds the same key, so anyone who can play counts as a verified
+publisher and may use the reserve too (holding that key already means being
+able to publish); use `user_file` to keep viewers out of it. `0` reserves nothing; a value that leaves no slot for
 players (the cap or more) stops sls at startup. The startup line
 `connection limits: ... reserved for publishers=N (players may hold M)` shows
 the values in use.
