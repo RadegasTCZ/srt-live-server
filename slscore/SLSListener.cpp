@@ -929,7 +929,7 @@ int CSLSListener::accept_one()
     const char *user_file = ((sls_conf_server_t*)m_conf)->user_file;
     bool        has_users = (user_file && *user_file);
     sls_inflight_t auth;
-    bool        has_auth  = has_users && m_inflight.take(fd_client, &auth);
+    bool        has_auth  = has_users && m_inflight.take(fd_client, &auth, sls_monotonic_ms());
 
     //2.check streamid, split it
 	srt = new CSLSSrt;

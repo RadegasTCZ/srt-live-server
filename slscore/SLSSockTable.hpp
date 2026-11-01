@@ -78,18 +78,31 @@ public:
         m_order[r.seq] = ns;
         return evicted;
     }
-    // The record of ns, removed; false if there is none (never noted, or dropped).
-    bool take(int ns, V *v)
+    // The record of ns, removed; false if there is none (never noted,
+    // dropped, or older than ttl_ms at now_ms: an expired record is never
+    // handed out, whether or not a put() has expired it yet).
+    bool take(int ns, V *v, int64_t now_ms)
     {
         CSLSLock lock(&m_mutex);
         typename std::map<int, rec>::iterator it = m_recs.find(ns);
         if (it == m_recs.end()) {
             return false;
         }
-        if (v) *v = it->second.v;
+        bool fresh = now_ms - it->second.t_ms < m_ttl_ms;
+        if (fresh && v) *v = it->second.v;
         m_order.erase(it->second.seq);
         m_recs.erase(it);
-        return true;
+        return fresh;
+    }
+    // Forget ns's record, if any (its outcome is known and needs no value).
+    void drop(int ns)
+    {
+        CSLSLock lock(&m_mutex);
+        typename std::map<int, rec>::iterator it = m_recs.find(ns);
+        if (it != m_recs.end()) {
+            m_order.erase(it->second.seq);
+            m_recs.erase(it);
+        }
     }
     size_t size() const
     {

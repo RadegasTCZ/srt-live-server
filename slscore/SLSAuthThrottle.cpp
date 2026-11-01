@@ -60,13 +60,13 @@ void CSLSAuthThrottle::note_handshake(int ns, const char *ip, int64_t now_ms)
 
 void CSLSAuthThrottle::handshake_done(int ns)
 {
-    m_pending.take(ns, NULL);
+    m_pending.drop(ns);
 }
 
 bool CSLSAuthThrottle::bad_secret(int ns, int64_t now_ms, std::string *ip)
 {
     pend p;
-    if (!m_pending.take(ns, &p)) {
+    if (!m_pending.take(ns, &p, now_ms)) {
         return false;   // not a handshake the callback noted (or its note was dropped)
     }
     CSLSLock lock(&m_mutex);
