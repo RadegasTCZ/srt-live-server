@@ -69,8 +69,14 @@ CSLSSrt::~CSLSSrt()
 // warning level and above come here instead and go to the sls log, prefixed
 // "libsrt:", through the peer-line budget: they are mostly caused by peers
 // (a rejected handshake), and with sls's own refusal line they make one
-// line a second, the rest at DEBUG and counted. Called on libsrt's threads:
-// no libsrt call and no lock but the log's own.
+// line a second, the rest at DEBUG and counted. Called on libsrt's threads,
+// which may hold libsrt's own locks (m_LSLock, m_GlobControlLock): no libsrt
+// call, and leaf locks only, never held across a libsrt call by anyone: the
+// log's own and, through the bad-secret observer (S8, M9), the listener set's
+// (CSLSListener::forget_handshake), the in-flight table's (CSLSSockTable) and
+// the wrong-passphrase throttle's (CSLSAuthThrottle, its pending table's
+// too). A new lock taken here must keep to that rule, or a thread that holds
+// it while it calls into libsrt can deadlock against libsrt's receive thread.
 static std::atomic<sls_bad_secret_observer_t> sls_bad_secret_observer(NULL);
 
 void CSLSSrt::set_bad_secret_observer(sls_bad_secret_observer_t fn)
