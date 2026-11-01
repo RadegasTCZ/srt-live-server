@@ -28,6 +28,7 @@
 
 #include <map>
 #include <atomic>
+#include <memory>
 #include <string>
 
 #include <sys/socket.h>
@@ -42,6 +43,7 @@
 #include "SLSMapRelay.hpp"
 #include "SLSLock.hpp"
 #include "SLSStreamId.hpp"
+#include "SLSUserDb.hpp"
 
 /**
  * server conf
@@ -96,16 +98,20 @@ inline void sls_conf_server_defaults(sls_conf_server_t *c)
 }
 
 /**
- * One user loaded from user_file (extensible record, not a fixed tuple).
- * Empty publish_pass  => publishers may push that stream in plaintext.
- * Empty play_pass     => players may pull that stream in plaintext.
+ * What the listen callback looked up for a connection it let through, kept
+ * until the accept that dequeues the same socket (S4): the credentials the
+ * session is admitted with are the ones its handshake was checked against,
+ * even if a reload lands between the two.
  */
-struct sls_user_t {
-    std::string name;
-    std::string publish_pass;  // "" = plaintext allowed
-    std::string play_pass;
-    // reserved for web UI project: ip allow/deny, endpoints
+struct sls_inflight_t {
+    std::string user;
+    bool        publish;
+    uint64_t    gen;       // CSLSUserDb generation of that direction's passphrase
+    uint64_t    epoch;     // CSLSUserDb epoch of the lookup
+    int64_t     t_ms;      // when the callback ran
 };
+#define SLS_INFLIGHT_MAX     4096    // handshakes between callback and accept; over it: refused
+#define SLS_INFLIGHT_TTL_MS  30000   // a record no accept took (failed handshake) is dropped
 
 
 /**
@@ -169,8 +175,15 @@ private:
     int  resolve_hook();
     void attach_hook(CSLSRole *role);
 
-    CSLSRWLock                             m_users_lock;
-    std::map<std::string, sls_user_t>      m_users;
+    // user_file's users; shared with every role admitted through them (S4)
+    std::shared_ptr<CSLSUserDb>            m_userdb;
+    // listen callback -> accept, keyed by the new socket (see sls_inflight_t)
+    CSLSMutex                              m_inflight_mutex;
+    std::map<SRTSOCKET, sls_inflight_t>    m_inflight;
+    int64_t                                m_inflight_pruned_ms;
+    // false if the table is full (the callback then refuses the connection)
+    bool inflight_put(SRTSOCKET ns, const sls_inflight_t &rec, int64_t now_ms);
+    bool inflight_take(SRTSOCKET ns, sls_inflight_t *rec);
 
     int  init_conf_app();
     // One accept and its admission: 1 = a socket came off the queue (admitted
@@ -186,8 +199,8 @@ private:
     // PUBLISHER/PLAYER *app_key_out is the publisher-side "host/app" key.
     sls_sid_role_t classify_sid(const sls_sid_t &sid, std::string *app_key_out);
     // Parse the whole file into a staging map; SLS_OK only if every line is
-    // valid and there is at least one user, then swap it into m_users. On any
-    // error m_users is left untouched and *err (if given) names file:line.
+    // valid and there is at least one user, then swap it into m_userdb. On any
+    // error the users are left untouched and *err (if given) names file:line.
     int  load_users(const char *path, std::string *err);
 
     static int listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
@@ -195,10 +208,11 @@ private:
 
 public:
     // Re-read the user_file configured for this listener and swap it into
-    // m_users under a write lock. Safe to call from the main thread while
+    // m_userdb under its write lock. Safe to call from the main thread while
     // listen_callback is firing on SRT's internal thread. Returns SLS_ERROR
     // (and logs ERROR "reload failed") if the file is rejected; the previous
-    // users stay in force.
+    // users stay in force. On success every admitted role re-checks its
+    // credentials on its worker's next pass (CSLSRole::auth_revoked).
     int reload_users();
 };
 

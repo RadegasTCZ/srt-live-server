@@ -27,6 +27,8 @@
 #define _SLSRole_INCLUDE_
 
 #include <map>
+#include <memory>
+#include <string>
 
 
 #include "SLSRole.hpp"
@@ -37,6 +39,7 @@
 #include "common.hpp"
 #include "HttpClient.hpp"
 #include "SLSConnLimiter.hpp"
+#include "SLSUserDb.hpp"
 
 
 enum SLS_ROLE_STATE {
@@ -140,6 +143,17 @@ public :
     void        set_admission_timeout(int ms) { m_admission_timeout = ms; }
     int         get_admission_timeout() const { return m_admission_timeout; }
 
+    // The user_file credentials this role was admitted with (S4): user,
+    // direction and the passphrase generation its handshake was checked
+    // against. Without one (no user_file, relays) a role is never revoked.
+    void        set_auth_identity(const std::shared_ptr<CSLSUserDb> &db, const std::string &user,
+                                  bool publish, uint64_t gen, uint64_t epoch);
+    // Called only by the worker that owns the role (or is adopting it from
+    // the queue): after a users reload, true if the user is gone or that
+    // direction's passphrase changed. Logs the one INFO line and sets the
+    // end reason; the caller closes the role. Cheap when nothing reloaded.
+    bool        auth_revoked();
+
 protected:
     CSLSSrt     *m_srt;
     bool         m_is_write;//listener: 0, publisher: 0, player: 1
@@ -198,6 +212,11 @@ private:
     int              m_conn_kind;             // the slot's SLS_SLOT_KIND and, for a player,
     std::string      m_conn_stream;           // its stream key (CSLSConnLimiter::release)
     int              m_admission_timeout;     // ms
+    std::shared_ptr<CSLSUserDb> m_auth_db;    // NULL = not admitted through user_file
+    std::string      m_auth_user;
+    bool             m_auth_publish;
+    uint64_t         m_auth_gen;
+    uint64_t         m_auth_epoch;            // the db epoch last checked
 
     void release_conn_slot();
 

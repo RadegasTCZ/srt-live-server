@@ -77,7 +77,9 @@ check your config and tooling before you restart.
 
 - **Authentication fails closed.** With `user_file` set, a file that cannot be
   opened, has no users or has a malformed line stops sls from starting; on reload
-  it is rejected and the previous users stay. Publisher or player is decided by
+  it is rejected and the previous users stay. A reload that is accepted closes
+  the running sessions of every user it removed, and those whose passphrase for
+  their direction it changed (one `session revoked` INFO line each). Publisher or player is decided by
   the streamid's domain and app (in per-user mode a cross-role passphrase no
   longer works), and `srt_pbkeylen` and enforced encryption apply per user. With
   only a listener-wide `srt_passphrase` everyone holds the same key, publishers

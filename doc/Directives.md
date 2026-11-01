@@ -39,6 +39,21 @@ cannot contain `#` (the same holds for `srt_passphrase` in `sls.conf`). On reloa
 rejected and the previous users stay active; the result is logged
 (`reload ok (N user(s))` at INFO, `reload failed` at ERROR).
 
+A successful reload also applies to the sessions already running. Each one
+remembers the user and the direction (publish or play) it was admitted with,
+and the passphrase its handshake was checked against. Within about a second
+(the owning worker's next pass) sls closes every session whose user is no
+longer in the file, or whose passphrase for that direction changed, and logs
+one INFO line for each:
+`session revoked, <role>, remote=..., stream=..., user='<name>' (<direction>), reason=user removed|passphrase changed`.
+Its session end line says `reason=revoked (...)`. No passphrase is logged.
+A change to one direction leaves the other alone: a new `play_pass` closes the
+user's players, not its publisher. A user whose entry did not change keeps
+running, so a reload that only adds a user closes nothing. Connections that
+are accepted but still waiting for a worker are checked when a worker takes
+them; they are closed before any `on_connect` is sent. Without `user_file` a
+reload closes nothing (there are no per-user credentials to compare).
+
 ## pid_file
 
 Path of the pid file (default `/run/sls/sls.pid`), written at startup.
@@ -342,7 +357,9 @@ the same `-c` as the server. It signals the process that holds the lock on that
 file only if that process runs this binary: the same executable, or, because a
 non-dumpable server's `/proc/<pid>/exe` cannot be read, one whose program name
 (`/proc/<pid>/comm`) is this binary's file name. A reload does exactly this: it re-reads every
-`user_file` (a rejected file keeps the previous users) and re-resolves the
+`user_file` (a rejected file keeps the previous users; an accepted one closes
+the sessions whose user it removed or whose passphrase it changed, see
+`user_file`) and re-resolves the
 `on_event_url` host of every server block and the `stat_post_url` host (a
 host that does not resolve keeps its previous address); each outcome is logged
 at INFO or ERROR. Relay upstream hosts are not re-resolved by a reload: they

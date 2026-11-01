@@ -88,6 +88,9 @@ CSLSRole::CSLSRole()
     memset(m_conn_ip, 0, sizeof(m_conn_ip));
     m_conn_kind       = SLS_SLOT_PLAYER;
     m_admission_timeout = 0;
+    m_auth_publish      = false;
+    m_auth_gen          = 0;
+    m_auth_epoch        = 0;
 
 	sprintf(m_role_name, "role");
 }
@@ -166,6 +169,38 @@ void CSLSRole::promote_conn_slot()
 	}
 }
 
+void CSLSRole::set_auth_identity(const std::shared_ptr<CSLSUserDb> &db, const std::string &user,
+                                 bool publish, uint64_t gen, uint64_t epoch)
+{
+	m_auth_db      = db;
+	m_auth_user    = user;
+	m_auth_publish = publish;
+	m_auth_gen     = gen;
+	m_auth_epoch   = epoch;
+}
+
+bool CSLSRole::auth_revoked()
+{
+	if (!m_auth_db || m_auth_db->epoch() == m_auth_epoch) {
+		return false;   // not a user_file session, or no reload since the last check
+	}
+	uint64_t epoch = 0;
+	int st = m_auth_db->check(m_auth_user, m_auth_publish, m_auth_gen, &epoch);
+	if (SLS_AUTH_VALID == st) {
+		m_auth_epoch = epoch;
+		return false;
+	}
+	// One line per revoked session, at INFO and outside the peer and session
+	// budgets: the operator's reload caused it, and there is at most one per
+	// connection. Never the passphrase, only which check failed.
+	sls_log(SLS_LOG_INFO, "[%p]session revoked, %s, remote=%s:%d, stream=%s, user='%s' (%s), reason=%s.",
+			this, m_role_name, m_stat_remote_ip.c_str(), m_stat_remote_port, m_stat_stream.c_str(),
+			m_auth_user.c_str(), m_auth_publish ? "publish" : "play", CSLSUserDb::state_str(st));
+	set_end_reason(SLS_AUTH_USER_REMOVED == st ? "revoked (user removed)" : "revoked (passphrase changed)");
+	m_auth_db.reset();   // logged once
+	return true;
+}
+
 int CSLSRole::invalid_srt()
 {
     if (m_srt) {
@@ -214,6 +249,13 @@ int CSLSRole::get_state(int64_t cur_time_ms)
 {
 	if (SLS_RS_INVALID == m_state)
 		return m_state;
+
+	// after a users reload (S4): this worker owns the role, so it closes it here
+	if (auth_revoked()) {
+		m_state = SLS_RS_INVALID;
+		invalid_srt();
+		return m_state;
+	}
 
 	if (check_idle_streams_duration(cur_time_ms)) {
 		sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::get_state, check_idle_streams_duration is true, cur m_state=%d, m_idle_streams_timeout=%ds, call invalid_srt.",

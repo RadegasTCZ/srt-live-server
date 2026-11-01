@@ -73,6 +73,8 @@ CSLSListener::CSLSListener()
     m_on_event_timeout = SLS_DEFAULT_ON_EVENT_TIMEOUT;
     memset(&m_hook_addr, 0, sizeof(m_hook_addr));
     m_hook_addr_len = 0;
+    m_userdb.reset(new CSLSUserDb);
+    m_inflight_pruned_ms = 0;
 
     sprintf(m_role_name, "listener");
 }
@@ -157,9 +159,8 @@ int CSLSListener::publisher_slot_kind(const std::string &user)
     const sls_conf_server_t *c = (const sls_conf_server_t *)m_conf;
     bool verified = false;
     if (c->user_file[0] != 0) {
-        CSLSLock lock(&m_users_lock, 0); // read lock
-        std::map<std::string, sls_user_t>::const_iterator it = m_users.find(user);
-        verified = (it != m_users.end() && !it->second.publish_pass.empty());
+        std::string pass;
+        verified = m_userdb->lookup(user, true, &pass, NULL, NULL) && !pass.empty();
     } else {
         verified = (c->srt_passphrase[0] != 0);
     }
@@ -368,7 +369,7 @@ sls_sid_role_t CSLSListener::classify_sid(const sls_sid_t &sid, std::string *app
 
 int CSLSListener::load_users(const char *path, std::string *err)
 {
-    // Every failure below leaves m_users untouched: a bad file must never
+    // Every failure below leaves the loaded users untouched: a bad file must never
     // weaken (or silently disable) authentication.
     // None of the messages below may echo a value from the file: with the
     // columns swapped or a stray character, a passphrase can land in the name
@@ -406,8 +407,8 @@ int CSLSListener::load_users(const char *path, std::string *err)
     ::close(rfd);
     std::istringstream f(content);
 
-    // Parse into a staging map, then swap under the write lock so
-    // listen_callback never observes a half-loaded m_users.
+    // Parse into a staging map, then swap it in under the db's write lock so
+    // listen_callback never observes a half-loaded set.
     std::map<std::string, sls_user_t> staging;
     std::string line;
     int lineno = 0;
@@ -480,10 +481,9 @@ int CSLSListener::load_users(const char *path, std::string *err)
     }
 
     size_t loaded = staging.size();
-    {
-        CSLSLock lock(&m_users_lock, 1); // write lock
-        m_users.swap(staging);
-    }
+    // keeps the generation of every passphrase that did not change, so a
+    // reload revokes only the sessions it affects (CSLSRole::auth_revoked)
+    m_userdb->replace(staging);
 
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::load_users, loaded %zu user(s) from '%s'.",
             this, loaded, path);
@@ -554,11 +554,7 @@ int CSLSListener::reload_users()
                 this, err.c_str());
         return SLS_ERROR;
     }
-    size_t n;
-    {
-        CSLSLock lock(&m_users_lock, 0); // read lock
-        n = m_users.size();
-    }
+    size_t n = m_userdb->size();
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::reload_users, reload ok (%zu user(s)).", this, n);
     return SLS_OK;
 }
@@ -655,22 +651,18 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         return 0;
     }
 
-    // Look up credentials under a read lock and copy what we need out of
-    // the map so we can drop the lock before calling into libsrt (which may
-    // reorder across threads).
+    // The passphrase, its generation and the db epoch, copied out under the
+    // db's read lock (dropped before anything calls into libsrt).
     std::string pass_value;
-    bool        pass_empty  = false;
-    {
-        CSLSLock lock(&self->m_users_lock, 0); // read lock
-        std::map<std::string, sls_user_t>::iterator it = self->m_users.find(stream);
-        if (it == self->m_users.end()) {
-            sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
-                    self, stream.c_str());
-            return -1;
-        }
-        pass_value = (SLS_SID_PUBLISHER == role) ? it->second.publish_pass : it->second.play_pass;
-        pass_empty = pass_value.empty();
+    sls_inflight_t rec;
+    rec.user    = stream;
+    rec.publish = (SLS_SID_PUBLISHER == role);
+    if (!self->m_userdb->lookup(stream, rec.publish, &pass_value, &rec.gen, &rec.epoch)) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
+                self, stream.c_str());
+        return -1;
     }
+    bool pass_empty = pass_value.empty();
 
     if (!pass_empty) {
         // Key length first (it must be in place before the passphrase derives the
@@ -703,7 +695,53 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, plaintext).",
                 self, stream.c_str(), direction);
     }
+    // Last, once nothing else can refuse: what the accept will admit this
+    // socket with. The table is bounded; full means that many handshakes
+    // are between here and their accept, and one more is refused.
+    rec.t_ms = sls_gettime_ms();
+    if (!self->inflight_put(ns, rec, rec.t_ms)) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: %d handshakes in progress.",
+                self, peer_ip, peer_port, SLS_INFLIGHT_MAX);
+        srt_setrejectreason(ns, SRT_REJX_OVERLOAD);
+        return -1;
+    }
     return 0;
+}
+
+// Runs on libsrt's receive thread: the mutex covers only map operations,
+// never a system call or a log line.
+bool CSLSListener::inflight_put(SRTSOCKET ns, const sls_inflight_t &rec, int64_t now_ms)
+{
+    CSLSLock lock(&m_inflight_mutex);
+    // A record whose handshake failed (a wrong passphrase, the peer gave
+    // up) is never taken: drop those once a second, and when full.
+    if (now_ms - m_inflight_pruned_ms >= 1000 || m_inflight.size() >= SLS_INFLIGHT_MAX) {
+        m_inflight_pruned_ms = now_ms;
+        for (std::map<SRTSOCKET, sls_inflight_t>::iterator it = m_inflight.begin(); it != m_inflight.end();) {
+            if (now_ms - it->second.t_ms >= SLS_INFLIGHT_TTL_MS) {
+                m_inflight.erase(it++);
+            } else {
+                ++it;
+            }
+        }
+    }
+    if (m_inflight.size() >= SLS_INFLIGHT_MAX && 0 == m_inflight.count(ns)) {
+        return false;
+    }
+    m_inflight[ns] = rec;   // libsrt may reuse a socket id: the newest wins
+    return true;
+}
+
+bool CSLSListener::inflight_take(SRTSOCKET ns, sls_inflight_t *rec)
+{
+    CSLSLock lock(&m_inflight_mutex);
+    std::map<SRTSOCKET, sls_inflight_t>::iterator it = m_inflight.find(ns);
+    if (it == m_inflight.end()) {
+        return false;
+    }
+    *rec = it->second;
+    m_inflight.erase(it);
+    return true;
 }
 
 int CSLSListener::start()
@@ -794,7 +832,7 @@ int CSLSListener::start()
     }
     if (user_file && *user_file) {
         sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, per-user auth active (%zu user(s) loaded).",
-                this, m_users.size());
+                this, m_userdb->size());
     }
 
     // Non-blocking: no accept on a worker may ever wait. A queued connection
@@ -898,6 +936,13 @@ int CSLSListener::accept_one()
     }
     client_count = 1;
 
+    // With user_file, the credentials the callback checked this socket's
+    // handshake against (S4). Taken first, so no early return leaves it.
+    const char *user_file = ((sls_conf_server_t*)m_conf)->user_file;
+    bool        has_users = (user_file && *user_file);
+    sls_inflight_t auth;
+    bool        has_auth  = has_users && inflight_take(fd_client, &auth);
+
     //2.check streamid, split it
 	srt = new CSLSSrt;
 	srt->libsrt_set_fd(fd_client);
@@ -940,6 +985,16 @@ int CSLSListener::accept_one()
     const char *stream_name = psid.stream.c_str();
     sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, [%s:%d], sid '%s/%s/%s'",
             this, peer_name, peer_port, psid.host.c_str(), psid.app.c_str(), stream_name);
+    // Fail closed: a user_file session must be one the callback let through
+    // for this very user. A missing record (it outlived SLS_INFLIGHT_TTL_MS)
+    // or another user would admit a session nothing can revoke.
+    if (has_users && (!has_auth || auth.user != psid.stream)) {
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], refused: no handshake record for user '%s'.",
+                this, peer_name, peer_port, stream_name);
+        srt->libsrt_close();
+        delete srt;
+        return client_count;
+    }
 
     // app exist?
     snprintf(key_app, sizeof(key_app), "%s/%s", psid.host.c_str(), psid.app.c_str());
@@ -950,6 +1005,14 @@ int CSLSListener::accept_one()
     if (SLS_SID_REJECT == role) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], '%s' is neither a publisher nor a player app.",
                 this, peer_name, peer_port, key_app);
+        srt->libsrt_close();
+        delete srt;
+        return client_count;
+    }
+    // a reload can move an app between the publisher and player lists
+    if (has_users && auth.publish != (SLS_SID_PUBLISHER == role)) {
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], refused: user '%s' changed direction since its handshake.",
+                this, peer_name, peer_port, stream_name);
         srt->libsrt_close();
         delete srt;
         return client_count;
@@ -983,14 +1046,8 @@ int CSLSListener::accept_one()
         	}
         	// with user_file set, only listed stream names may trigger a pull
         	// (the listen callback already refuses others; this is the backstop)
-        	const char *user_file = ((sls_conf_server_t*)m_conf)->user_file;
-        	if (user_file && *user_file) {
-        		bool known;
-        		{
-        			CSLSLock lock(&m_users_lock, 0); // read lock
-        			known = m_users.count(psid.stream) > 0;
-        		}
-        		if (!known) {
+        	if (has_users) {
+        		if (!m_userdb->contains(psid.stream)) {
     				sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s': not in user_file, no pull.",
     							this, peer_name, peer_port, key_stream_name);
     				srt->libsrt_close();
@@ -1062,6 +1119,9 @@ int CSLSListener::accept_one()
 		player->attach_reader();
 		//stat info
 	    player->set_stat_identity(key_stream_name, peer_name, peer_port);
+	    if (has_users) {
+	        player->set_auth_identity(m_userdb, auth.user, false, auth.gen, auth.epoch);
+	    }
 	    // on_connect is sent by the worker that adopts the role (Ruling R17):
 	    // a role that expires while queued has announced nothing
 	    attach_hook(player);
@@ -1112,6 +1172,9 @@ int CSLSListener::accept_one()
 	pub->set_idle_streams_timeout(m_idle_streams_timeout_role);
 	//stat info
     pub->set_stat_identity(key_stream_name, peer_name, peer_port);
+    if (has_users) {
+        pub->set_auth_identity(m_userdb, auth.user, true, auth.gen, auth.epoch);
+    }
     attach_hook(pub);
 
 	sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new pub=%p, key_stream_name=%s.",

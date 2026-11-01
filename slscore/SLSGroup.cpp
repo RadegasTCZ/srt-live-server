@@ -108,6 +108,15 @@ void CSLSGroup::check_new_role() {
         return ;
     }
 
+    // A users reload revoked it while it was queued (S4): this worker is the
+    // first owner, so it closes it before announcing anything (no on_connect,
+    // so no on_close is owed).
+    if (role->auth_revoked()) {
+        role->uninit();
+        delete role;
+        return ;
+    }
+
     //add to epoll
     if (0 == role->add_to_epoll(m_eid) && 0 == role->on_added_to_epoll()) {
         m_map_role[fd] = role;
