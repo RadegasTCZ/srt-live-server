@@ -244,10 +244,20 @@ static string sls_conf_show(bool secret, const string& l)
     return secret ? string("srt_passphrase ***") : l;
 }
 
-int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& child, sls_runtime_conf_t * p_runtime, int brackets_layers)
+/*
+ * Parses the lines of one block up to its closing '}' (or to the end of the
+ * file at depth 0). b is the block being filled and p_runtime describes its
+ * directives; at depth 0 b is the dummy root, which has no directives and may
+ * only contain the 'srt' block. open_line is the line the block was opened on.
+ * Every child block is linked under b, and after its '}' the current block is
+ * b again.
+ */
+static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, sls_runtime_conf_t * p_runtime, int depth, int open_line)
 {
-    int ret = SLS_ERROR;
+    int ret = SLS_OK;
     sls_conf_base_t * block = NULL;
+    sls_conf_base_t * last_child = NULL;
+    sls_runtime_conf_t * block_runtime = NULL;
     string str_line, str_line_last;
     bool last_secret = false;   // str_line_last came from a srt_passphrase line
     string n, v, line_end_flag;
@@ -275,7 +285,7 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
         line_end_flag = str_line.substr(str_line.length() - 1);
 
         if (line_end_flag == ";") {
-            if (!b) {
+            if (depth == 0) {
                 sls_log(SLS_LOG_ERROR, "line:%d='%s', not found block.", line, sls_conf_show(secret, str_line).c_str());
                 ret = SLS_ERROR;
                 break;
@@ -329,37 +339,45 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
                 str_line_last = "";
                 last_secret = false;
             }
+            if (depth == 0 && n != "srt") {
+                sls_log(SLS_LOG_ERROR, "line:%d, the root block must be 'srt', found '%s'.", line, sls_conf_show(n_secret, n).c_str());
+                ret = SLS_ERROR;
+                break;
+            }
             // new block
-            block = sls_conf_create_block_by_name(n, p_runtime);
+            block = sls_conf_create_block_by_name(n, block_runtime);
             if (!block) {
                 sls_log(SLS_LOG_ERROR, "line:%d, name='%s' not found.", line, sls_conf_show(n_secret, n).c_str());
                 ret = SLS_ERROR;
                 break;
             }
-            if (child)
-                b->child = block;
+            if (last_child)
+                last_child->sibling = block;
             else
-                b->sibling = block;
-            b = block;
-            child = true;
-            brackets_layers ++;
-            ret = sls_conf_parse_block(ifs, line, b, child, p_runtime, brackets_layers);
+                b->child = block;
+            last_child = block;
+            ret = sls_conf_parse_block(ifs, line, block, block_runtime, depth + 1, line);
             if (ret != SLS_OK) {
                 sls_log(SLS_LOG_ERROR, "line:%d, parse block=‘%s’ failed.", line, block->name);
                 ret = SLS_ERROR;
                 break;
             }
+            // the block is closed: this block continues with the next line
+            str_line_last = "";
+            last_secret = false;
+            continue;
         } else if (line_end_flag == "}" ) {
             if (str_line != line_end_flag) {
                 sls_log(SLS_LOG_ERROR, "line:%d=‘%s’, end indicator ‘}’ with more info.", line, sls_conf_show(secret, str_line).c_str());
                 ret = SLS_ERROR;
                 break;
             }
-            brackets_layers --;
-            ret = SLS_OK;
-            child = false;
-            break;
-
+            if (depth == 0) {
+                sls_log(SLS_LOG_ERROR, "line:%d, '}' without a matching '{'.", line);
+                ret = SLS_ERROR;
+                break;
+            }
+            return SLS_OK;
         } else {
             sls_log(SLS_LOG_ERROR, "line:%d='%s', invalid end flag, except ';', '{', '}',", line, sls_conf_show(secret, str_line).c_str());
             ret = SLS_ERROR;
@@ -367,6 +385,10 @@ int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, bool& ch
         }
         str_line_last = str_line;
         last_secret = secret;
+    }
+    if (SLS_OK == ret && depth > 0) {
+        sls_log(SLS_LOG_ERROR, "line:%d, end of file reached, '}' missing for the block opened at line %d.", line, open_line);
+        ret = SLS_ERROR;
     }
     return ret;
 
@@ -378,10 +400,6 @@ int sls_conf_open(const char * conf_file)
     ifstream    ifs(conf_file);
     int         ret = 0;
     int         line = 0;
-    bool        child = true;
-    int         brackets_layers = 0;
-
-    sls_runtime_conf_t * p_runtime = NULL;
 
     sls_log(SLS_LOG_INFO, "sls_conf_open, parsing conf file='%s'.", conf_file);
     if (!ifs.is_open()) {
@@ -389,41 +407,36 @@ int sls_conf_open(const char * conf_file)
         return SLS_ERROR;
     }
 
-    ret = sls_conf_parse_block(ifs, line, &sls_first_conf, child, p_runtime, brackets_layers);
+    ret = sls_conf_parse_block(ifs, line, &sls_first_conf, NULL, 0, 0);
+    if (ret == SLS_OK && sls_first_conf.child == NULL) {
+        sls_log(SLS_LOG_ERROR, "conf file='%s' has no 'srt' block.", conf_file);
+        ret = SLS_ERROR;
+    }
     if (ret != SLS_OK) {
-        if (0 == brackets_layers) {
-            sls_log(SLS_LOG_FATAL, "parse conf file='%s' failed.", conf_file);
-        } else {
-            sls_log(SLS_LOG_FATAL, "parse conf file='%s' failed, please check count of '{' and '}'.", conf_file);
-        }
+        sls_log(SLS_LOG_FATAL, "parse conf file='%s' failed.", conf_file);
     }
     return ret;
 }
 
+// Releases c, its children and its siblings (NULL: nothing to release).
 void sls_conf_release(sls_conf_base_t * c)
 {
-    sls_conf_base_t * c_b;
-    if (c->child != NULL) {
-        c_b = c->child;
-        sls_conf_release(c_b);
-        c->child = NULL;
-    }
-    if (c->sibling != NULL) {
-        c_b = c->sibling;
-        sls_conf_release(c_b);
-        c->sibling = NULL;
-    }
-    if (c->child == NULL && c->sibling == NULL) {
+    while (c) {
+        sls_conf_base_t * next = c->sibling;
+        sls_conf_release(c->child);
         sls_log(SLS_LOG_DEBUG, "sls_conf_release, delete '%s'.", c->name);
-        delete c;
-        return ;
+        // A block is a plain struct derived from sls_conf_base_t (created by
+        // new and zero-filled, no virtual destructor), so it is freed as raw
+        // memory: 'delete c' through the base would pass the base's size.
+        ::operator delete(c);
+        c = next;
     }
 }
 
 void sls_conf_close()
 {
-    sls_conf_base_t * c = sls_first_conf.child;
-    sls_conf_release(c);
+    sls_conf_release(sls_first_conf.child);
+    sls_first_conf.child = NULL;
 }
 
 sls_conf_base_t * sls_conf_get_root_conf()
