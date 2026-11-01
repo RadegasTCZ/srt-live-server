@@ -311,10 +311,10 @@ int CSLSListener::load_users(const char *path, std::string *err)
 {
     // Every failure below leaves m_users untouched: a bad file must never
     // weaken (or silently disable) authentication.
+    // None of the messages below may echo a value from the file: with the
+    // columns swapped or a stray character, a passphrase can land in the name
+    // column. They carry the line number and the column name only.
     char msg[512];
-    std::ifstream f(path);
-    if (!f.is_open()) {
-        snprintf(msg, sizeof(msg), "cannot open '%s': %s", path, strerror(errno));
     struct stat st;
     if (stat(path, &st) != 0) {
         snprintf(msg, sizeof(msg), "cannot open '%s': %s", path, strerror(errno));
@@ -327,6 +327,9 @@ int CSLSListener::load_users(const char *path, std::string *err)
         if (err) *err = msg;
         return SLS_ERROR;
     }
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        snprintf(msg, sizeof(msg), "cannot open '%s': %s", path, strerror(errno));
         if (err) *err = msg;
         return SLS_ERROR;
     }
@@ -361,9 +364,9 @@ int CSLSListener::load_users(const char *path, std::string *err)
             return SLS_ERROR;
         }
         if (!sls_sid_part_ok(name)) {
-            snprintf(msg, sizeof(msg), "%s:%d: invalid user name '%s' "
-                     "(allowed: 1-128 of A-Z a-z 0-9 . _ -, not '.' or '..')",
-                     path, lineno, sls_escape_for_log(name.c_str()).c_str());
+            snprintf(msg, sizeof(msg), "%s:%d: invalid user name in column 1 "
+                     "(allowed: 1-128 of A-Z a-z 0-9 . _ -, not '.' or '..'; are the columns in the order "
+                     "name publish_pass play_pass?)", path, lineno);
             if (err) *err = msg;
             return SLS_ERROR;
         }
@@ -371,21 +374,21 @@ int CSLSListener::load_users(const char *path, std::string *err)
         if (play == "-") play.clear();
 
         if (!sls_is_valid_passphrase_len(pub.length())) {
-            snprintf(msg, sizeof(msg), "%s:%d: publish_pass length %zu out of range "
-                     "(SRT requires 10-79 bytes, or '-' for plaintext) for user '%s'",
-                     path, lineno, pub.length(), name.c_str());
+            snprintf(msg, sizeof(msg), "%s:%d: column 2 (publish_pass) length %zu out of range "
+                     "(SRT requires 10-79 bytes, or '-' for plaintext)",
+                     path, lineno, pub.length());
             if (err) *err = msg;
             return SLS_ERROR;
         }
         if (!sls_is_valid_passphrase_len(play.length())) {
-            snprintf(msg, sizeof(msg), "%s:%d: play_pass length %zu out of range "
-                     "(SRT requires 10-79 bytes, or '-' for plaintext) for user '%s'",
-                     path, lineno, play.length(), name.c_str());
+            snprintf(msg, sizeof(msg), "%s:%d: column 3 (play_pass) length %zu out of range "
+                     "(SRT requires 10-79 bytes, or '-' for plaintext)",
+                     path, lineno, play.length());
             if (err) *err = msg;
             return SLS_ERROR;
         }
         if (staging.count(name)) {
-            snprintf(msg, sizeof(msg), "%s:%d: duplicate user '%s'", path, lineno, name.c_str());
+            snprintf(msg, sizeof(msg), "%s:%d: duplicate user name in column 1", path, lineno);
             if (err) *err = msg;
             return SLS_ERROR;
         }
