@@ -127,6 +127,11 @@ check your config and tooling before you restart.
   opened, sls refuses to start. Session start/end lines are limited to 20 per
   second process-wide (the rest are counted in a summary); see
   `doc/Directives.md`.
+- **Users file.** It must not be accessible to group or others (`chmod 600`), and
+  a `#` inside a passphrase is an error (also for `srt_passphrase`). Its errors
+  name the line and column, never a value. The process is non-dumpable, a failed
+  internal lock aborts it, and the query and userinfo of any config text or relay
+  URL are redacted in log lines.
 - **Process.** Privileges are dropped after bind and before any worker starts;
   SIGTERM stops sls like SIGINT; startup failures exit non-zero; the config parser
   rejects unbalanced braces. Passphrases are never written to the log.

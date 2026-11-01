@@ -20,7 +20,13 @@
 # `sls -c <conf> -s reload`) with a bad file is rejected the same way: the
 # previous users stay in force and the log says "reload failed".
 #
-# Passphrases must be 10-79 printable ASCII characters (libsrt limit).
+# Passphrases must be 10-79 printable ASCII characters (libsrt limit) and cannot
+# contain '#': a '#' after white space starts a comment, and one inside a column is
+# an error (it would cut the passphrase short).
+#
+# PERMISSIONS: the file holds passphrases, so sls refuses to start (or reload)
+# when group or others have any access to it. Run: chmod 600 sls-users.conf
+# Error messages name the line and column only, never a value.
 #
 # The three examples below illustrate every combination:
 #   - alice:       fully private -- encrypted push AND encrypted pull.

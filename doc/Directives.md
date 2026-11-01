@@ -19,10 +19,13 @@ When set, every connection must name a listed user in its streamid and use
 that user's publish or play passphrase (`-` = plaintext allowed for that
 direction); `srt_pbkeylen` applies and encryption is enforced.
 
-`user_file` fails closed. A file that cannot be opened, holds no users, or has
+`user_file` fails closed. A file that cannot be opened, holds no users, has
 a malformed line (wrong column count, passphrase outside 10-79 bytes, invalid
-or duplicate name) makes sls refuse to start (non-zero exit, error naming the
-line). On reload (`sls -c sls.conf -s reload`, i.e. SIGHUP) a bad file is
+or duplicate name, a `#` inside a column) or is accessible to group or others
+(`mode & 077`: run `chmod 600`) makes sls refuse to start (non-zero exit, error
+naming the line and the column, never a value from the file). A `#` that follows
+white space starts a comment; one inside a column is an error, so a passphrase
+cannot contain `#` (the same holds for `srt_passphrase` in `sls.conf`). On reload (`sls -c sls.conf -s reload`, i.e. SIGHUP) a bad file is
 rejected and the previous users stay active; the result is logged
 (`reload ok (N user(s))` at INFO, `reload failed` at ERROR).
 
@@ -269,6 +272,14 @@ It is one key for the whole listener, held by publishers and players alike, so
 anyone who can play a stream can publish with the same key: use it only when one
 person runs the server and every client. With more than one streamer use
 `user_file`.
+
+## Log redaction
+
+Anything from the configuration that is shown in a log line (the trace of every
+config line, parse errors, relay upstreams, the URLs a relay opens) has its
+userinfo and everything after the first `?` replaced by `<redacted>`. That covers
+a mistyped directive name as well as `on_event_url`, `stat_post_url` and the
+`?streamid=...` of a relay upstream. `srt_passphrase` is logged as `***`.
 
 ## Startup warnings
 
