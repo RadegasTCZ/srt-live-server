@@ -75,8 +75,10 @@ SLS_SET_CONF(srt, int,    max_connections_per_ip,      "max concurrent accepted 
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_MAX_CONNECTIONS_PER_IP 16
+#define SLS_DEFAULT_STAT_POST_INTERVAL 5   // seconds
 inline void sls_conf_srt_defaults(sls_conf_srt_t *c)
 {
+    c->stat_post_interval = SLS_DEFAULT_STAT_POST_INTERVAL;
     c->max_connections_per_ip = SLS_DEFAULT_MAX_CONNECTIONS_PER_IP;
 }
 
