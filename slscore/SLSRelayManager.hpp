@@ -142,11 +142,12 @@ public :
     // one (relay torn down outside a worker) a pull manager left with no
     // live relay retires on the spot.
     bool relay_ended(CSLSRelay *relay, bool may_reconnect);
-    // A listener's start() for a player failed. created: that same request
-    // made this manager. A manager someone else made may be WAITING with
-    // players attached that depend on its reconnect entry: it is kept, and
-    // retired only if nobody reads its stream; one this request created has
-    // nobody else and retires (it must not hold a max_pull_streams slot).
+    // A request's start() failed (a player's pull, a publisher's push).
+    // created: that same request made this manager. A manager someone else
+    // made may be WAITING with players attached that depend on its reconnect
+    // entry: it is kept, and retired only if nobody reads its stream; one this
+    // request created has nobody else and retires (it must not hold a
+    // max_pull_streams slot, nor outlive its publisher).
     void start_failed(bool created, const char *why);
     bool is_retired();
 
@@ -163,7 +164,8 @@ public :
 protected:
     // a relay of this manager starts (from set_relay_param, under m_mutex)
     void relay_attached_locked(CSLSRelay *relay);
-    // pull managers exist only for running pulls; push managers persist
+    // pull managers exist only for running pulls; a push manager retires
+    // when its publisher is gone (CSLSPusherManager), not when idle
     virtual bool retires_when_idle() { return false; }
     // under m_mutex: a player is attached to this manager's stream (pull)
     virtual bool has_readers() { return false; }

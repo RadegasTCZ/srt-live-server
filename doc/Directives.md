@@ -393,6 +393,18 @@ is refused (`waiting to reconnect`) and may retry, so retrying players never
 raise the upstream connect rate. The next player request after a pull was
 dropped starts a new pull.
 
+## Push relay lifetime
+
+A push relay is started when a publisher is admitted on an app with a push
+relay block, and exists only for that publisher. While the publisher is there
+a broken push reconnects every `reconnect_interval` seconds. Once it is gone
+the push is dropped, with no reconnect (`CSLSRelayManager::retire, publisher
+gone`): when its pusher ends (it gets no more data, so at the latest after the
+relay block's `idle_streams_timeout`) or when a reconnect falls due. The next
+publisher of the name starts a new push. (Before, every publish name ever used
+kept its push state, retried every `reconnect_interval`, for the life of the
+process.)
+
 A relay block (pull or push) without `upstreams` is a configuration error:
 sls refuses to start.
 

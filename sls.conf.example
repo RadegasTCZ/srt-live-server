@@ -146,6 +146,8 @@ srt {
             #}                               # at least one upstream is required
             #
             # Push -- this server FORWARDS local publishers out to upstream(s).
+            # A push lives only while its publisher does: once the publisher is
+            # gone it is dropped (no reconnect) until the name is published again.
             #relay {
             #    type push;
             #    mode all;                   # all | hash

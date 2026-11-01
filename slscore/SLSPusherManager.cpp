@@ -142,9 +142,38 @@ int CSLSPusherManager::add_reconnect_stream(char* relay_url)
 	return ret;
 }
 
+// A push exists only for its publisher (S3). Without this, every publish
+// name ever used kept a manager (and its reconnect entry, retried every
+// reconnect_interval) for the life of the process.
+bool CSLSPusherManager::has_publisher()
+{
+	if (NULL == m_map_publisher) {
+		return true;    // not configured yet: nothing to decide
+	}
+	char key_stream_name[1024] = {0};
+	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", m_app_uplive, m_stream_name);
+	return NULL != m_map_publisher->get_publisher(key_stream_name);
+}
+
+bool CSLSPusherManager::do_on_relay_closed(CSLSRelay *relay)
+{
+	if (!has_publisher()) {
+		retire_locked("publisher gone");   // refused while another pusher is live
+		return false;
+	}
+	return CSLSRelayManager::do_on_relay_closed(relay);
+}
+
 int CSLSPusherManager::do_reconnect(int64_t cur_tm_ms)
 {
 	int ret = SLS_ERROR;
+	// the publisher left while this entry waited: drop the entry and retire
+	// (a pusher still live retires the manager when it ends)
+	if (!has_publisher()) {
+		retire_locked("publisher gone");
+		return SLS_OK;
+	}
+
     if (SLS_OK != check_relay_param()) {
 		sls_log(SLS_LOG_WARNING, "[%p]CSLSPusherManager::reconnect, check_relay_param failed, stream=%s.",
 					this, m_stream_name);
@@ -157,30 +186,14 @@ int CSLSPusherManager::do_reconnect(int64_t cur_tm_ms)
 		return ret;
 	}
 
-	//check publisher
-    bool no_publisher = false;
-	char key_stream_name[1024] = {0};
-	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", m_app_uplive, m_stream_name);
-	if (NULL != m_map_publisher) {
-	    CSLSRole * publisher = m_map_publisher->get_publisher(key_stream_name);
-	    if (NULL == publisher) {
-	        no_publisher = true;
-	    }
-	}
-
 	if (SLS_PM_ALL == m_sri->m_mode) {
-		ret = reconnect_all(cur_tm_ms, no_publisher);
+		ret = reconnect_all(cur_tm_ms);
 		return ret;
 	} else if (SLS_PM_HASH == m_sri->m_mode) {
 		if (cur_tm_ms - m_reconnect_begin_tm < (m_sri->m_reconnect_interval * 1000)) {
 			return ret;
 		}
 		m_reconnect_begin_tm = cur_tm_ms;
-		if (no_publisher) {
-	        sls_log(SLS_LOG_INFO, "[%p]CSLSPullerManager::reconnect, connect_hash failed, key_stream_name=%s, publisher=NULL not exist.",
-	    		this, key_stream_name);
-			return ret;
-		}
 		ret = connect_hash();
 	} else {
 	    sls_log(SLS_LOG_INFO, "[%p]CSLSPusherManager::reconnect, failed, wrong m_sri->m_mode=%d, m_app_uplive=%s, m_stream_name=%s.",
@@ -205,7 +218,7 @@ int CSLSPusherManager::check_relay_param()
     return SLS_OK;
 }
 
-int CSLSPusherManager::reconnect_all(int64_t cur_tm_ms, bool no_publisher)
+int CSLSPusherManager::reconnect_all(int64_t cur_tm_ms)
 {
     CSLSLock lock(&m_rwclock, true);
 
@@ -220,14 +233,6 @@ int CSLSPusherManager::reconnect_all(int64_t cur_tm_ms, bool no_publisher)
         it ++;
         if (cur_tm_ms - begin_tm < (m_sri->m_reconnect_interval * 1000)) {
         	all_ret |= ret;
-        	continue;
-        }
-        if (no_publisher) {
-        	//it_cur->second = cur_tm_ms；
-        	all_ret |= ret;
-    	    m_map_reconnect_relay[url] = cur_tm_ms;
-	        sls_log(SLS_LOG_INFO, "[%p]CSLSPullerManager::reconnect_all, failed, url=%s, publisher=NULL not exist.",
-	    		this, sls_url_for_log(url.c_str()).c_str());
         	continue;
         }
     	ret = connect(url.c_str());

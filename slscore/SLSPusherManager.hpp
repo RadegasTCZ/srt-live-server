@@ -46,13 +46,18 @@ public :
 protected:
     virtual int do_start();
     virtual int do_reconnect(int64_t cur_tm_ms);
+    // under m_mutex: a pusher ended; with the publisher gone the manager
+    // retires instead of waiting to reconnect (S3)
+    virtual bool do_on_relay_closed(CSLSRelay *relay);
 
 private:
     int connect_all();
     virtual CSLSRelay *create_relay();
     virtual int set_relay_param(CSLSRelay *relay);
     int check_relay_param();
-    int reconnect_all(int64_t cur_tm_ms, bool no_publisher);
+    int reconnect_all(int64_t cur_tm_ms);
+    // the stream still has the local publisher this manager pushes
+    bool has_publisher();
 
     CSLSRWLock          m_rwclock;
     std::map<std::string, int64_t> m_map_reconnect_relay;//relay:timeout

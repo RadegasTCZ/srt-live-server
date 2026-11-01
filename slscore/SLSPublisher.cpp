@@ -118,7 +118,8 @@ void CSLSPublisher::start_pushers()
 	if (NULL == m_admit.map_pusher) {
 		return;
 	}
-	CSLSRelayManager *mgr = m_admit.map_pusher->add_relay_manager(m_admit_app.c_str(), m_admit_stream.c_str());
+	bool created = false;
+	CSLSRelayManager *mgr = m_admit.map_pusher->add_relay_manager(m_admit_app.c_str(), m_admit_stream.c_str(), &created);
 	if (NULL == mgr) {
 		sls_log(SLS_LOG_DEBUG, "[%p]CSLSPublisher::start_pushers, no push relay manager, stream=%s.",
 				this, m_map_data_key);
@@ -128,6 +129,11 @@ void CSLSPublisher::start_pushers()
 	if (SLS_OK != mgr->start()) {
 		sls_log(SLS_LOG_INFO, "[%p]CSLSPublisher::start_pushers, pusher_manager->start failed, publisher[%s:%d], stream=%s.",
 				this, m_stat_remote_ip.c_str(), m_stat_remote_port, m_map_data_key);
+		// one this publisher created and could not start has no pusher and
+		// no reconnect entry: nothing else would ever retire it (S3)
+		if (created) {
+			mgr->start_failed(true, "first push failed");
+		}
 	}
 	mgr->release();   // add_relay_manager's reference
 }
