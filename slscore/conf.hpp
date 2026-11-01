@@ -95,7 +95,8 @@ struct sls_runtime_conf_t {
 
     sls_runtime_conf_t        * next;
     static sls_runtime_conf_t * first;
-    sls_runtime_conf_t(char * c, create_conf_func f, sls_conf_cmd_t * cmd, int len);
+    // c is the block name, a string literal (#c_n): never written through conf_name
+    sls_runtime_conf_t(const char * c, create_conf_func f, sls_conf_cmd_t * cmd, int len);
 };
 
 /*
