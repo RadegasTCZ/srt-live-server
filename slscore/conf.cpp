@@ -265,17 +265,31 @@ static bool sls_conf_line_is_url(const string& raw)
     return false;
 }
 
-static string sls_conf_show_url_line(const string& l)
+// Shown as "<key> " + sls_url_for_log(<value>), the value cut exactly as the
+// parser cuts it (comment stripped, tabs to spaces, trimmed, trailing ';'
+// dropped, everything after the key). No other part of the raw line is ever
+// shown, so nothing past a '#', ';' or space inside the URL can leak.
+static string sls_conf_show_url_line(const string& raw)
 {
-    string::size_type b  = l.find_first_not_of(" \t");
-    string::size_type sp = (b == string::npos) ? string::npos : l.find_first_of(" \t", b);
-    string::size_type vb = (sp == string::npos) ? string::npos : l.find_first_not_of(" \t", sp);
-    if (vb == string::npos) {
-        return l;
+    string l = raw;
+    string::size_type hash = l.find('#');
+    if (hash != string::npos) {
+        l = l.substr(0, hash);
     }
-    string::size_type ve = l.find_first_of("; \t#", vb);
-    string v = l.substr(vb, ve == string::npos ? string::npos : ve - vb);
-    return l.substr(0, vb) + sls_url_for_log(v.c_str()) + (ve == string::npos ? string() : l.substr(ve));
+    l = replace_all(l, "\t", " ");
+    l = trim(l);
+    if (!l.empty() && l[l.length() - 1] == ';') {
+        l = l.substr(0, l.length() - 1);
+        l = trim(l);
+    }
+    string::size_type sp = l.find(' ');
+    if (sp == string::npos) {
+        return l;                                   // the key alone
+    }
+    string key = l.substr(0, sp);
+    string v   = l.substr(sp + 1);
+    v = trim(v);
+    return key + " " + sls_url_for_log(v.c_str());
 }
 
 static string sls_conf_show_line(bool secret, bool url, const string& l)
