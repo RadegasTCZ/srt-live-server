@@ -94,7 +94,7 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
     }
 
     if (existed) {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, cur_mananger=%p, exist, app_uplive=%s, stream_name=%s.",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapRelay::add, cur_mananger=%p, exist, app_uplive=%s, stream_name=%s.",
                 this, cur_mananger, app_uplive, stream_name);
     } else if (cur_mananger) {
         sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, ok, app_uplive=%s, stream_name=%s, cur_mananger=%p%s.",

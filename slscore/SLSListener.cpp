@@ -534,10 +534,11 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
                     self, stream.c_str(), direction, srt_getlasterror_str());
             return -1;
         }
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, encrypted).",
+        // per attempt, so DEBUG: the admitted session logs its start at INFO
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, encrypted).",
                 self, stream.c_str(), direction);
     } else {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, plaintext).",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, plaintext).",
                 self, stream.c_str(), direction);
     }
     return 0;
@@ -698,7 +699,10 @@ int CSLSListener::handler()
         return client_count;
     }
     sls_slot_guard slot(m_admission_limiter, peer_name);
-    sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
+    // Per-attempt lines are DEBUG, so they never take the peer-line budget
+    // from the refusal that explains the attempt; an admitted session logs
+    // its start at INFO ("new publisher[...]" / "new player[...]").
+    sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
 
     if (0 != srt->libsrt_getsockopt(SRTO_STREAMID, "SRTO_STREAMID", &sid, &sid_size)) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], fd=%d, get streamid info failed.",
@@ -716,7 +720,7 @@ int CSLSListener::handler()
     	return client_count;
     }
     const char *stream_name = psid.stream.c_str();
-    sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, [%s:%d], sid '%s/%s/%s'",
+    sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, [%s:%d], sid '%s/%s/%s'",
             this, peer_name, peer_port, psid.host.c_str(), psid.app.c_str(), stream_name);
 
     // app exist?

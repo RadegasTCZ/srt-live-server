@@ -92,9 +92,9 @@ check your config and tooling before you restart.
   accepted connections exist at once, and `max_connections_per_ip` (default 16,
   0 = unlimited) caps one address. Over either cap the connection is closed at
   accept. An accepted connection waits at most `admission_timeout` ms (default
-  5000) for a worker slot. Log lines caused by connection attempts (refusals,
-  per-attempt accept lines) are limited to one per second; `log_level debug`
-  shows them all.
+  5000) for a worker slot. Per-attempt connection lines are DEBUG now, and
+  refusals are logged at most once per second (with a count of the rest);
+  `log_level debug` shows them all.
 - **Webhook.** `on_connect` is an admission gate: anything but a `200` answer, no
   answer within `on_event_timeout` ms (default 2000), or an unreachable hook closes
   the connection. `on_close` is sent once for every `on_connect`. The hook host is

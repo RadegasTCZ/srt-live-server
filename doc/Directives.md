@@ -135,15 +135,16 @@ for that run.
 
 ## Connection-attempt log lines
 
-Lines a remote peer causes once per handshake - refusals (bad or unknown
-streamid, unknown user, no such stream, stream busy, connection limits, pull
-refused) and the per-attempt accept lines (`accept user`, `new client`) - share
-one budget of one line per second for the whole process. A line over the
-budget is logged at DEBUG instead, and the next line within the budget says
-how many were held back; once a second the main loop also logs
-`peer lines: N held back in the last S s` if any were. `log_level debug`
-therefore shows every attempt. The start of an admitted session (`new
-publisher[...]`, `new player[...]`) is always logged at INFO.
+A remote peer can cause a log line with every handshake, so these lines are
+bounded. The per-attempt lines (`accept user`, `new client`, `sid`) are DEBUG.
+Refusals (bad or unknown streamid, unknown user, no such stream, stream busy,
+connection limits, pull refused or failed, a peer gone before accept) share one
+budget of one line per second for the whole process: a refusal over the
+budget is logged at DEBUG instead, and the next one within the budget says how
+many were held back; once a second the main loop also logs `peer lines: N held
+back in the last S s` if any were. `log_level debug` therefore shows every
+attempt. The start of an admitted session (`new publisher[...]`, `new
+player[...]`) is always logged at INFO.
 
 ## admission_timeout (server block)
 
