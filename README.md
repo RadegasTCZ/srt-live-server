@@ -109,8 +109,9 @@ check your config and tooling before you restart.
   resolve at start only disables posting.
 - **Reload** (`sls -s reload`, SIGHUP) re-reads `user_file` and re-resolves the
   `on_event_url` and `stat_post_url` hosts, nothing else; relay upstreams are
-  re-resolved after a relay connection fails (never connected, broke or went silent;
-  a clean end keeps the addresses, at most one lookup per 5 s). Other config changes
+  re-resolved after a relay connection fails (never connected, broke, or the
+  upstream disconnected; an end sls chose itself keeps the addresses, at most one
+  lookup per 5 s). Other config changes
   need a restart.
 - **Relays.** A relay block without `upstreams` is a configuration error. Upstream
   hosts are resolved when the configuration loads, `host:port/app` honours the
@@ -122,6 +123,10 @@ check your config and tooling before you restart.
   when it runs as root without `user`. The shipped `sls.conf.example` is an open
   server until you set `user_file`; its pull example now uses a finite
   `idle_streams_timeout`.
+- **Session end reason.** `reason=` is `peer disconnected`, `idle timeout (no
+  data)`, `shutdown`, `error` or `closed`, taken from the socket state;
+  `clean disconnect` and `idle timeout (peer silent)` are gone (libsrt reports both
+  as one broken state, and the old lines read a stale error code).
 - **Idle timeout default.** An omitted server-block `idle_streams_timeout` is `10`
   seconds (it was `0`, which dropped idle roles at once); `-1` still disables it.
 - **Log file.** `log_file` is opened without following symlinks (mode 0640) and
