@@ -37,7 +37,6 @@
 #include <set>
 #include <vector>
 #include <atomic>
-#include <algorithm>
 
 #include "SLSListener.hpp"
 #include "SLSAuthThrottle.hpp"
@@ -601,7 +600,24 @@ static void sls_peer_of(const struct sockaddr *sa, char *ip, size_t ip_len, int 
 }
 
 namespace {
+// Room for any SRT passphrase (at most 79 characters) and the dummy one, so
+// filling pass_value never reallocates (a freed buffer is not wiped).
+const size_t SLS_PASS_CAPACITY    = 80;
 const size_t SLS_DUMMY_PASS_BYTES = 24;   // 48 hex characters
+
+// Zeroes memory; a volatile store the compiler may not drop as dead.
+void sls_wipe(void *p, size_t n)
+{
+    volatile unsigned char *v = (volatile unsigned char *)p;
+    while (n--) *v++ = 0;
+}
+
+// Wipes a passphrase copy on every return of the listen callback.
+struct sls_wipe_on_return {
+    std::string &s;
+    explicit sls_wipe_on_return(std::string &str) : s(str) {}
+    ~sls_wipe_on_return() { if (!s.empty()) sls_wipe(&s[0], s.size()); }
+};
 }
 
 // libsrt rejected socket ns for a wrong passphrase (CSLSSrt's log handler,
@@ -687,8 +703,10 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     // (with the shared slots full, a publisher's slot kind would otherwise
     // answer 1402 for an unknown name and a bad secret for a known one). It
     // takes no slot here and never completes the handshake, so it cannot use
-    // the reserve.
+    // the reserve. Every copy of a passphrase is wiped on every return.
     std::string pass_value;
+    pass_value.reserve(SLS_PASS_CAPACITY);   // no reallocation leaves an unwiped copy
+    sls_wipe_on_return wipe(pass_value);
     sls_inflight_t rec;
     rec.user    = stream;
     rec.publish = (SLS_SID_PUBLISHER == role);
@@ -740,7 +758,8 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         unsigned char rnd[SLS_DUMMY_PASS_BYTES];
         size_t got = 0;
         while (got < sizeof(rnd)) {
-            ssize_t n = getrandom(rnd + got, sizeof(rnd) - got, 0);
+            // never waits for entropy on libsrt's receive thread: fails closed
+            ssize_t n = getrandom(rnd + got, sizeof(rnd) - got, GRND_NONBLOCK);
             if (n <= 0) {
                 if (n < 0 && EINTR == errno) continue;
                 break;
@@ -748,6 +767,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
             got += (size_t)n;
         }
         if (got < sizeof(rnd)) {
+            sls_wipe(rnd, sizeof(rnd));
             sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, no random bytes for an unknown user's handshake; rejecting.", self);
             srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
             return -1;
@@ -758,7 +778,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
             pass_value += hex[rnd[i] >> 4];
             pass_value += hex[rnd[i] & 15];
         }
-        memset(rnd, 0, sizeof(rnd));
+        sls_wipe(rnd, sizeof(rnd));
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s' (%s): answered as a wrong passphrase.",
                 self, stream.c_str(), direction);
     }
@@ -793,7 +813,6 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
             return -1;
         }
         sls_auth_throttle().note_handshake(ns, peer_ip, sls_monotonic_ms());
-        std::fill(pass_value.begin(), pass_value.end(), '\0');
         if (unknown_user) {
             return 0;          // no record: libsrt refuses it as a wrong passphrase
         }
