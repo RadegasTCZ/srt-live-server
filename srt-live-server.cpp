@@ -147,6 +147,7 @@ int main(int argc, char* argv[])
     bool stat_posting         = false;   // stat_post_url resolved at start: the client runs
 
     usage();
+    sls_harden_process();
 
     //parse cmd line
     memset(&sls_opt, 0, sizeof(sls_opt));
@@ -238,6 +239,8 @@ int main(int argc, char* argv[])
         exit_code = 1;
         goto EXIT_PROC;
     }
+
+    sls_harden_process();     // set it again after the uid change
 
     if (SLS_OK != sls_manager->start_workers()) {
         sls_log(SLS_LOG_ERROR, "sls_manager->start_workers failed, EXIT!");

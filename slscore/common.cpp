@@ -45,6 +45,7 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include <sys/prctl.h>
 
 #include <string>
 #include <vector>
@@ -696,6 +697,16 @@ int sls_send_cmd(const char *pid_path, const char *cmd)
         printf("stop signal sent\n");
     }
     return SLS_OK;
+}
+
+void sls_harden_process()
+{
+    // Passphrases are in memory: no core dump, and no ptrace or /proc/<pid>/mem
+    // from the same uid. (A privilege change resets the flag, so this is also
+    // called again after the drop.)
+    if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) {
+        sls_log(SLS_LOG_WARNING, "prctl(PR_SET_DUMPABLE, 0) failed: %s.", strerror(errno));
+    }
 }
 
 int sls_drop_privileges(const char *user, const char *group)

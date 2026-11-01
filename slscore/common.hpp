@@ -121,6 +121,7 @@ int      sls_http_parse_response(const std::string &buf, int *status, size_t *he
 
 int sls_write_pid(const char *path, int pid);   // returns the locked fd (keep it open until exit), or -1
 int sls_send_cmd(const char *pid_path, const char *cmd);
+void sls_harden_process();     // not dumpable: no core dump or same-uid ptrace of the passphrases
 int sls_drop_privileges(const char *user, const char *group);
 
 void sls_split_string(std::string str, std::string separator, std::vector<std::string> &result, int count=-1);
