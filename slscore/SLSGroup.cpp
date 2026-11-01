@@ -360,13 +360,15 @@ void CSLSGroup::check_invalid_sock()
 
         // The on_connect answer is polled here, every tick, not from the
         // role's SRT handler: a publisher that sends nothing until it is
-        // admitted has no event to run that handler (F5). A refusal closes
-        // the role, which get_state() below then reports.
-        if (role->hook_pending()) {
-            role->check_http_passed();
-        }
-
+        // admitted has no event to run that handler (F5). Only for a role
+        // still alive: a 200 for a peer that is already gone must not admit
+        // it (register it, start its pushes) just before it is torn down. A
+        // refusal closes the role, which the second get_state() reports.
         int state = role->get_state(cur_time_ms);
+        if (SLS_RS_INVALID != state && SLS_RS_UNINIT != state && role->hook_pending()) {
+            role->check_http_passed();
+            state = role->get_state(cur_time_ms);
+        }
         if (SLS_RS_INVALID == state || SLS_RS_UNINIT == state)
 		{
 			sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::check_invalid_sock, worker_number=%d, %s=%p, invalid sock=%d, state=%d, role_map.size=%zu.",

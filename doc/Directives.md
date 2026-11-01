@@ -262,7 +262,11 @@ may carry `Content-Length`, be chunked, or be delimited by the close.
   and the other is closed with `stream busy` (its `on_close` is still sent). A
   player asking for a stream whose publisher is still waiting sees no
   publisher, as before the publisher connected: without a pull relay it is
-  refused at once, without a hook request.
+  refused at once, without a hook request. With a pull relay on the app it
+  starts a pull for that name, and the local publisher then gets `stream
+  busy` when its 200 arrives (the pull already holds the name).
+- A connection that is gone when the 200 arrives is not admitted: the answer
+  is applied only to a connection still alive on that worker tick.
 - `on_close` is sent once for every `on_connect` that was sent, also when the
   hook refused or timed out, after the connection is gone. It is
   fire-and-forget: the answer is not used and the request is dropped after 2 s.
