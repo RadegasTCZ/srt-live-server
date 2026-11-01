@@ -107,8 +107,8 @@ public :
 
     int  libsrt_socket_nonblock(int enable);
 
-    // peer: a failure is a peer's doing (the peer already left), see libsrt_neterrno
-    int  libsrt_getsockopt(SRT_SOCKOPT optname, const char * optnamestr, void * optval, int * optlen, bool peer = false);
+    // quiet: log nothing on failure, the caller does (a peer's doing: the peer already left)
+    int  libsrt_getsockopt(SRT_SOCKOPT optname, const char * optnamestr, void * optval, int * optlen, bool quiet = false);
     int  libsrt_setsockopt(SRT_SOCKOPT optname, const char * optnamestr, const void * optval, int optlen);
 
     int  libsrt_add_to_epoll(int eid, bool write);
