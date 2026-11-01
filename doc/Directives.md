@@ -190,6 +190,12 @@ open/close) are DEBUG. An unexpected libsrt error caused by a peer (a failed
 accept, a read or write on a broken connection) is logged through the refusal
 budget at INFO, not at ERROR.
 
+libsrt's own log (its warnings and errors, such as the lines for a rejected
+handshake) is written to the sls log as `libsrt: <text>` lines at the matching
+level, never to stderr. They have their own budget of 5 lines per second,
+process-wide: the rest are logged at DEBUG and counted in a `libsrt lines: N
+suppressed` summary. libsrt's notice and debug levels are not enabled.
+
 ## log_file (srt block)
 
 Path of the log file, appended to; the directory must exist. sls opens it with

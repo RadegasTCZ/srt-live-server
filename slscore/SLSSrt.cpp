@@ -28,6 +28,7 @@
 #include <map>
 #include <string>
 #include <memory.h>
+#include <syslog.h>
 
 #include "SLSSrt.hpp"
 #include "SLSLog.hpp"
@@ -60,10 +61,52 @@ CSLSSrt::~CSLSSrt()
 {
 }
 
+// libsrt's own log. Its default logger writes every line to stderr, one or
+// more per rejected handshake (9072 for 2500 bad passphrases), outside every
+// sls budget and straight into the journal under systemd. Lines at its
+// warning level and above come here instead and go to the sls log, prefixed
+// "libsrt:", at most SLS_LIBSRT_LINES_PER_SEC a second (the rest at DEBUG,
+// counted, see sls_peer_log_flush). Called on libsrt's threads: no libsrt
+// call and no lock but the log's own.
+static void sls_libsrt_log_handler(void *opaque, int level, const char *file, int line,
+                                   const char *area, const char *message)
+{
+    (void)opaque; (void)file; (void)line; (void)area;
+    int sls_level = level <= LOG_ERR ? SLS_LOG_ERROR :
+                    level == LOG_WARNING ? SLS_LOG_WARNING :
+                    level == LOG_NOTICE ? SLS_LOG_INFO : SLS_LOG_DEBUG;
+    // one line, printable: the text can quote what a peer sent
+    char buf[1024];
+    size_t n = 0;
+    for (const char *p = message ? message : ""; *p && n + 1 < sizeof(buf); p++) {
+        unsigned char c = (unsigned char)*p;
+        buf[n++] = (c < 0x20 || c == 0x7f) ? ' ' : (char)c;
+    }
+    while (n > 0 && buf[n - 1] == ' ') {
+        n--;
+    }
+    buf[n] = 0;
+    int held = 0;
+    if (CSLSLog::libsrt_line_allowed(sls_level, &held)) {
+        if (held > 0) {
+            sls_log(sls_level, "libsrt: %s [%d more libsrt line(s) suppressed, see log_level debug]", buf, held);
+        } else {
+            sls_log(sls_level, "libsrt: %s", buf);
+        }
+    } else {
+        sls_log(SLS_LOG_DEBUG, "libsrt: %s", buf);
+    }
+}
+
 int CSLSSrt::libsrt_init()
 {
     if (m_inited)
         return SLS_OK;
+
+    srt_setloglevel(LOG_WARNING);
+    srt_setlogflags(SRT_LOGF_DISABLE_TIME | SRT_LOGF_DISABLE_THREADNAME |
+                    SRT_LOGF_DISABLE_SEVERITY | SRT_LOGF_DISABLE_EOL);
+    srt_setloghandler(NULL, sls_libsrt_log_handler);
 
     if (srt_startup() < 0) {
         return SLSERROR_UNKNOWN;

@@ -108,12 +108,42 @@ bool CSLSLog::peer_line_allowed(int level, int *held)
     return true;
 }
 
-// sls_session_log budget: a fixed one-second window, process-wide. The window
-// start and the count in it are separate atomics; a race at a window edge can
-// let a line or two more than the limit through, never unbounded.
-static std::atomic<int64_t> s_sess_window_ms(0);
-static std::atomic<int>     s_sess_count(0);
-static std::atomic<int>     s_sess_held(0);
+// A fixed one-second window, process-wide (sls_session_log's budget and
+// libsrt's lines each have one). The window start and the count in it are
+// separate atomics; a race at a window edge can let a line or two more than
+// the limit through, never unbounded.
+struct SLSWindowBudget {
+    std::atomic<int64_t> window_ms;
+    std::atomic<int>     count;
+    std::atomic<int>     held;
+};
+static SLSWindowBudget s_sess   = {{0}, {0}, {0}};
+static SLSWindowBudget s_libsrt = {{0}, {0}, {0}};
+
+static bool window_line_allowed(SLSWindowBudget &b, int per_sec, int *held)
+{
+    int64_t now = sls_gettime_ms();
+    int64_t w   = b.window_ms.load();
+    if (now - w >= 1000 && b.window_ms.compare_exchange_strong(w, now)) {
+        b.count.store(0);
+    }
+    if (b.count.fetch_add(1) >= per_sec) {
+        b.held++;
+        return false;
+    }
+    *held = b.held.exchange(0);
+    return true;
+}
+
+// the count of lines held back once the window they were held in has run
+// out (nothing more will carry it); 0 if none or the window is still open
+static int window_take_held(SLSWindowBudget &b, int64_t now)
+{
+    if (b.held.load() > 0 && now - b.window_ms.load() >= 1000) {
+        return b.held.exchange(0);
+    }
+    return 0;
+}
 
 bool CSLSLog::session_line_allowed(int level, int *held)
 {
@@ -124,29 +154,33 @@ bool CSLSLog::session_line_allowed(int level, int *held)
     if (level > m_pInstance->m_level) {
         return false;            // not logged at this level anyway: no budget used
     }
-    int64_t now = sls_gettime_ms();
-    int64_t w   = s_sess_window_ms.load();
-    if (now - w >= 1000 && s_sess_window_ms.compare_exchange_strong(w, now)) {
-        s_sess_count.store(0);
+    return window_line_allowed(s_sess, SLS_SESSION_LINES_PER_SEC, held);
+}
+
+bool CSLSLog::libsrt_line_allowed(int level, int *held)
+{
+    *held = 0;
+    if (!m_pInstance) {
+        m_pInstance = new CSLSLog();
     }
-    if (s_sess_count.fetch_add(1) >= SLS_SESSION_LINES_PER_SEC) {
-        s_sess_held++;
-        return false;
+    if (level > m_pInstance->m_level) {
+        return false;            // not logged at this level anyway: no budget used
     }
-    *held = s_sess_held.exchange(0);
-    return true;
+    return window_line_allowed(s_libsrt, SLS_LIBSRT_LINES_PER_SEC, held);
 }
 
 void CSLSLog::peer_flush()
 {
     int64_t now = sls_gettime_ms();
-    if (s_sess_held.load() > 0 && now - s_sess_window_ms.load() >= 1000) {
-        // the window has run out: nothing more will carry the count
-        int held = s_sess_held.exchange(0);
-        if (held > 0) {
-            log(SLS_LOG_INFO, "session lines: %d suppressed in the last second(s) (start/end lines over %d/s; log_level debug shows each).",
-                held, SLS_SESSION_LINES_PER_SEC);
-        }
+    int held = window_take_held(s_sess, now);
+    if (held > 0) {
+        log(SLS_LOG_INFO, "session lines: %d suppressed in the last second(s) (start/end lines over %d/s; log_level debug shows each).",
+            held, SLS_SESSION_LINES_PER_SEC);
+    }
+    held = window_take_held(s_libsrt, now);
+    if (held > 0) {
+        log(SLS_LOG_INFO, "libsrt lines: %d suppressed in the last second(s) (libsrt warnings over %d/s; log_level debug shows each).",
+            held, SLS_LIBSRT_LINES_PER_SEC);
     }
     if (0 == s_peer_held.load()) {
         return;
@@ -155,7 +189,7 @@ void CSLSLog::peer_flush()
     if (now - last < 1000 || !s_peer_last_ms.compare_exchange_strong(last, now)) {
         return;
     }
-    int held = s_peer_held.exchange(0);
+    held = s_peer_held.exchange(0);
     if (held > 0) {
         log(SLS_LOG_INFO, "peer lines: %d held back in the last %.1f s (refusals of connections and requests, at most 1 line/s; log_level debug shows each).",
             held, (now - last) / 1000.0);
