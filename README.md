@@ -115,6 +115,11 @@ check your config and tooling before you restart.
   reconnected, until a player asks again.
 - **Idle timeout default.** An omitted server-block `idle_streams_timeout` is `10`
   seconds (it was `0`, which dropped idle roles at once); `-1` still disables it.
+- **Log file.** `log_file` is opened without following symlinks (mode 0640) and
+  must be a plain file you own with one link; otherwise, or when it cannot be
+  opened, sls refuses to start. Session start/end lines are limited to 20 per
+  second process-wide (the rest are counted in a summary); see
+  `doc/Directives.md`.
 - **Process.** Privileges are dropped after bind and before any worker starts;
   SIGTERM stops sls like SIGINT; startup failures exit non-zero; the config parser
   rejects unbalanced braces. Passphrases are never written to the log.

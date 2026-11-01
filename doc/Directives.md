@@ -158,7 +158,12 @@ back in the last S s` if any were. `log_level debug` therefore shows every
 attempt.
 
 Every admitted session (publisher, player, puller, pusher) logs exactly two INFO
-lines, never rate-limited:
+lines. Normal operation logs every one; a separate budget of 20 session lines
+per second for the whole process (refusals cannot use it up, nor it theirs)
+keeps a peer that connects and leaves in a loop from flooding the log. A line
+over that budget is logged at DEBUG instead and counted; the next one within
+the budget carries `[N session line(s) suppressed]`, and the main loop logs
+`session lines: N suppressed` once the burst is over:
 
     session start, <kind>, remote=<ip>:<port>, stream=<app>/<stream>.
     session end, <kind>, remote=<ip>:<port>, stream=<app>/<stream>, duration=<s>s, reason=<why>.
@@ -168,7 +173,19 @@ connection; with it, when the hook answers 200. A refused connection (hook
 answer other than 200, no answer, refused at accept) logs neither line. The
 reason is `clean disconnect`, `idle timeout (peer silent)`, `idle timeout (no
 data)`, `shutdown`, `error` or `closed`. The per-session bookkeeping lines
-(map add/remove, epoll, socket close) are DEBUG.
+(map add/remove, epoll, socket close, reader resync, pull manager and relay
+open/close) are DEBUG. An unexpected libsrt error caused by a peer (a failed
+accept, a read or write on a broken connection) is logged through the refusal
+budget at INFO, not at ERROR.
+
+## log_file (srt block)
+
+Path of the log file, appended to; the directory must exist. sls opens it with
+`O_NOFOLLOW` and mode 0640 before it drops privileges, then checks the open file:
+a symlink, a device or other non-regular file, a file with more than one link, or
+a file owned by another user stops sls from starting (an error names the path),
+and so does a file that cannot be opened, which used to leave you with no log
+file and no message. Delete a stale file you do not own and start again.
 
 ## idle_streams_timeout (server block)
 
