@@ -20,6 +20,8 @@ srt {
     # ----- Process / runtime --------------------------------------------------
 
     worker_threads     1;       # epoll worker threads; 1 handles hundreds of streams.
+                                # 0 = serve on the main thread: then relay upstream refresh
+                                # and reload DNS lookups run on the serving thread too.
     worker_connections 300;     # max concurrent SRT sockets per worker.
                                 # Accepted connections (publishers + players) are
                                 # capped at worker_connections x max(1, worker_threads);

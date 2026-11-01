@@ -179,7 +179,13 @@ protected:
     bool                 m_retired;
     std::atomic<int>     m_refs;
     int                  m_live_relays;      // guarded by m_mutex
-    bool                 m_reconnect_pending; // guarded by m_mutex: a reconnect entry holds it (WAITING)
+    // guarded by m_mutex: a reconnect entry holds it (WAITING). A bool is enough:
+    // relay_ended() sets it only when do_on_relay_closed() hands out an entry, and
+    // a pull manager has at most one live puller (a second start fails on the
+    // existing publisher entry of the stream, CSLSPullerManager::do_start), so it
+    // holds at most one entry at a time; reconnect() clears it when that entry is
+    // dropped.
+    bool                 m_reconnect_pending;
     CSLSMapRelay        *m_owner;
 
     CSLSMapPublisher    *m_map_publisher ;

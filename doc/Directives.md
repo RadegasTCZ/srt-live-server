@@ -106,7 +106,10 @@ may carry `Content-Length`, be chunked, or be delimited by the close.
 The hook host is resolved when sls starts (a host that does not resolve, or a
 URL that is not `http://`, stops sls from starting) and again on a reload
 (`-s reload`); if the re-resolution fails the previous address stays in use and
-an error is logged. Names are never resolved while serving connections.
+an error is logged. With worker_threads >= 1 names are never resolved by a
+thread that serves connections; with `worker_threads 0` the single serving
+thread is also the main thread, so the relay upstream refresh and a reload's
+re-resolution run on it and can briefly block serving.
 
 The query of `on_event_url` and `stat_post_url` may carry a token: wherever sls
 logs either URL (also at trace level) it shows `?<redacted>` instead of the
@@ -192,7 +195,8 @@ block with an upstream that does not resolve is refused with an error in the
 log. The addresses are looked up again only after a relay connection has
 ended or failed to open, by the main loop (within about 100 ms), never by a
 worker thread and never per packet; if that lookup fails the previous
-addresses stay in use. An upstream with a `?` but no `streamid=` is refused
+addresses stay in use. (With `worker_threads 0` the main thread is also the
+serving thread, so this lookup runs on it and can briefly block serving.) An upstream with a `?` but no `streamid=` is refused
 when the relay tries to connect (error logged, no socket left open).
 
 ## Command line
