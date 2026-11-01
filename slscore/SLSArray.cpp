@@ -94,15 +94,17 @@ int CSLSArray::put(const uint8_t * data, int len)
         sls_log(SLS_LOG_INFO, "[%p]CSLSArray::put, len=%d is bigger than nRemainder=%d, ext m_nDataSize=%d to ext_len=%d.",
                 this, len, nRemainder, m_nDataSize, ext_len);
 
+        // the new buffer holds the pending bytes in order, then the new ones:
+        // read at 0, write right after them (ext_len > count, so never wrapped)
         uint8_t *ext_data = new uint8_t[ext_len];
         int re = get_inline(ext_data, m_nDataCount);
         memcpy(ext_data + re, data, len);
         delete[] m_arrayData;
         m_arrayData      = ext_data;
         m_nDataSize      = ext_len;
-        m_nWritePos      = 0;
         m_nReadPos       = 0;
         m_nDataCount     = re + len;
+        m_nWritePos      = m_nDataCount < m_nDataSize ? m_nDataCount : 0;
         return len;
     }
 
@@ -148,42 +150,24 @@ int CSLSArray::get_inline(uint8_t *data, int size)
     sls_log(SLS_LOG_TRACE, "[%p]CSLSArray::get, m_nReadPos=%d, m_nWritePos=%d, m_nDataCount=%d, m_nDataSize=%d.",
             this, m_nReadPos, m_nWritePos, m_nDataCount, m_nDataSize);
 
-    int ready_data_len = 0;
-    int copy_data_len  = 0;
-    if (m_nReadPos < m_nWritePos) {
-        //read pos is behind in the write pos
-        ready_data_len = m_nWritePos - m_nReadPos;
-        copy_data_len = ready_data_len <= size ? ready_data_len : size;
-        //sls_log(SLS_LOG_TRACE, "[%p]CSLSArray::get, read pos is behind in the write pos, copy_data_len=%d, ready_data_len=%d, size=%d.",
-        //		this, copy_data_len, ready_data_len, size);
-        memcpy(data, m_arrayData + m_nReadPos, copy_data_len);
-        m_nReadPos   += copy_data_len;
-        m_nDataCount -= copy_data_len;
-    } else {
-        ready_data_len = m_nDataSize - m_nReadPos + m_nWritePos;
-        copy_data_len = ready_data_len <= size ? ready_data_len : size;
-        //sls_log(SLS_LOG_TRACE, "[%p]CSLSArray::get, read pos is before of the write pos, copy_data_len=%d, ready_data_len=%d, size=%d.",
-        //		this, copy_data_len, ready_data_len, size);
-        if (m_nDataSize - m_nReadPos >= copy_data_len) {
-            //no wrap round
-            memcpy(data, m_arrayData + m_nReadPos, copy_data_len);
-            m_nReadPos   += copy_data_len;
-        } else {
-            memcpy(data, m_arrayData + m_nReadPos, m_nDataSize - m_nReadPos);
-            //wrap around
-            memcpy(data + (m_nDataSize - m_nReadPos), m_arrayData, copy_data_len - (m_nDataSize - m_nReadPos));
-            m_nReadPos = copy_data_len - (m_nDataSize - m_nReadPos);
-        }
-        m_nDataCount -= copy_data_len;
+    // m_nDataCount is the one source of truth: the bytes from the read
+    // position on (wrapping at the end) are the pending data. Positions alone
+    // cannot tell a full buffer from an empty one (read == write in both).
+    int copy_data_len = m_nDataCount <= size ? m_nDataCount : size;
+    if (copy_data_len <= 0) {
+        return SLS_OK;
     }
-    if (m_nReadPos == m_nDataSize)
-    	m_nReadPos = 0;
-
-    if (m_nReadPos > m_nDataSize) {
-        sls_log(SLS_LOG_WARNING, "[%p]CSLSArray::get, m_nReadPos=%d, but m_nDataSize=%d.",
-        		this, m_nReadPos, m_nDataSize);
-    	m_nReadPos = 0;
+    int first_len = m_nDataSize - m_nReadPos;
+    if (first_len > copy_data_len) {
+        first_len = copy_data_len;
     }
+    memcpy(data, m_arrayData + m_nReadPos, first_len);
+    if (copy_data_len > first_len) {
+        //wrap around
+        memcpy(data + first_len, m_arrayData, copy_data_len - first_len);
+    }
+    m_nReadPos    = (m_nReadPos + copy_data_len) % m_nDataSize;
+    m_nDataCount -= copy_data_len;
     sls_log(SLS_LOG_TRACE, "[%p]CSLSArray::get, copy_data_lens=%d.",
     		this, copy_data_len);
     return copy_data_len;
