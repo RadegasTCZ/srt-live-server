@@ -193,8 +193,7 @@ budget at INFO, not at ERROR.
 libsrt's own log (its warnings and errors, such as the lines for a rejected
 handshake) is written to the sls log as `libsrt: <text>` lines, at WARNING at
 most (a peer must not be able to cause ERROR lines; other bytes than printable
-ASCII as `\xNN`)
-level, never to stderr. They share the refusal budget above (most are caused by
+ASCII as `\xNN`), never to stderr. They share the refusal budget above (most are caused by
 a peer, such as a rejected handshake): one line a second with sls's own
 refusals, the rest at DEBUG and counted. libsrt's notice and debug levels are
 not enabled.
