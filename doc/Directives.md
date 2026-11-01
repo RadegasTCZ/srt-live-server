@@ -281,6 +281,18 @@ userinfo and everything after the first `?` replaced by `<redacted>`. That cover
 a mistyped directive name as well as `on_event_url`, `stat_post_url` and the
 `?streamid=...` of a relay upstream. `srt_passphrase` is logged as `***`.
 
+## Hardening
+
+sls clears its dumpable flag at start (`prctl(PR_SET_DUMPABLE, 0)`), so the
+passphrases in memory are not reachable through a core dump, `ptrace` or
+`/proc/<pid>/mem` by the same user. The side effects: no core file when it
+crashes, no `gdb -p`, and `/proc/<pid>/exe` and `/proc/<pid>/fd` are unreadable
+(`sls -s reload|stop` copes with that). To debug a crash start sls with the
+environment variable `SLS_DUMPABLE=1`, which leaves the flag alone.
+
+A lock that cannot be taken aborts the process with a message on stderr instead
+of running the critical section unlocked.
+
 ## Startup warnings
 
 sls logs a WARNING at start when

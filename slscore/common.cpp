@@ -723,6 +723,12 @@ void sls_harden_process()
     // Passphrases are in memory: no core dump, and no ptrace or /proc/<pid>/mem
     // from the same uid. (A privilege change resets the flag, so this is also
     // called again after the drop.)
+    // SLS_DUMPABLE=1 keeps the process dumpable on purpose: for debugging a crash
+    // (core dumps, gdb attach) and for tests that inspect /proc/<pid>/fd.
+    const char *keep = getenv("SLS_DUMPABLE");
+    if (keep && strcmp(keep, "1") == 0) {
+        return;
+    }
     if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) {
         sls_log(SLS_LOG_WARNING, "prctl(PR_SET_DUMPABLE, 0) failed: %s.", strerror(errno));
     }
