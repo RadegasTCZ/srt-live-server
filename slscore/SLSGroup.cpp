@@ -158,17 +158,21 @@ int CSLSGroup::handler()
     sls_log(SLS_LOG_TRACE, "[%p]CSLSGroup::handle, worker_number=%d, writable sock count=%d, readable sock count=%d.",
         this, m_worker_number, write_len, read_len);
 
+    // A socket in the epoll without a role is a bug (a role leaves the epoll
+    // before its socket is closed), but if one is ever left there the epoll
+    // reports it on every wait: those lines go through the peer-line budget
+    // (1/s, the rest at DEBUG), so a leak shows without flooding the log.
     for (i = 0; i < write_len; i ++) {
         std::map<int, CSLSRole *>::iterator it = m_map_role.find(m_write_socks[i]);
         if (it == m_map_role.end()) {
-            sls_log(SLS_LOG_WARNING, "[%p]CSLSGroup::handle, worker_number=%d, no role map writable sock=%d,why?",
+            sls_peer_log(SLS_LOG_WARNING, "[%p]CSLSGroup::handle, worker_number=%d, no role map writable sock=%d,why?",
                     this, m_worker_number, m_write_socks[i]);
             continue;
         }
 
         CSLSRole* role = it->second;
         if (!role) {
-            sls_log(SLS_LOG_WARNING, "[%p]CSLSGroup::handle, worker_number=%d, role is null, writable sock=%d,why?",
+            sls_peer_log(SLS_LOG_WARNING, "[%p]CSLSGroup::handle, worker_number=%d, role is null, writable sock=%d,why?",
                     this, m_worker_number, m_write_socks[i]);
             continue;
         }
@@ -187,14 +191,14 @@ int CSLSGroup::handler()
     for (i = 0; i < read_len; i ++) {
         std::map<int, CSLSRole *>::iterator it = m_map_role.find(m_read_socks[i]);
         if (it == m_map_role.end()) {
-            sls_log(SLS_LOG_WARNING, "[%p]CSLSGroup::handle, worker_number=%d, no role map readable sock=%d,why?",
+            sls_peer_log(SLS_LOG_WARNING, "[%p]CSLSGroup::handle, worker_number=%d, no role map readable sock=%d,why?",
                     this, m_worker_number, m_read_socks[i]);
             continue;
         }
 
         CSLSRole* role = it->second;
         if (!role) {
-            sls_log(SLS_LOG_WARNING, "[%p]CSLSGroup::handle, worker_number=%d, role is null, readable sock=%d,why?",
+            sls_peer_log(SLS_LOG_WARNING, "[%p]CSLSGroup::handle, worker_number=%d, role is null, readable sock=%d,why?",
                      this, m_worker_number, m_read_socks[i]);
             continue;
         }
