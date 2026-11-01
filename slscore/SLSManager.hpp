@@ -96,7 +96,6 @@ public :
     int  start_listeners();   // bind + listen, no threads (call before dropping privileges)
     int  start_workers();     // groups and their threads (call after dropping privileges)
     int  stop();
-    int  reload();
     int  reload_users();
     // close queued roles past their listener's admission_timeout (main thread)
     int  expire_queued_roles(int64_t now_ms);

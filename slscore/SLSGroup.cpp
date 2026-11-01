@@ -41,7 +41,6 @@ CSLSGroup::CSLSGroup()
     m_list_role          = NULL;
     m_worker_connections = 100;
     m_worker_number      = 0;
-    m_reload             = false;
     m_intake_stopped     = false;
 
     m_stat_post_last_tm_ms = sls_gettime_ms();
@@ -65,6 +64,11 @@ int CSLSGroup::stop()
 	int ret = 0;
     sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::stop, worker_number=%d.", this, m_worker_number);
 	ret = CSLSEpollThread::stop();
+    // With a thread, its last act was clear() and this is a no-op. In
+    // single-thread mode (worker_threads 0) there was no thread: the roles,
+    // the listeners among them, are released here, on the thread that
+    // polled them.
+    clear();
 
     // the worker has stopped: give the last on_close requests a moment to leave
     int64_t drain_until = sls_gettime_ms() + 300;
@@ -81,11 +85,6 @@ int CSLSGroup::stop()
     m_list_wait_close.clear();
     sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::stop, m_list_wait_close.clear, worker_number=%d.", this, m_worker_number);
 	return ret;
-}
-
-void CSLSGroup::reload()
-{
-    m_reload = true;
 }
 
 void CSLSGroup::check_new_role() {
@@ -137,13 +136,6 @@ int CSLSGroup::handler()
     int write_len = MAX_SOCK_COUNT;
 
     int handler_count = 0;
-
-    if (m_reload && (m_map_role.size() == 0)) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::handle, worker_number=%d stop, m_reload is true, m_map_role.size()=0.",
-               this, m_worker_number);
-    	m_exit = true;
-    	return SLS_OK;
-    }
 
     //check epoll event
     ret = srt_epoll_wait(m_eid, m_read_socks, &read_len, m_write_socks, &write_len, POLLING_TIME, 0, 0, 0, 0);

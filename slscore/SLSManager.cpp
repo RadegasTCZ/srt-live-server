@@ -213,15 +213,11 @@ int CSLSManager::stop()
         if (*it_w) (*it_w)->stop_intake();
     }
 
-    //stop all listeners
-    std::list<CSLSListener *>::iterator it;
-    for ( it = m_servers.begin(); it != m_servers.end(); it++) {
-    	CSLSListener *server = *it;
-    	if (NULL == server) {
-    		continue;
-    	}
-    	server->uninit();
-    }
+    // The listeners are not touched here. Each one is a role: once a worker
+    // adopted it, that worker polls it (get_state, accept) every tick, so it
+    // is uninit'd and deleted only by its group's clear(), after the thread
+    // has been joined. A listener no worker adopted yet is still queued and
+    // is released exactly once, with the role list below.
     m_servers.clear();
 
     std::list<CSLSGroup *>::iterator it_worker;
@@ -284,32 +280,6 @@ int CSLSManager::expire_queued_roles(int64_t now_ms)
         return 0;
     }
     return m_list_role->expire(now_ms, SLS_DEFAULT_ADMISSION_TIMEOUT);
-}
-
-int CSLSManager::reload()
-{
-    sls_log(SLS_LOG_INFO, "[%p]CSLSManager::reload begin.", this);
-
-    //stop all listeners
-    std::list<CSLSListener *>::iterator it;
-    for ( it = m_servers.begin(); it != m_servers.end(); it++) {
-    	CSLSListener *server = *it;
-    	if (NULL == server) {
-    		continue;
-    	}
-    	server->uninit();
-    }
-    m_servers.clear();
-
-    //set all groups reload flag
-    std::list<CSLSGroup *>::iterator it_worker;
-    for ( it_worker = m_workers.begin(); it_worker != m_workers.end(); it_worker++) {
-    	CSLSGroup *worker = *it_worker;
-    	if (worker) {
-    		worker->reload();
-    	}
-    }
-	return 0;
 }
 
 int CSLSManager::reload_users()
