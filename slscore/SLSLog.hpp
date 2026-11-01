@@ -92,7 +92,18 @@ static const char APP_NAME[] __attribute__((unused)) = "SLS";
  * string literal.
  */
 #define SLS_SESSION_LINES_PER_SEC 20
-#define sls_session_log(fmt, ...) do {                                                     int sls_sess_held_ = 0;                                                            if (CSLSLog::session_line_allowed(SLS_LOG_INFO, &sls_sess_held_)) {                    if (sls_sess_held_ > 0)                                                                CSLSLog::log(SLS_LOG_INFO, fmt " [%d session line(s) suppressed, see log_level debug]",                              ##__VA_ARGS__, sls_sess_held_);                                   else                                                                                   CSLSLog::log(SLS_LOG_INFO, fmt, ##__VA_ARGS__);                            } else {                                                                               CSLSLog::log(SLS_LOG_DEBUG, fmt, ##__VA_ARGS__);                               }                                                                              } while (0)
+#define sls_session_log(fmt, ...) do {                                   \
+        int sls_sess_held_ = 0;                                                    \
+        if (CSLSLog::session_line_allowed(SLS_LOG_INFO, &sls_sess_held_)) {        \
+            if (sls_sess_held_ > 0)                                                \
+                CSLSLog::log(SLS_LOG_INFO, fmt " [%d session line(s) suppressed, see log_level debug]", \
+                             ##__VA_ARGS__, sls_sess_held_);                       \
+            else                                                                   \
+                CSLSLog::log(SLS_LOG_INFO, fmt, ##__VA_ARGS__);                    \
+        } else {                                                                   \
+            CSLSLog::log(SLS_LOG_DEBUG, fmt, ##__VA_ARGS__);                       \
+        }                                                                          \
+    } while (0)
 /**
  * CSLSLog
  */
