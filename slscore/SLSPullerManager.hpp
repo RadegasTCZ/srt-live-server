@@ -47,7 +47,7 @@ protected:
     virtual int  do_start();
     virtual int  do_reconnect(int64_t cur_tm_ms);
     virtual bool do_on_relay_closed(CSLSRelay *relay);
-    bool has_readers();
+    virtual bool has_readers();
     virtual bool retires_when_idle() { return true; }
 
     int connect_loop();

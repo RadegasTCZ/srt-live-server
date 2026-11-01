@@ -109,6 +109,7 @@ CSLSRelayManager::CSLSRelayManager()
     m_retired            = false;
     m_refs               = 1;      // the creator's (the map entry)
     m_live_relays        = 0;
+    m_reconnect_pending  = false;
     m_owner              = NULL;
 
     memset(m_app_uplive, 0, sizeof(m_app_uplive));
@@ -159,7 +160,11 @@ bool CSLSRelayManager::relay_ended(CSLSRelay *relay, bool may_reconnect)
 	}
 	if (may_reconnect) {
 		if (m_sri) m_sri->mark_stale();    // resolve the upstreams again before the retry
-		return do_on_relay_closed(relay);
+		bool entry = do_on_relay_closed(relay);
+		if (entry) {
+			m_reconnect_pending = true;   // the caller's reconnect entry: WAITING
+		}
+		return entry;
 	}
 	// nobody will hold a reconnect entry: do not leave a manager that
 	// neither runs nor waits
@@ -198,6 +203,14 @@ int CSLSRelayManager::start()
 				this, m_app_uplive, m_stream_name);
 		return SLS_ERROR;
 	}
+	if (retires_when_idle() && m_reconnect_pending && 0 == m_live_relays) {
+		// WAITING: the reconnect entry connects when reconnect_interval is up;
+		// a player request must not connect early (its retries would set the
+		// upstream connect rate)
+		sls_peer_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::start, waiting to reconnect (reconnect_interval=%ds), no early connect, app_uplive=%s, stream_name=%s.",
+				this, m_sri ? m_sri->m_reconnect_interval : 0, m_app_uplive, m_stream_name);
+		return SLS_ERROR;
+	}
 	return do_start();
 }
 
@@ -205,9 +218,14 @@ int CSLSRelayManager::reconnect(int64_t cur_tm_ms)
 {
 	CSLSLock lock(&m_mutex);
 	if (m_retired) {
+		m_reconnect_pending = false;
 		return SLS_OK;   // nothing left to do: drop the reconnect entry
 	}
-	return do_reconnect(cur_tm_ms);
+	int ret = do_reconnect(cur_tm_ms);
+	if (SLS_OK == ret) {
+		m_reconnect_pending = false;   // the caller drops its entry
+	}
+	return ret;
 }
 
 bool CSLSRelayManager::do_on_relay_closed(CSLSRelay *relay)
@@ -216,9 +234,14 @@ bool CSLSRelayManager::do_on_relay_closed(CSLSRelay *relay)
 	return true;
 }
 
-void CSLSRelayManager::retire_if_idle(const char *why)
+void CSLSRelayManager::start_failed(bool created, const char *why)
 {
 	CSLSLock lock(&m_mutex);
+	if (!created && has_readers()) {
+		// players are attached (typically WAITING for the reconnect entry):
+		// they depend on this manager, so it stays
+		return;
+	}
 	retire_locked(why);
 }
 

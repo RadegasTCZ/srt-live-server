@@ -771,7 +771,8 @@ int CSLSListener::handler()
     				return client_count;
         		}
         	}
-        	CSLSRelayManager *puller_manager = m_map_puller->add_relay_manager(app_uplive.c_str(), stream_name);
+        	bool created = false;
+        	CSLSRelayManager *puller_manager = m_map_puller->add_relay_manager(app_uplive.c_str(), stream_name, &created);
         	if (NULL == puller_manager) {
     			sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, m_map_puller->add_relay_manager failed, new role[%s:%d], stream='%s', publisher is NULL, no puller_manager.",
     						this, peer_name, peer_port, key_stream_name);
@@ -786,8 +787,10 @@ int CSLSListener::handler()
         	if (SLS_OK != puller_manager->start()) {
     			sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, puller_manager->start failed, new client[%s:%d], stream='%s'.",
     						this, peer_name, peer_port, key_stream_name);
-    			// no puller to keep it: do not leave it counting against max_pull_streams
-    			puller_manager->retire_if_idle("first pull failed");
+    			// One this request created has no puller to keep it: it must not
+    			// keep counting against max_pull_streams. An existing one may be
+    			// waiting to reconnect for players already attached: it stays.
+    			puller_manager->start_failed(created, "first pull failed");
     			srt->libsrt_close();
     			delete srt;
     			return client_count;

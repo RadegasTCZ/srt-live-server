@@ -46,8 +46,10 @@ CSLSMapRelay::~CSLSMapRelay()
     clear();
 }
 
-CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const char *stream_name)
+CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const char *stream_name,
+                                                   bool *created)
 {
+    if (created) *created = false;
     //find conf info
 	SLS_RELAY_INFO * sri = get_relay_conf(std::string(app_uplive));
 	if (NULL == sri) {
@@ -89,6 +91,7 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
                 m_map_relay_manager[key_stream_name] = cur_mananger;  // the map's reference
                 cur_mananger->add_ref();                              // the caller's
                 count++;
+                if (created) *created = true;
             }
         }
     }

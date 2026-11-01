@@ -168,7 +168,11 @@ A pull exists only for its players. It is dropped, with no reconnect, when
 - its upstream connection ends and no player is attached (also while it waits
   for `reconnect_interval` to retry).
 While players are attached a broken pull reconnects every `reconnect_interval`
-seconds, as before. The next player request starts a new pull.
+seconds, as before; the attached players resume when it does. A new player
+asking for the stream meanwhile neither connects early nor ends the pull: it
+is refused (`waiting to reconnect`) and may retry, so retrying players never
+raise the upstream connect rate. The next player request after a pull was
+dropped starts a new pull.
 
 A relay block (pull or push) without `upstreams` is a configuration error:
 sls refuses to start.

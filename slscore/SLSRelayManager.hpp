@@ -95,11 +95,15 @@ class CSLSMapRelay;
  *             against max_pull_streams),
  *   WAITING   m_live_relays == 0, not retired, a worker reconnect-list entry
  *             will call reconnect(), which ends in LIVE, RETIRED, or WAITING
- *             again (attempt failed, players still attached),
+ *             again (attempt failed, players still attached);
+ *             m_reconnect_pending is set. start() does not connect early: a
+ *             player request is refused and the entry keeps to
+ *             reconnect_interval, so retrying players never set the upstream
+ *             connect rate,
  *   RETIRED   out of the map, no relay, never connects again.
  * Every transition happens under m_mutex: start()/do_start (-> LIVE),
  * relay_ended() (LIVE -> WAITING/RETIRED, the one place a relay stops
- * counting), reconnect() and retire_if_idle(). m_live_relays is a plain int
+ * counting), reconnect() and start_failed(). m_live_relays is a plain int
  * guarded by m_mutex. A retire is refused while a relay is live.
  *
  * Lock order: manager m_mutex -> CSLSMapRelay::m_rwclock (retire removes the
@@ -128,8 +132,12 @@ public :
     // one (relay torn down outside a worker) a pull manager left with no
     // live relay retires on the spot.
     bool relay_ended(CSLSRelay *relay, bool may_reconnect);
-    // stop for good unless a relay of this manager is still running
-    void retire_if_idle(const char *why);
+    // A listener's start() for a player failed. created: that same request
+    // made this manager. A manager someone else made may be WAITING with
+    // players attached that depend on its reconnect entry: it is kept, and
+    // retired only if nobody reads its stream; one this request created has
+    // nobody else and retires (it must not hold a max_pull_streams slot).
+    void start_failed(bool created, const char *why);
     bool is_retired();
 
     virtual int  add_reconnect_stream(char* relay_url) = 0;
@@ -147,6 +155,8 @@ protected:
     void relay_attached_locked(CSLSRelay *relay);
     // pull managers exist only for running pulls; push managers persist
     virtual bool retires_when_idle() { return false; }
+    // under m_mutex: a player is attached to this manager's stream (pull)
+    virtual bool has_readers() { return false; }
 
     virtual int  do_start() = 0;
     virtual int  do_reconnect(int64_t cur_tm_ms) = 0;
@@ -163,6 +173,7 @@ protected:
     bool                 m_retired;
     std::atomic<int>     m_refs;
     int                  m_live_relays;      // guarded by m_mutex
+    bool                 m_reconnect_pending; // guarded by m_mutex: a reconnect entry holds it (WAITING)
     CSLSMapRelay        *m_owner;
 
     CSLSMapPublisher    *m_map_publisher ;
