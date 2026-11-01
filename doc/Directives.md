@@ -191,11 +191,15 @@ per attempt as `listen_callback, refused [...]: too many wrong passphrases ...`
 `user_file` the same applies to `srt_passphrase`, counted per address alone:
 there is one passphrase for every stream name, so changing the name between
 attempts does not reset the count.
-Addresses are keyed like the per-IP cap (an IPv6 /64 as one address). Up to
-16384 (address, user) pairs are tracked; when the table is full and nothing
-in it can be forgotten, all new pairs share one entry, so a spray from many
-addresses gets new pairs refused for a while instead of letting their guesses
-go uncounted.
+Addresses are keyed like the per-IP cap (an IPv6 /64 as one address). Nobody's
+failures can block anyone else: only a tracked (address, user) pair is ever
+blocked. Up to 16384 pairs are tracked, at most 8 per address, so a source that
+rotates user names only replaces its own pairs. When the table is full, the
+pair dropped to make room is an unblocked one with the fewest failures (then
+the least recently failed); a block is dropped only when every pair is
+blocked. Failures that go uncounted this way (under a spray from many
+addresses) are still bounded by `max_handshakes_per_ip_per_sec`, which is the
+backstop for guessing.
 
 This depends on that libsrt log text (checked against libsrt 1.5.4) and on a
 libsrt built with logging (the distribution packages are). If a libsrt
