@@ -53,7 +53,7 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
     //find conf info
 	SLS_RELAY_INFO * sri = get_relay_conf(std::string(app_uplive));
 	if (NULL == sri) {
-    	sls_peer_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, no relay conf info, app_uplive=%s, stream_name=%s.",
+    	sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapRelay::add_relay_manager, no relay conf info, app_uplive=%s, stream_name=%s.",
                 this, app_uplive, stream_name);
 		return NULL;
 	}
