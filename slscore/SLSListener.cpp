@@ -25,6 +25,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <srt/access_control.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <string.h>
@@ -118,21 +121,21 @@ void CSLSListener::set_admission_limiter(CSLSConnLimiter *limiter)
 
 // Rate-limited with every other peer-triggered line (sls_peer_log): a flood
 // from many listeners still logs one line per second.
-void CSLSListener::log_admission_refusal(const char *peer_name, int peer_port, int why, const char *stream)
+void CSLSListener::log_admission_refusal(const char *where, const char *peer_name, int peer_port, int why, const char *stream)
 {
     if (SLS_CONN_PER_IP == why) {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: per-IP connection limit (%d) reached.",
-                     this, peer_name, peer_port, m_admission_limiter->max_per_ip());
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::%s, refused [%s:%d]: per-IP connection limit (%d) reached.",
+                     this, where, peer_name, peer_port, m_admission_limiter->max_per_ip());
     } else if (SLS_CONN_PLAYERS == why) {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: player connection limit (%d; %d of %d kept for publishers) reached.",
-                     this, peer_name, peer_port, m_admission_limiter->max_players(),
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::%s, refused [%s:%d]: player connection limit (%d; %d of %d kept for publishers) reached.",
+                     this, where, peer_name, peer_port, m_admission_limiter->max_players(),
                      m_admission_limiter->reserved_publishers(), m_admission_limiter->max_total());
     } else if (SLS_CONN_STREAM == why) {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: stream '%s' has max_players_per_stream (%d) players.",
-                     this, peer_name, peer_port, stream ? stream : "", m_max_players_per_stream);
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::%s, refused [%s:%d]: stream '%s' has max_players_per_stream (%d) players.",
+                     this, where, peer_name, peer_port, stream ? stream : "", m_max_players_per_stream);
     } else {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: total connection limit (%d) reached.",
-                     this, peer_name, peer_port, m_admission_limiter->max_total());
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::%s, refused [%s:%d]: total connection limit (%d) reached.",
+                     this, where, peer_name, peer_port, m_admission_limiter->max_total());
     }
 }
 
@@ -533,10 +536,37 @@ int CSLSListener::reload_users()
     return SLS_OK;
 }
 
+// The address as the accept path writes it (inet_ntop of the peer address).
+static void sls_peer_of(const struct sockaddr *sa, char *ip, size_t ip_len, int *port)
+{
+    ip[0] = 0;
+    *port = 0;
+    if (NULL == sa) {
+        return;
+    }
+    if (AF_INET == sa->sa_family) {
+        const struct sockaddr_in *a = (const struct sockaddr_in *)sa;
+        inet_ntop(AF_INET, &a->sin_addr, ip, ip_len);
+        *port = ntohs(a->sin_port);
+    } else if (AF_INET6 == sa->sa_family) {
+        const struct sockaddr_in6 *a = (const struct sockaddr_in6 *)sa;
+        inet_ntop(AF_INET6, &a->sin6_addr, ip, ip_len);
+        *port = ntohs(a->sin6_port);
+    }
+}
+
+// Runs on libsrt's receive thread for every connection request, before the
+// handshake completes (and before libsrt checks the passphrase). It must not
+// block: no DNS, no file access, and only locks that are never held across a
+// system call (the users read lock, the limiter's mutex; the log's own, as
+// for every peer line).
 int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
                                   const struct sockaddr *peeraddr, const char *streamid)
 {
     CSLSListener *self = static_cast<CSLSListener*>(opaq);
+    char peer_ip[IP_MAX_LEN];
+    int  peer_port = 0;
+    sls_peer_of(peeraddr, peer_ip, sizeof(peer_ip), &peer_port);
 
     if (!streamid || !*streamid) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, empty streamid; rejecting.", self);
@@ -560,6 +590,28 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         return -1;
     }
     const char *direction = (SLS_SID_PUBLISHER == role) ? "publish" : "play";
+
+    // The admission caps, before the handshake completes: a refused peer
+    // costs no key exchange and no accept. The accept checks them again and
+    // takes the slot (connections may come and go in between).
+    if (NULL != self->m_admission_limiter) {
+        std::string key_stream = app_key + "/" + stream;
+        bool publisher = (SLS_SID_PUBLISHER == role);
+        int why = self->m_admission_limiter->check(peer_ip, publisher,
+                      publisher ? std::string() : self->player_stream_key(key_stream.c_str()),
+                      publisher ? 0 : self->m_max_players_per_stream);
+        if (SLS_CONN_OK != why) {
+            self->log_admission_refusal("listen_callback", peer_ip, peer_port, why, key_stream.c_str());
+            srt_setrejectreason(ns, SRT_REJX_OVERLOAD);
+            return -1;
+        }
+    }
+
+    // Without user_file there is no passphrase to set per connection.
+    const char *user_file = ((sls_conf_server_t*)self->m_conf)->user_file;
+    if (!(user_file && *user_file)) {
+        return 0;
+    }
 
     // Look up credentials under a read lock and copy what we need out of
     // the map so we can drop the lock before calling into libsrt (which may
@@ -690,14 +742,15 @@ int CSLSListener::start()
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_setup ok.", this);
 
-    // The callback is installed whenever user_file is set, regardless of how many
-    // users are loaded: with no callback every streamid would be accepted.
+    // Always installed: it refuses a bad streamid and a connection over a cap
+    // before the handshake completes, and with user_file it sets the user's
+    // passphrase (with no callback every streamid would be accepted).
+    if (srt_listen_callback(m_srt->libsrt_get_fd(), listen_callback, this) < 0) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, srt_listen_callback failed: %s.",
+                this, srt_getlasterror_str());
+        return SLS_ERROR;
+    }
     if (user_file && *user_file) {
-        if (srt_listen_callback(m_srt->libsrt_get_fd(), listen_callback, this) < 0) {
-            sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, srt_listen_callback failed: %s.",
-                    this, srt_getlasterror_str());
-            return SLS_ERROR;
-        }
         sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, per-user auth active (%zu user(s) loaded).",
                 this, m_users.size());
     }
@@ -866,7 +919,7 @@ int CSLSListener::accept_one()
         // before anything is looked up or pulled for it
         if (!slot.take(m_admission_limiter, peer_name, false, player_stream_key(key_stream_name),
                        m_max_players_per_stream, &why)) {
-            log_admission_refusal(peer_name, peer_port, why, key_stream_name);
+            log_admission_refusal("handler", peer_name, peer_port, why, key_stream_name);
             srt->libsrt_close();
             delete srt;
             return client_count;
@@ -984,7 +1037,7 @@ int CSLSListener::accept_one()
     app_uplive = key_app;
 	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
 	if (!slot.take(m_admission_limiter, peer_name, true, std::string(), 0, &why)) {
-		log_admission_refusal(peer_name, peer_port, why, key_stream_name);
+		log_admission_refusal("handler", peer_name, peer_port, why, key_stream_name);
 		srt->libsrt_close();
 		delete srt;
 		return client_count;

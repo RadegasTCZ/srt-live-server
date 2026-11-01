@@ -177,7 +177,7 @@ private:
     // or refused), 0 = the accept failed (more may be queued), -1 = nothing queued.
     int  accept_one();
     // one INFO line per second at most for accept-time refusals
-    void log_admission_refusal(const char *peer_name, int peer_port, int why, const char *stream);
+    void log_admission_refusal(const char *where, const char *peer_name, int peer_port, int why, const char *stream);
     // the limiter's per-stream key of a player of key_stream_name
     std::string player_stream_key(const char *key_stream_name) const;
     // Role of a parsed streamid by host/app (never by app name alone); on
