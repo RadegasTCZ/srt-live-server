@@ -207,6 +207,11 @@ private:
                                const struct sockaddr *peeraddr, const char *streamid);
 
 public:
+    // libsrt refused socket ns for a wrong passphrase (on its receive
+    // thread): its handshake record, in whichever listener holds it, is
+    // dropped, as it will never be accepted.
+    static void forget_handshake(int ns);
+
     // Re-read the user_file configured for this listener and swap it into
     // m_userdb under its write lock. Safe to call from the main thread while
     // listen_callback is firing on SRT's internal thread. Returns SLS_ERROR

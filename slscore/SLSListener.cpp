@@ -80,8 +80,25 @@ CSLSListener::CSLSListener()
     sprintf(m_role_name, "listener");
 }
 
+// Every listener whose in-flight records the wrong-passphrase observer may
+// drop (forget_handshake). The mutex is a leaf: taken on libsrt's receive
+// thread inside its log handler, never held across a libsrt call, and only
+// the table's own mutex is taken under it.
+static CSLSMutex                 s_listeners_mutex;
+static std::set<CSLSListener *>  s_listeners;
+
 CSLSListener::~CSLSListener()
 {
+    CSLSLock lock(&s_listeners_mutex);
+    s_listeners.erase(this);
+}
+
+void CSLSListener::forget_handshake(int ns)
+{
+    CSLSLock lock(&s_listeners_mutex);
+    for (std::set<CSLSListener *>::iterator it = s_listeners.begin(); it != s_listeners.end(); ++it) {
+        (*it)->m_inflight.drop(ns);
+    }
 }
 
 int CSLSListener::init()
@@ -586,6 +603,7 @@ static void sls_peer_of(const struct sockaddr *sa, char *ip, size_t ip_len, int 
 // noted for that handshake.
 static void sls_on_bad_secret(int ns)
 {
+    CSLSListener::forget_handshake(ns);   // never accepted: its record would only take room
     std::string ip;
     if (sls_auth_throttle().bad_secret(ns, sls_monotonic_ms(), &ip)) {
         sls_peer_log(SLS_LOG_INFO, "CSLSListener, %d wrong passphrases from %s within %d s: refusing that address for %d s.",
@@ -822,6 +840,10 @@ int CSLSListener::start()
     // before the handshake completes, and with user_file it sets the user's
     // passphrase (with no callback every streamid would be accepted).
     CSLSSrt::set_bad_secret_observer(sls_on_bad_secret);   // the same for every listener
+    {
+        CSLSLock lock(&s_listeners_mutex);
+        s_listeners.insert(this);
+    }
     if (srt_listen_callback(m_srt->libsrt_get_fd(), listen_callback, this) < 0) {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, srt_listen_callback failed: %s.",
                 this, srt_getlasterror_str());
