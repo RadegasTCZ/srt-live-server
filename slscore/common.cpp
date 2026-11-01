@@ -727,6 +727,10 @@ void sls_harden_process()
     // (core dumps, gdb attach) and for tests that inspect /proc/<pid>/fd.
     const char *keep = getenv("SLS_DUMPABLE");
     if (keep && strcmp(keep, "1") == 0) {
+        // a uid change resets the flag (fs.suid_dumpable), so set it explicitly
+        prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+        sls_log(SLS_LOG_WARNING, "SLS_DUMPABLE=1: the process is left dumpable; passphrases in memory are readable "
+                "through core dumps and ptrace. Unset it outside debugging.");
         return;
     }
     if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) {
