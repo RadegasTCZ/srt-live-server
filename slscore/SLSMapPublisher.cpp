@@ -70,7 +70,7 @@ int CSLSMapPublisher::set_push_2_pushlisher(std::string app_streamname, CSLSRole
     }
 
 	m_map_push_2_pushlisher[app_streamname] = role;
-    sls_log(SLS_LOG_INFO, "[%p]CSLSMapPublisher::set_push_2_pushlisher, ok, %s=%p, app_streamname=%s, m_map_push_2_pushlisher.size()=%zu.",
+    sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapPublisher::set_push_2_pushlisher, ok, %s=%p, app_streamname=%s, m_map_push_2_pushlisher.size()=%zu.",
             this, role->get_role_name(), role, app_streamname.c_str(), m_map_push_2_pushlisher.size());
     return SLS_OK;
 }
@@ -127,7 +127,7 @@ int CSLSMapPublisher::remove(CSLSRole *role)
         std::string live_stream_name = it->first;
         CSLSRole * pub = it->second;
         if (role == pub) {
-            sls_log(SLS_LOG_INFO, "[%p]CSLSMapPublisher::remove, %s=%p, live_key=%s.",
+            sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapPublisher::remove, %s=%p, live_key=%s.",
                     this, pub->get_role_name(), pub, live_stream_name.c_str());
             it_erase = it;
             it ++;

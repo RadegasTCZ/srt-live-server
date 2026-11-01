@@ -185,7 +185,7 @@ int CSLSRole::get_state(int64_t cur_time_ms)
 
 	int ret = get_sock_state();
 	if (SLS_ERROR == ret || SRTS_BROKEN == ret || SRTS_CLOSED == ret || SRTS_NONEXIST == ret) {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSRole::get_state, get_sock_state, ret=%d, call invalid_srt.",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::get_state, get_sock_state, ret=%d, call invalid_srt.",
         		this, ret);
         if (SRTS_BROKEN == ret || SRTS_CLOSED == ret || SRTS_NONEXIST == ret) {
             CSLSSrt::libsrt_neterrno();
@@ -242,7 +242,7 @@ int CSLSRole::add_to_epoll(int eid)
     if (m_srt) {
         m_srt->libsrt_set_eid(eid);
         ret = m_srt->libsrt_add_to_epoll(eid, m_is_write);
-        sls_log(SLS_LOG_INFO, "[%p]CSLSRole::add_to_epoll, %s, sock=%d, m_is_write=%d, ret=%d.",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::add_to_epoll, %s, sock=%d, m_is_write=%d, ret=%d.",
         		this, m_role_name, get_fd(), m_is_write, ret);
     }
     return ret;

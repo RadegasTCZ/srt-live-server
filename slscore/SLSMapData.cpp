@@ -73,7 +73,7 @@ int CSLSMapData::add(char *key)
     } else {
         m_map_ts_info[strKey] = new CSLSTsParser;
     }
-    sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::add ok, key='%s'.",
+    sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapData::add ok, key='%s'.",
             this, key);
     return ret;
 }
@@ -89,7 +89,7 @@ int CSLSMapData::remove(char *key)
     item = m_map_array.find(strKey);
     if (item != m_map_array.end()) {
         CSLSRecycleArray * array_data = item->second;
-        sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::remove, key='%s' delete array_data=%p.",
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapData::remove, key='%s' delete array_data=%p.",
                 this, key, array_data);
         if (array_data) {
             delete array_data;

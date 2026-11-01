@@ -250,7 +250,7 @@ int CTCPRole::close() {
     if (m_fd <= 0) {
         return SLS_ERROR;
     }
-    sls_log(SLS_LOG_INFO, "[%p]CTCPRole::close ok, m_fd=%d.", this, m_fd);
+    sls_log(SLS_LOG_DEBUG, "[%p]CTCPRole::close ok, m_fd=%d.", this, m_fd);
     ::close(m_fd);
     m_fd = 0;
     m_valid = false;
