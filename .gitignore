@@ -10,3 +10,6 @@ sls-users.conf
 obj-asan
 bin-asan
 *.d
+
+# Local design notes (plans/specs); kept out of the repo.
+docs/superpowers/
