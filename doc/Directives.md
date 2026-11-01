@@ -170,6 +170,15 @@ reason is `clean disconnect`, `idle timeout (peer silent)`, `idle timeout (no
 data)`, `shutdown`, `error` or `closed`. The per-session bookkeeping lines
 (map add/remove, epoll, socket close) are DEBUG.
 
+## idle_streams_timeout (server block)
+
+Seconds a role may sit idle before it is dropped: a player with no publisher, a
+publisher that sends no data. Range -1 to 86400; `-1` never drops an idle role.
+Default `10` when the directive is omitted (1.5.3 and the first 1.5.4 builds
+treated an omitted value as `0`, which dropped roles the moment they were idle);
+an explicit value, `0` included, is used as written. A relay block has its own
+`idle_streams_timeout` (see below).
+
 ## admission_timeout (server block)
 
 Milliseconds (100-60000, default 5000) an accepted connection may wait for a

@@ -80,8 +80,10 @@ SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_ADMISSION_TIMEOUT 5000
 #define SLS_DEFAULT_ON_EVENT_TIMEOUT  2000
+#define SLS_DEFAULT_IDLE_STREAMS_TIMEOUT 10   // seconds; 0 would drop a role the moment it is idle
 inline void sls_conf_server_defaults(sls_conf_server_t *c)
 {
+    c->idle_streams_timeout = SLS_DEFAULT_IDLE_STREAMS_TIMEOUT;
     c->admission_timeout = SLS_DEFAULT_ADMISSION_TIMEOUT;
     c->on_event_timeout  = SLS_DEFAULT_ON_EVENT_TIMEOUT;
 }

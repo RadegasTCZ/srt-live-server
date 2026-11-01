@@ -113,6 +113,8 @@ check your config and tooling before you restart.
   port, and a pull is capped by `max_pull_streams` (default 16). A pull now lives
   only for its players: once idle or ended with none attached it is dropped, not
   reconnected, until a player asks again.
+- **Idle timeout default.** An omitted server-block `idle_streams_timeout` is `10`
+  seconds (it was `0`, which dropped idle roles at once); `-1` still disables it.
 - **Process.** Privileges are dropped after bind and before any worker starts;
   SIGTERM stops sls like SIGINT; startup failures exit non-zero; the config parser
   rejects unbalanced braces. Passphrases are never written to the log.

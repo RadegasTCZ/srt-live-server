@@ -74,6 +74,7 @@ srt {
 
         backlog              10;    # listen() backlog -- pending SRT handshakes queue length.
         idle_streams_timeout 30;    # seconds; -1 disables. Drops idle publishers/players.
+                                    # Default when omitted: 10.
         admission_timeout    5000;  # ms (100-60000, default 5000) an accepted connection may
                                     # wait for a free worker slot before it is closed.
 
