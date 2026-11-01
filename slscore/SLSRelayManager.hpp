@@ -111,7 +111,13 @@ class CSLSMapRelay;
  * locks. CSLSMapRelay never takes a manager's mutex while holding its own
  * lock (add_relay_manager/remove_relay_manager/clear only touch the atomic
  * refcount, and release() outside or after the last holder), and none of the
- * other locks call back into a manager.
+ * other locks call back into a manager, with one exception: the role list's
+ * mutex -> manager m_mutex, when CSLSRoleList::erase() uninits a queued relay
+ * under its lock (uninit -> release_relay_manager -> relay_ended). That is the
+ * reverse of manager -> role list (set_relay_param pushes the new relay), so it
+ * is safe only because erase() runs in CSLSManager::stop() alone, after every
+ * worker has been joined: no thread can be inside start()/reconnect() then.
+ * (CSLSRoleList::expire uninits outside its lock, and never relay roles.)
  */
 class CSLSRelayManager
 {
