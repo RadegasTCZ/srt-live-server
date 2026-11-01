@@ -28,7 +28,11 @@
 
 #include "SLSRole.hpp"
 #include "SLSLog.hpp"
+#include "SLSStreamId.hpp"   // sls_escape_for_log
 
+
+// at most this many bytes of a hook answer's body are logged (escaped)
+#define SLS_HOOK_BODY_LOG_MAX 256
 
 /**
  * CSLSRole class implementation
@@ -646,9 +650,12 @@ int CSLSRole::check_http_passed()
 
 	int status = m_http_client->get_status();
 	HTTP_RESPONSE_INFO * re = m_http_client->get_response_info();
+	// the body comes from the hook server: escaped (no raw control characters
+	// or forged lines in the log) and bounded
+	std::string body = sls_escape_for_log(re->m_response_content.c_str(), SLS_HOOK_BODY_LOG_MAX);
 	if (HTTP_RESPONSE_CODE_200_INT == status) {
 		sls_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_passed, http finished, %s, http_url='%s', response_code=%d, response='%s'.",
-				this, m_role_name, sls_url_for_log(m_http_url).c_str(), status, re->m_response_content.c_str());
+				this, m_role_name, sls_url_for_log(m_http_url).c_str(), status, body.c_str());
 		m_http_client->close();
 		delete m_http_client;
 		m_http_client = NULL;
@@ -656,7 +663,7 @@ int CSLSRole::check_http_passed()
 		return SLS_OK;
 	}
 	sls_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_passed, http refused, invalid %s http_url='%s', response_code=%d (0: no usable answer), response='%s'.",
-			this, m_role_name, sls_url_for_log(m_http_url).c_str(), status, re->m_response_content.c_str());
+			this, m_role_name, sls_url_for_log(m_http_url).c_str(), status, body.c_str());
 	m_http_client->close();
 	delete m_http_client;
 	m_http_client = NULL;
