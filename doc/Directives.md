@@ -273,7 +273,11 @@ an explicit value, `0` included, is used as written. A relay block has its own
 
 Length of the queue of SRT handshakes waiting to be accepted (1-1024). Default
 `10` when the directive is omitted (before, an omitted value was `0`, and sls
-could not listen on the port).
+could not listen on the port). libsrt refuses a handshake while the queue is full,
+so a small backlog lets a burst of connection requests (a flood, or many players
+reconnecting at once) lock everyone else out until it drains: the example sets
+`64`. The listen callback refuses floods before they queue (see above), and the
+worker accepts queued connections every few milliseconds.
 
 ## admission_timeout (server block)
 
