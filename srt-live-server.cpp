@@ -133,7 +133,7 @@ int main(int argc, char* argv[])
 
     CSLSManager             *sls_manager = NULL;
     std::list<CSLSManager*>  reload_manager_list;
-    CHttpClient             *http_stat_client = new CHttpClient;
+    CHttpClient             *http_stat_client = NULL;   // only the server needs it, not -s
 
     int ret = SLS_OK;
     int exit_code = 0;   // non-zero on any startup failure
@@ -165,6 +165,8 @@ int main(int argc, char* argv[])
     if (strcmp(sls_opt.c_cmd,  "") != 0) {
         return run_cli_cmd(sls_opt.conf_file_name, sls_opt.c_cmd);
     }
+
+    http_stat_client = new CHttpClient;
 
     //log level
     if (strlen(sls_opt.log_level) > 0) {
