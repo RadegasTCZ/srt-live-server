@@ -673,7 +673,6 @@ int CSLSListener::handler()
 	sls_sid_t psid;
 	char key_app[URL_MAX_LEN] = {0};
 	char key_stream_name[URL_MAX_LEN] = {0};
-    char tmp[URL_MAX_LEN] = {0};
     char peer_name[IP_MAX_LEN] = {0};
     int  peer_port = 0;
     int  client_count = 0;
