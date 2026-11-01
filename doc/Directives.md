@@ -86,7 +86,10 @@ default `300` when the directive is omitted; before 1.5.4 an omitted value was
 at startup with the allowed range). It also caps admission: at most `worker_connections x max(1, worker_threads)`
 listener-accepted connections (publishers and players, on all `server` blocks
 together) exist at once. `max_connections_per_ip` (default 16, 0 = unlimited,
-0-10000) caps the concurrent accepted connections from one IP address.
+0-10000) caps the concurrent accepted connections from one IP address. Both
+per-IP limits (this one and `max_handshakes_per_ip_per_sec`) count an
+IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) as that IPv4 address and an IPv6
+address by its /64 prefix.
 
 `reserved_publisher_connections` keeps that many of those slots for publishers:
 players together may hold at most the cap minus the reserve, publishers may use
@@ -130,7 +133,9 @@ request
 - over `max_handshakes_per_ip_per_sec` (default `20`, `0` = no limit,
   0-100000): connection requests one IP address may make per second, counted
   as a token bucket of that size refilled at that rate (a burst of 20, then 20 a
-  second). Every request counts, also one refused for another reason;
+  second). Every request counts, also one refused for another reason. sls
+  tracks up to 65536 addresses; beyond that the untracked ones share one bucket
+  of 4 x the rate, so a spray of addresses is bounded too;
 - with a malformed streamid, or one that is neither a publisher nor a player app;
 - over the connection caps above (they are checked again at accept, where the
   slot is taken);
