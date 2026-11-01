@@ -100,6 +100,7 @@ int  CHttpClient::open(const char *url, const struct sockaddr_storage *addr, soc
         goto FUNC_END;
     }
     m_url = url;
+    m_log_url = sls_url_for_log(url);
     if (NULL != method && strlen(method) > 0) {
         snprintf(m_http_method, sizeof(m_http_method), "%s", method);
     }
@@ -149,7 +150,7 @@ int  CHttpClient::close()
 {
     int ret = SLS_OK;
     sls_log(SLS_LOG_TRACE, "[%p]CHttpClient::close, m_url='%s', status=%d.",
-            this, m_url.c_str(), m_status);
+            this, m_log_url.c_str(), m_status);
     ret = CTCPRole::close();
     if (NULL != m_callback) {
         m_callback(this, HCT_CLOSE, &ret, m_callback_context);
@@ -199,7 +200,7 @@ int  CHttpClient::check_timeout(int64_t cur_tm_ms)
         m_failed = true;
     }
     sls_log(SLS_LOG_INFO, "[%p]CHttpClient::check_timeout, timed out after %dms, url='%s', http_method='%s', status=%d.",
-            this, m_timeout, m_url.c_str(), m_http_method, m_status);
+            this, m_timeout, m_log_url.c_str(), m_http_method, m_status);
     finish();
     return SLS_OK;
 }
@@ -290,7 +291,7 @@ void CHttpClient::parse_response()
     int r = sls_http_parse_response(m_resp_buf, &status, &header_len, &content_length, &chunked);
     if (r < 0) {
         sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_response, malformed or oversized response, url='%s'.",
-                this, m_url.c_str());
+                this, m_log_url.c_str());
         m_failed = true;
         finish();
         return;
@@ -303,7 +304,7 @@ void CHttpClient::parse_response()
             m_response_info.m_response_code = code;
             sls_split_string(m_resp_buf.substr(0, header_len - 4), "\r\n", m_response_info.m_response_header);
             sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_response, status=%d, url='%s', http_method='%s'.",
-                    this, status, m_url.c_str(), m_http_method);
+                    this, status, m_log_url.c_str(), m_http_method);
         }
         m_response_info.m_response_content_length = (int)content_length;
         m_response_info.m_response_content        = m_resp_buf.substr(header_len);   // raw (still chunk-framed if chunked)
@@ -421,7 +422,7 @@ int CHttpClient::handler()
         int err = 0;
         socklen_t len = sizeof(err);
         if (0 != getsockopt(m_fd, SOL_SOCKET, SO_ERROR, &err, &len) || 0 != err) {
-            sls_log(SLS_LOG_INFO, "[%p]CHttpClient::handler, connect failed, url='%s', err=%d.", this, m_url.c_str(), err);
+            sls_log(SLS_LOG_INFO, "[%p]CHttpClient::handler, connect failed, url='%s', err=%d.", this, m_log_url.c_str(), err);
             m_valid = false;
             m_failed = true;
             finish();
@@ -444,7 +445,7 @@ int CHttpClient::parse_url()
 {
     //http://hostname:port/sls?on_event=on_connect&srt_url=...
     if (SLS_OK != sls_parse_http_url(m_url.c_str(), &m_http_host, &m_http_port, &m_uri)) {
-        sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_url, not a usable http url='%s'.", this, m_url.c_str());
+        sls_log(SLS_LOG_INFO, "[%p]CHttpClient::parse_url, not a usable http url='%s'.", this, m_log_url.c_str());
         return SLS_ERROR;
     }
     return SLS_OK;
@@ -486,7 +487,7 @@ int CHttpClient::write_http_header(int data_len)
     int ret = m_out_array.put((const uint8_t*)(http_header.c_str()), len);
     if (len != ret) {
         sls_log(SLS_LOG_INFO, "[%p]CHttpClient::write_http_header, failed, m_out_array.put len=%d, ret=%d, url='%s', http_method='%s'.",
-            this, len, ret, m_url.c_str(), m_http_method);
+            this, len, ret, m_log_url.c_str(), m_http_method);
         return SLS_ERROR;
     }
     return ret;
@@ -544,6 +545,6 @@ int CHttpClient::generate_http_request()
         }
     }
     sls_log(SLS_LOG_INFO, "[%p]CHttpClient::generate_http_request, ok, m_url='%s', content len=%d.",
-            this, m_url.c_str(), post_data_len);
+            this, m_log_url.c_str(), post_data_len);
     return SLS_OK;
 }

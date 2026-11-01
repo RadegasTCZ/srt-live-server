@@ -618,7 +618,7 @@ int  CSLSRole::on_close()
 	int ret = m_close_client->open(on_event_url.c_str(), &m_http_addr, m_http_addr_len, "GET");
 	if (SLS_OK != ret) {
 		sls_log(SLS_LOG_INFO, "[%p]CSLSRole::on_close, %s, could not start the on_close request, http_url='%s'.",
-				this, m_role_name, m_http_url);
+				this, m_role_name, sls_url_for_log(m_http_url).c_str());
 		m_close_client->close();
 		delete m_close_client;
 		m_close_client = NULL;
@@ -648,7 +648,7 @@ int CSLSRole::check_http_passed()
 	HTTP_RESPONSE_INFO * re = m_http_client->get_response_info();
 	if (HTTP_RESPONSE_CODE_200_INT == status) {
 		sls_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_passed, http finished, %s, http_url='%s', response_code=%d, response='%s'.",
-				this, m_role_name, m_http_url, status, re->m_response_content.c_str());
+				this, m_role_name, sls_url_for_log(m_http_url).c_str(), status, re->m_response_content.c_str());
 		m_http_client->close();
 		delete m_http_client;
 		m_http_client = NULL;
@@ -656,7 +656,7 @@ int CSLSRole::check_http_passed()
 		return SLS_OK;
 	}
 	sls_log(SLS_LOG_INFO, "[%p]CSLSRole::check_http_passed, http refused, invalid %s http_url='%s', response_code=%d (0: no usable answer), response='%s'.",
-			this, m_role_name, m_http_url, status, re->m_response_content.c_str());
+			this, m_role_name, sls_url_for_log(m_http_url).c_str(), status, re->m_response_content.c_str());
 	m_http_client->close();
 	delete m_http_client;
 	m_http_client = NULL;

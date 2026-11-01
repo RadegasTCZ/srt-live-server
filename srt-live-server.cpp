@@ -250,7 +250,7 @@ int main(int argc, char* argv[])
         socklen_t   stat_addr_len = 0;
         if (SLS_OK != resolve_stat_url(conf_srt->stat_post_url, &stat_addr, &stat_addr_len)) {
             sls_log(SLS_LOG_ERROR, "stat_post_url='%s' is not a usable http:// URL or does not resolve; stat posting is disabled.",
-                    conf_srt->stat_post_url);
+                    sls_url_for_log(conf_srt->stat_post_url).c_str());
         } else {
             http_stat_client->set_stage_callback(CSLSManager::stat_client_callback, sls_manager);
             http_stat_client->open(conf_srt->stat_post_url, &stat_addr, stat_addr_len, stat_method, conf_srt->stat_post_interval);

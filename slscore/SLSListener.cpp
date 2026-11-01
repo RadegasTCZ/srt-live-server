@@ -179,7 +179,7 @@ int CSLSListener::init_conf_app()
     m_on_event_timeout           = conf_server->on_event_timeout;
     if (m_http_url_role[0] != 0 && SLS_OK != resolve_hook()) {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::init_conf_app, on_event_url='%s' is unusable (not an http:// URL or the host does not resolve).",
-                this, m_http_url_role);
+                this, sls_url_for_log(m_http_url_role).c_str());
         return SLS_ERROR;
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::init_conf_app, m_back_log=%d, m_idle_streams_timeout=%d, admission_timeout=%dms.",

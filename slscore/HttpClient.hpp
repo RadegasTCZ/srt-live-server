@@ -92,6 +92,7 @@ public :
 protected:
     uint32_t    m_id;
     std::string m_url;
+    std::string m_log_url;   // m_url as logged: sls_url_for_log (no query, no userinfo)
     std::string m_uri;
     std::string m_http_host;
 	char        m_http_method[32];

@@ -245,6 +245,45 @@ static string sls_conf_show(bool secret, const string& l)
 }
 
 /*
+ * The webhook and stats URLs may carry a token in their query (or userinfo):
+ * their lines and values are logged through sls_url_for_log.
+ */
+static bool sls_conf_line_is_url(const string& raw)
+{
+    static const char *keys[] = {"on_event_url", "stat_post_url"};
+    string::size_type b = raw.find_first_not_of(" \t");
+    if (b == string::npos) {
+        return false;
+    }
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        size_t n = strlen(keys[i]);
+        if (raw.compare(b, n, keys[i]) == 0 &&
+            (raw.size() == b + n || raw[b + n] == ' ' || raw[b + n] == '\t')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static string sls_conf_show_url_line(const string& l)
+{
+    string::size_type b  = l.find_first_not_of(" \t");
+    string::size_type sp = (b == string::npos) ? string::npos : l.find_first_of(" \t", b);
+    string::size_type vb = (sp == string::npos) ? string::npos : l.find_first_not_of(" \t", sp);
+    if (vb == string::npos) {
+        return l;
+    }
+    string::size_type ve = l.find_first_of("; \t#", vb);
+    string v = l.substr(vb, ve == string::npos ? string::npos : ve - vb);
+    return l.substr(0, vb) + sls_url_for_log(v.c_str()) + (ve == string::npos ? string() : l.substr(ve));
+}
+
+static string sls_conf_show_line(bool secret, bool url, const string& l)
+{
+    return url ? sls_conf_show_url_line(l) : sls_conf_show(secret, l);
+}
+
+/*
  * Parses the lines of one block up to its closing '}' (or to the end of the
  * file at depth 0). b is the block being filled and p_runtime describes its
  * directives; at depth 0 b is the dummy root, which has no directives and may
@@ -267,7 +306,8 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
     {
         line ++;
         const bool secret = sls_conf_line_is_secret(str_line);
-        sls_log(SLS_LOG_TRACE, "line:%d='%s'", line, sls_conf_show(secret, str_line).c_str());
+        const bool url    = sls_conf_line_is_url(str_line);
+        sls_log(SLS_LOG_TRACE, "line:%d='%s'", line, sls_conf_show_line(secret, url, str_line).c_str());
         //remove #
         index = str_line.find('#');
         if (index != -1) {
@@ -277,7 +317,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
         str_line = replace_all(str_line, "\t", " ");
         str_line = trim(str_line);
         if (str_line.length() == 0) {
-            sls_log(SLS_LOG_TRACE, "line:%d='%s', is comment.", line, sls_conf_show(secret, str_line).c_str());
+            sls_log(SLS_LOG_TRACE, "line:%d='%s', is comment.", line, sls_conf_show_line(secret, url, str_line).c_str());
             continue;
         }
 
@@ -286,7 +326,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
 
         if (line_end_flag == ";") {
             if (depth == 0) {
-                sls_log(SLS_LOG_ERROR, "line:%d='%s', not found block.", line, sls_conf_show(secret, str_line).c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d='%s', not found block.", line, sls_conf_show_line(secret, url, str_line).c_str());
                 ret = SLS_ERROR;
                 break;
             }
@@ -299,7 +339,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
             //split by space
             int index = str_line.find(' ');
             if (index == -1) {
-                sls_log(SLS_LOG_ERROR, "line:%d='%s', no space separator.", line, sls_conf_show(secret, str_line).c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d='%s', no space separator.", line, sls_conf_show_line(secret, url, str_line).c_str());
                 ret = SLS_ERROR;
                 break;
             }
@@ -309,17 +349,17 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
 
             sls_conf_cmd_t * it = sls_conf_find(n.c_str(), p_runtime->conf_cmd, p_runtime->conf_cmd_size);
             if (!it) {
-                sls_log(SLS_LOG_ERROR, "line:%d='%s', wrong name='%s'.", line, sls_conf_show(secret, str_line).c_str() ,n.c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d='%s', wrong name='%s'.", line, sls_conf_show_line(secret, url, str_line).c_str() ,n.c_str());
                 ret = SLS_ERROR;
                 break;
             }
             const char * r = it->set(v.c_str(), it, b);
             if (r != SLS_CONF_OK) {
-                sls_log(SLS_LOG_ERROR, "line:%d, set failed, %s, name='%s', value='%s'.", line, r ,n.c_str(), (secret ? string("***") : v).c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d, set failed, %s, name='%s', value='%s'.", line, r ,n.c_str(), (secret ? string("***") : url ? sls_url_for_log(v.c_str()) : v).c_str());
                 ret = SLS_ERROR;
                 break;
             }
-            sls_log(SLS_LOG_TRACE, "line:%d, set name='%s', value='%s'.", line, n.c_str(), (secret ? string("***") : v).c_str());
+            sls_log(SLS_LOG_TRACE, "line:%d, set name='%s', value='%s'.", line, n.c_str(), (secret ? string("***") : url ? sls_url_for_log(v.c_str()) : v).c_str());
 
         } else  if (line_end_flag == "{") {
             str_line = str_line.substr(0, str_line.length() - 1);
@@ -368,7 +408,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
             continue;
         } else if (line_end_flag == "}" ) {
             if (str_line != line_end_flag) {
-                sls_log(SLS_LOG_ERROR, "line:%d=‘%s’, end indicator ‘}’ with more info.", line, sls_conf_show(secret, str_line).c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d=‘%s’, end indicator ‘}’ with more info.", line, sls_conf_show_line(secret, url, str_line).c_str());
                 ret = SLS_ERROR;
                 break;
             }
@@ -379,7 +419,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
             }
             return SLS_OK;
         } else {
-            sls_log(SLS_LOG_ERROR, "line:%d='%s', invalid end flag, except ';', '{', '}',", line, sls_conf_show(secret, str_line).c_str());
+            sls_log(SLS_LOG_ERROR, "line:%d='%s', invalid end flag, except ';', '{', '}',", line, sls_conf_show_line(secret, url, str_line).c_str());
             ret = SLS_ERROR;
             break;
         }

@@ -175,6 +175,37 @@ int sls_resolve(const char *host, int port, struct sockaddr_storage *out, sockle
     return SLS_OK;
 }
 
+std::string sls_url_for_log(const char *url)
+{
+    if (NULL == url) {
+        return std::string();
+    }
+    std::string u(url);
+    size_t frag = u.find('#');
+    if (frag != std::string::npos) {
+        u.erase(frag);
+    }
+    size_t q = u.find('?');
+    bool had_query = (q != std::string::npos);
+    if (had_query) {
+        u.erase(q);
+    }
+    size_t scheme = u.find("://");
+    size_t start  = (scheme == std::string::npos) ? 0 : scheme + 3;
+    size_t end    = u.find('/', start);
+    if (end == std::string::npos) {
+        end = u.size();
+    }
+    size_t at = u.rfind('@', end);
+    if (at != std::string::npos && at >= start && at < end) {
+        u.replace(start, at - start, "<redacted>");
+    }
+    if (had_query) {
+        u += "?<redacted>";
+    }
+    return u;
+}
+
 int sls_parse_http_url(const char *url, std::string *host, int *port, std::string *uri)
 {
     static const char scheme[] = "http://";

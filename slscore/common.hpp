@@ -102,6 +102,10 @@ uint32_t sls_hash_key(const char *data, int len);
 int      sls_resolve(const char *host, int port, struct sockaddr_storage *out, socklen_t *out_len, int family = AF_UNSPEC);
 // "http://host[:port][/path][?query]" -> host (no brackets), port (default 80), uri (starts with '/')
 int      sls_parse_http_url(const char *url, std::string *host, int *port, std::string *uri);
+// An http URL as it may be logged: the query (it can carry a token) becomes
+// "?<redacted>", userinfo becomes "<redacted>@", a fragment is dropped.
+// Scheme, host, port and path are kept.
+std::string sls_url_for_log(const char *url);
 // RFC 3986 percent-encoding: unreserved characters (A-Z a-z 0-9 - . _ ~) are kept, everything else is %XX
 std::string sls_url_encode(const std::string &s);
 // JSON string escaping, no surrounding quotes: " \ and control characters; other bytes pass through

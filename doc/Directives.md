@@ -108,6 +108,10 @@ URL that is not `http://`, stops sls from starting) and again on a reload
 (`-s reload`); if the re-resolution fails the previous address stays in use and
 an error is logged. Names are never resolved while serving connections.
 
+The query of `on_event_url` and `stat_post_url` may carry a token: wherever sls
+logs either URL (also at trace level) it shows `?<redacted>` instead of the
+query, and `<redacted>@` instead of any userinfo.
+
 ## stat_post_url, stat_post_interval (srt block)
 
 `stat_post_url http://host[:port][/path];` makes sls POST a JSON document
