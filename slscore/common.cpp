@@ -683,6 +683,25 @@ int sls_send_cmd(const char *pid_path, const char *cmd)
          ((size_t)nt == (size_t)ns + sizeof(deleted_suffix) - 1 &&
           strncmp(exe_target, exe_self, (size_t)ns) == 0 &&
           strcmp(exe_target + ns, deleted_suffix) == 0));
+    if (nt <= 0 && ns > 0) {
+        // The server is not dumpable (sls_harden_process), so even its own user
+        // cannot read /proc/<pid>/exe. /proc/<pid>/comm is world-readable: it
+        // must name the same program (the file name of this binary).
+        char comm_path[64], comm[64] = {0};
+        snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", target);
+        FILE *cf = fopen(comm_path, "r");
+        if (cf) {
+            if (fgets(comm, sizeof(comm), cf)) {
+                size_t cl = strlen(comm);
+                if (cl > 0 && comm[cl - 1] == 10) comm[cl - 1] = 0;
+            }
+            fclose(cf);
+        }
+        const char *base = strrchr(exe_self, 47);
+        base = base ? base + 1 : exe_self;
+        size_t want = strlen(base) < 15 ? strlen(base) : 15;     // comm holds 15 characters
+        same_exe = want > 0 && strlen(comm) == want && strncmp(comm, base, want) == 0;
+    }
     if (target <= 0 || !same_exe) {
         printf("lock holder pid %d is not sls; nothing sent.\n", target);
         return SLS_ERROR;
