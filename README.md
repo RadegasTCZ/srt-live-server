@@ -78,8 +78,10 @@ check your config and tooling before you restart.
 - **Authentication fails closed.** With `user_file` set, a file that cannot be
   opened, has no users or has a malformed line stops sls from starting; on reload
   it is rejected and the previous users stay. Publisher or player is decided by
-  the streamid's domain and app (a cross-role passphrase no longer works), and
-  `srt_pbkeylen` and enforced encryption apply per user.
+  the streamid's domain and app (in per-user mode a cross-role passphrase no
+  longer works), and `srt_pbkeylen` and enforced encryption apply per user. With
+  only a listener-wide `srt_passphrase` everyone holds the same key, publishers
+  and players alike: that mode is single-tenant only, use `user_file`.
 - **Streamids are strict.** Exactly `domain/app/stream`; each part is 1-128
   characters of `A-Za-z0-9._-` and not `.` or `..`. Anything else is refused, and
   log lines show the rejected value escaped and truncated.
@@ -113,6 +115,11 @@ check your config and tooling before you restart.
   port, and a pull is capped by `max_pull_streams` (default 16). A pull now lives
   only for its players: once idle or ended with none attached it is dropped, not
   reconnected, until a player asks again.
+- **Startup warnings.** sls logs a WARNING when a server block has no
+  authentication at all (no `user_file`, `srt_passphrase` or `on_event_url`) and
+  when it runs as root without `user`. The shipped `sls.conf.example` is an open
+  server until you set `user_file`; its pull example now uses a finite
+  `idle_streams_timeout`.
 - **Idle timeout default.** An omitted server-block `idle_streams_timeout` is `10`
   seconds (it was `0`, which dropped idle roles at once); `-1` still disables it.
 - **Log file.** `log_file` is opened without following symlinks (mode 0640) and

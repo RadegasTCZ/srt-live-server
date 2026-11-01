@@ -15,6 +15,11 @@
 #
 # Every directive below is commented. Uncomment and edit only the ones
 # you want to change from defaults.
+#
+# AS SHIPPED THIS IS AN OPEN SERVER: no user_file, no srt_passphrase, no
+# on_event_url, so anyone who can reach the port may publish and play (sls logs a
+# WARNING at start). Before exposing it set user_file (Mode B below, recommended),
+# and when it is started as root set `user` as well (also a startup WARNING).
 
 srt {
     # ----- Process / runtime --------------------------------------------------
@@ -29,7 +34,9 @@ srt {
     max_connections_per_ip 16;  # max concurrent accepted connections from one IP
                                 # address (default 16; 0 = unlimited). Relays don't count.
 
-    log_file  logs/error.log;   # path is relative to the CWD when sls starts.
+    log_file  logs/error.log;   # path is relative to the CWD when sls starts. The directory must
+                                # exist; the file is created 0640 and must be a plain file you own
+                                # (a symlink or someone else's file stops sls from starting).
     log_level info;             # fatal | error | warning | info | debug | trace
 
     # PID file, used by `sls -s reload|stop`. Default: /run/sls/sls.pid.
@@ -87,11 +94,13 @@ srt {
         # ----- Encryption (pick at most ONE mode) ----------------------------
         #
         # Mode A -- listener-wide passphrase. Every publisher and player uses
-        # the same passphrase in their SRT URL. Simple but coarse.
+        # the same passphrase in their SRT URL. SINGLE-TENANT ONLY: every viewer
+        # holds the key that publishes, so anyone who can play can also publish.
+        # Use Mode B as soon as more than one person is involved.
         #srt_passphrase your-secret-min-10-chars;
         #srt_pbkeylen   16;     # 16/24/32 -> AES-128/192/256. Omit for libsrt default.
         #
-        # Mode B -- per-user. Each streamid authorises one streamer with their
+        # Mode B -- per-user (recommended). Each streamid authorises one streamer with their
         # own publish/play passphrases (or plaintext). Add/remove lines in the
         # users file and reload (sls -c sls.conf -s reload) to grant/revoke. See
         # sls-users.conf.example for the file format. FAIL CLOSED: an empty or
@@ -119,8 +128,10 @@ srt {
             #    type pull;
             #    mode loop;                  # loop | hash -- how upstreams are picked
             #    reconnect_interval 10;      # seconds between pull attempts
-            #    idle_streams_timeout -1;    # seconds with no player before the pull is
+            #    idle_streams_timeout 30;    # seconds with no player before the pull is
             #                                # closed; -1 = never close a running pull
+            #                                # (avoid it: any player can then keep an
+            #                                # outbound connection open indefinitely)
             #    max_pull_streams 16;        # concurrent pulled streams for this app (1-1024)
             #    upstreams 127.0.0.1:9090?streamid=live.example.com/live 192.0.2.50:8080?streamid=live.test.com/live;
             #}                               # at least one upstream is required

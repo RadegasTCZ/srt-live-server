@@ -265,3 +265,16 @@ or a missing `-r` is an error: slc says so and exits with status 1.
 Listener-wide passphrase. The value is never written to the log; config lines
 setting it are logged as `srt_passphrase ***`.
 
+It is one key for the whole listener, held by publishers and players alike, so
+anyone who can play a stream can publish with the same key: use it only when one
+person runs the server and every client. With more than one streamer use
+`user_file`.
+
+## Startup warnings
+
+sls logs a WARNING at start when
+- a server block has no authentication: no `user_file`, no `srt_passphrase` and
+  no `on_event_url`. Anyone who can reach the port may then publish and play;
+- it runs as root and `user` is not set in the srt block, so the threads that
+  serve peers keep full privileges.
+

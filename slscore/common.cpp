@@ -715,6 +715,10 @@ int sls_drop_privileges(const char *user, const char *group)
     bool want_group = (group != NULL && group[0] != '\0');
 
     if (!want_user && !want_group) {
+        if (geteuid() == 0) {
+            sls_log(SLS_LOG_WARNING, "sls is running as root and 'user' is not set in the srt block: every peer-facing "
+                    "thread keeps full privileges. Set 'user' (and 'group') to drop them after bind.");
+        }
         return SLS_OK;
     }
 

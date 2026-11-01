@@ -607,6 +607,13 @@ int CSLSListener::start()
         m_srt->libsrt_set_passphrase(passphrase, pbkeylen);
     }
 
+    if (!(user_file && *user_file) && !(passphrase && *passphrase) && m_http_url_role[0] == 0) {
+        sls_log(SLS_LOG_WARNING,
+                "[%p]CSLSListener::start, port %d has NO authentication (no user_file, no srt_passphrase, no on_event_url): "
+                "anyone who can reach it may publish and play. Set user_file (recommended), or an on_event_url hook.",
+                this, ((sls_conf_server_t*)m_conf)->listen);
+    }
+
     m_port = ((sls_conf_server_t*)m_conf)->listen;
     ret = m_srt->libsrt_setup(m_port);
     if (SLS_OK != ret) {
