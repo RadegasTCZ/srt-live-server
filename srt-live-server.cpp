@@ -204,14 +204,13 @@ int main(int argc, char* argv[])
         goto EXIT_PROC;
     }
 
-    //sls manager
-    sls_log(SLS_LOG_INFO, "\nsrt live server is running...");
-
-    sls_manager  = new CSLSManager;
     // Startup order: conf -> pid file -> bind/listen -> drop privileges ->
     // worker threads -> stats client. The privileged steps (pid file in /run,
     // bind to a port < 1024) are done while still root; no thread that serves
     // a connection exists until the drop has succeeded.
+    sls_log(SLS_LOG_INFO, "\nsrt live server is running...");
+
+    sls_manager  = new CSLSManager;
     if (SLS_OK != sls_manager->start_listeners()) {
         sls_log(SLS_LOG_ERROR, "sls_manager->start_listeners failed, EXIT!");
         exit_code = 1;

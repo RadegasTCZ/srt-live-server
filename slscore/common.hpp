@@ -93,7 +93,6 @@ void    sls_gettime_fmt(char *dst, int64_t cur_time_sec, char *fmt);
 void    sls_gettime_default_string(char *cur_time);
 char  * sls_strupper(char * str);
 void    sls_remove_marks(char *s);
-bool    sls_is_safe_name(const char *s);
 bool    sls_is_valid_passphrase_len(size_t len);
 bool    sls_is_valid_pbkeylen(int pbkeylen);
 
@@ -115,7 +114,6 @@ std::string sls_json_escape(const std::string &s);
 // *header_len (bytes through the blank line), *content_length (-1 if absent) and *chunked are set
 // even when 0 is returned; before that *status is 0. Header names are case-insensitive.
 int      sls_http_parse_response(const std::string &buf, int *status, size_t *header_len, long *content_length, bool *chunked);
-int      sls_mkdir_p(const char *path);
 
 int sls_write_pid(const char *path, int pid);   // returns the locked fd (keep it open until exit), or -1
 int sls_send_cmd(const char *pid_path, const char *cmd);

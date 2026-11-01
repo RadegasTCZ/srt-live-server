@@ -36,7 +36,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
-#include <sys/file.h>
 #include <limits.h>
 #include <netdb.h>
 #include <pwd.h>
@@ -423,145 +422,6 @@ int sls_http_parse_response(const std::string &buf, int *status, size_t *header_
     return ret;
 }
 
-static void av_str_replace(char *buf, const char dst, const char ch)
-{
-    char *p = NULL;
-    while(1) {
-        p = strchr(buf, dst);
-        if (p == NULL)
-            break;
-        *p++ = ch;
-    }
-}
-static size_t max_alloc_size= 1024000;// max 1M
-
-static void *av_malloc(size_t size)
-{
-    void *ptr = NULL;
-
-    /* let's disallow possibly ambiguous cases */
-    if (size > (max_alloc_size - 32))
-        return NULL;
-
-#if HAVE_POSIX_MEMALIGN
-    if (size) //OS X on SDK 10.6 has a broken posix_memalign implementation
-    if (posix_memalign(&ptr, ALIGN, size))
-        ptr = NULL;
-#elif HAVE_ALIGNED_MALLOC
-    ptr = _aligned_malloc(size, ALIGN);
-#elif HAVE_MEMALIGN
-#ifndef __DJGPP__
-    ptr = memalign(ALIGN, size);
-#else
-    ptr = memalign(size, ALIGN);
-#endif
-    /* Why 64?
-     * Indeed, we should align it:
-     *   on  4 for 386
-     *   on 16 for 486
-     *   on 32 for 586, PPro - K6-III
-     *   on 64 for K7 (maybe for P3 too).
-     * Because L1 and L2 caches are aligned on those values.
-     * But I don't want to code such logic here!
-     */
-    /* Why 32?
-     * For AVX ASM. SSE / NEON needs only 16.
-     * Why not larger? Because I did not see a difference in benchmarks ...
-     */
-    /* benchmarks with P3
-     * memalign(64) + 1          3071, 3051, 3032
-     * memalign(64) + 2          3051, 3032, 3041
-     * memalign(64) + 4          2911, 2896, 2915
-     * memalign(64) + 8          2545, 2554, 2550
-     * memalign(64) + 16         2543, 2572, 2563
-     * memalign(64) + 32         2546, 2545, 2571
-     * memalign(64) + 64         2570, 2533, 2558
-     *
-     * BTW, malloc seems to do 8-byte alignment by default here.
-     */
-#else
-    ptr = malloc(size);
-#endif
-
-    if (ptr)
-        memset(ptr, 0, size);
-    return ptr;
-}
-static void av_free(void *arg)
-{
-    //memcpy(arg, &(void *){ NULL }, sizeof(arg));
-    free(arg);
-}
-
-static char *av_strdup(const char *s)
-{
-    char *ptr = NULL;
-    if (s) {
-        size_t len = strlen(s) + 1;
-        ptr = (char *)av_malloc(len);
-        if (ptr)
-            memcpy(ptr, s, len);
-    }
-    return ptr;
-}
-
-/**
- * Locale-independent conversion of ASCII characters to lowercase.
- */
-static inline int av_tolower(int c)
-{
-    if (c >= 'A' && c <= 'Z')
-        c ^= 0x20;
-    return c;
-}
-
-static int av_strncasecmp(const char *a, const char *b, size_t n)
-{
-    uint8_t c1, c2;
-    if (n <= 0)
-        return 0;
-    do {
-        c1 = av_tolower(*a++);
-        c2 = av_tolower(*b++);
-    } while (--n && c1 && c1 == c2);
-    return c1 - c2;
-}
-
-int sls_mkdir_p(const char *path)
-{
-
-    int ret = 0;
-    char *temp = av_strdup(path);
-    char *pos = temp;
-    char tmp_ch = '\0';
-
-    if (!path || !temp) {
-        return -1;
-    }
-
-    if (!av_strncasecmp(temp, "/", 1) || !av_strncasecmp(temp, "\\", 1)) {
-        pos++;
-    } else if (!av_strncasecmp(temp, "./", 2) || !av_strncasecmp(temp, ".\\", 2)) {
-        pos += 2;
-    }
-
-    for ( ; *pos != '\0'; ++pos) {
-        if (*pos == '/' || *pos == '\\') {
-            tmp_ch = *pos;
-            *pos = '\0';
-            ret = mkdir(temp, 0755);
-            *pos = tmp_ch;
-        }
-    }
-
-    if ((*(pos - 1) != '/') || (*(pos - 1) != '\\')) {
-        ret = mkdir(temp, 0755);
-    }
-
-    av_free(temp);
-    return ret;
-}
-
 void sls_remove_marks(char * s) {
     int len = strlen(s);
     if (len < 2)//pair
@@ -574,13 +434,6 @@ void sls_remove_marks(char * s) {
         }
         s[len-2] = 0x0;
     }
-}
-
-// Legacy wrapper: a streamid component is safe iff it passes the shared
-// streamid rule (SLSStreamId.cpp). Kept so there is only one rule.
-bool sls_is_safe_name(const char *s)
-{
-    return s && sls_sid_part_ok(std::string(s));
 }
 
 // SRT caps SRTO_PASSPHRASE at 10-79 printable bytes. A zero-length value

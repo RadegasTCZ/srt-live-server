@@ -46,7 +46,6 @@ OBJS = $(OUTPUT_PATH)/SLSLog.o \
 	$(OUTPUT_PATH)/SLSClient.o\
 	$(OUTPUT_PATH)/TCPRole.o\
 	$(OUTPUT_PATH)/SLSArray.o\
-	$(OUTPUT_PATH)/HttpRoleList.o\
 	$(OUTPUT_PATH)/HttpClient.o\
 	$(OUTPUT_PATH)/SLSSyncClock.o\
 	$(OUTPUT_PATH)/TSFileTimeReader.o
