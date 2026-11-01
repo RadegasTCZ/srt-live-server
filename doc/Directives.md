@@ -423,8 +423,10 @@ Each block counts its own; the directive in a pull block (and
 a broken push reconnects every `reconnect_interval` seconds. Once it is gone
 the push is dropped, with no reconnect (`CSLSRelayManager::retire, publisher
 gone`): when its pusher ends (it gets no more data, so at the latest after the
-relay block's `idle_streams_timeout`) or when a reconnect falls due. The next
-publisher of the name starts a new push. A push torn down
+relay block's `idle_streams_timeout`) or when a reconnect falls due. A
+publisher of the same name that arrives before that keeps the running (or
+reconnecting) push, which then carries its stream; no second push is opened.
+After that, the next publisher of the name starts a new push. A push torn down
 outside its worker (a queued pusher that expired, shutdown) retires its state
 too, so it stops counting against `max_push_streams`. (Before, every publish name ever used
 kept its push state, retried every `reconnect_interval`, for the life of the
