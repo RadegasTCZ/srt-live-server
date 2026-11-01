@@ -330,6 +330,13 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
         }
          //trim and replace '\t'
         str_line = replace_all(str_line, "\t", " ");
+            if (secret && index > 0 && str_line[index - 1] != ' ' && str_line[index - 1] != 9) {
+                // would cut the passphrase short without a word
+                sls_log(SLS_LOG_ERROR, "line:%d, srt_passphrase: '#' inside the value (it starts a comment, so the "
+                        "passphrase would be cut short); a passphrase cannot contain '#'.", line);
+                ret = SLS_ERROR;
+                break;
+            }
         str_line = trim(str_line);
         if (str_line.length() == 0) {
             sls_log(SLS_LOG_TRACE, "line:%d='%s', is comment.", line, sls_conf_show_line(secret, url, str_line).c_str());

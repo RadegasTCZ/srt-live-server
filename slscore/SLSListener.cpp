@@ -339,7 +339,17 @@ int CSLSListener::load_users(const char *path, std::string *err)
     while (std::getline(f, line)) {
         lineno++;
         std::string::size_type hash = line.find('#');
-        if (hash != std::string::npos) line = line.substr(0, hash);
+        if (hash != std::string::npos) {
+            // A comment starts at a '#' that begins the line or follows white
+            // space. One inside a column would silently cut a passphrase short.
+            if (hash > 0 && line[hash - 1] != ' ' && line[hash - 1] != '\t') {
+                snprintf(msg, sizeof(msg), "%s:%d: '#' inside a column (it starts a comment and would cut a "
+                         "passphrase short; a passphrase cannot contain '#')", path, lineno);
+                if (err) *err = msg;
+                return SLS_ERROR;
+            }
+            line = line.substr(0, hash);
+        }
 
         std::istringstream iss(line);
         std::string name, pub, play, extra;
