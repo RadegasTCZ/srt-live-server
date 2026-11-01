@@ -90,9 +90,10 @@ public :
     char      * get_streamid();
     bool        is_reconnect();
 
-    void        set_stat_info_base(std::string &v);
-    virtual std::string get_stat_info();
-    void        update_stat_info();
+    // who this role is, for the stats document (set once, by whoever creates the role)
+    void        set_stat_identity(const char *stream, const char *remote_ip, int remote_port);
+    // one JSON object for the stats document; empty for roles that are not reported (listeners)
+    std::string get_stat_info();
     virtual int get_peer_info(char *peer_name, int &peer_port);
 
     void        set_http_url(const char *http_url, const struct sockaddr_storage *addr, socklen_t addr_len, int timeout_ms);
@@ -152,7 +153,10 @@ protected:
     uint8_t       m_ts_carry[TS_PACK_LEN];
     int           m_ts_carry_len;
     bool          m_need_reconnect;
-    std::string   m_stat_info_base;
+    std::string   m_stat_stream;       // "<domain>/<app>/<stream>"; empty = not reported
+    std::string   m_stat_remote_ip;
+    int           m_stat_remote_port;
+    int64_t       m_stat_start_ms;
     CHttpClient  *m_http_client;     // the on_connect request, while pending
     CHttpClient  *m_close_client;    // the on_close request, until the group takes it
 

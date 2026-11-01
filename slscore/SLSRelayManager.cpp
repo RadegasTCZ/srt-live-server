@@ -206,18 +206,11 @@ int CSLSRelayManager::connect(const char *url)
     	cur_relay->set_idle_streams_timeout(m_sri->m_idle_streams_timeout);
 
     	//set stat info
-        char tmp[URL_MAX_LEN] = {0};
-        char stat_base[URL_MAX_LEN] = {0};
-        char cur_time[STR_DATE_TIME_LEN] = {0};
-        sls_gettime_default_string(cur_time);
         char relay_peer_name[IP_MAX_LEN] = {0};
         int  relay_peer_port = 0;
         cur_relay->get_peer_info(relay_peer_name, relay_peer_port);
-        cur_relay->get_stat_base(stat_base);
-	    snprintf(tmp, sizeof(tmp), stat_base,
-	    		m_listen_port, cur_relay->get_role_name(), m_app_uplive, m_stream_name, url, relay_peer_name, relay_peer_port, cur_time);
-	    std::string stat_info = std::string(tmp);
-	    cur_relay->set_stat_info_base(stat_info);
+        std::string stat_stream = std::string(m_app_uplive) + "/" + m_stream_name;
+        cur_relay->set_stat_identity(stat_stream.c_str(), relay_peer_name, relay_peer_port);
 
     	ret = set_relay_param(cur_relay);
     	if (SLS_OK != ret) {

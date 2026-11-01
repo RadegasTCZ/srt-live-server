@@ -96,6 +96,33 @@ URL that is not `http://`, stops sls from starting) and again on a reload
 (`-s reload`); if the re-resolution fails the previous address stays in use and
 an error is logged. Names are never resolved while serving connections.
 
+## stat_post_url, stat_post_interval (srt block)
+
+`stat_post_url http://host[:port][/path];` makes sls POST a JSON document
+describing the running streams every `stat_post_interval` seconds (default 5;
+the interval also paces how often the per-role figures are refreshed). The
+request carries `Content-Type: application/json`; the response is ignored.
+
+    {"server":"sls","version":"1.5.4","generated_ms":1730000000000,
+     "roles":[{"kind":"publisher","stream":"uplive.sls.com/live/alice",
+               "remote_ip":"1.2.3.4","remote_port":5000,
+               "start_ms":1730000000000,"kbitrate":5980}]}
+
+- `kind` is `publisher`, `player`, `puller` or `pusher`. Listeners are not
+  reported; `roles` is `[]` when nothing is connected.
+- `stream` is `<domain>/<app>/<stream>` as the role asked for it (a player
+  shows the publisher domain). `remote_ip`/`remote_port` are the peer; for a
+  puller or pusher that is the upstream or downstream relay server.
+- `generated_ms` and `start_ms` are Unix epoch milliseconds. `kbitrate` is an
+  integer in kbit/s, averaged over the last second the role moved data.
+- Strings are JSON-escaped; all numbers are JSON numbers.
+
+The stat host is resolved once, when sls starts, and is not re-resolved on a
+reload: change `stat_post_url` and restart to point at a different address.
+Unlike the webhook host, a stat host that does not resolve (or a URL that is
+not `http://`) is not fatal: an error is logged and posting stays disabled
+for that run.
+
 ## admission_timeout (server block)
 
 Milliseconds (100-60000, default 5000) an accepted connection may wait for a

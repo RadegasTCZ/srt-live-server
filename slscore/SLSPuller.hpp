@@ -39,7 +39,6 @@ public :
 
     virtual int  uninit();
     virtual int  handler();
-    virtual int  get_stat_base(char *stat_base);
     // closed because no player read it for idle_streams_timeout
     bool         closed_for_idle() const { return m_closed_for_idle; }
 protected:

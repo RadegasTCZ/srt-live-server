@@ -31,19 +31,6 @@
 #include "SLSLog.hpp"
 #include "SLSMapRelay.hpp"
 
-const char SLS_RELAY_STAT_INFO_BASE[] = "\
-{\
-\"port\": \"%d\",\
-\"role\": \"%s\",\
-\"pub_domain_app\": \"%s\",\
-\"stream_name\": \"%s\",\
-\"url\": \"%s\",\
-\"remote_ip\": \"%s\",\
-\"remote_port\": \"%d\",\
-\"start_time\": \"%s\",\
-\"kbitrate\":\
-";
-
 /**
  * CSLSPuller class implementation
  */
@@ -106,11 +93,6 @@ int CSLSPuller::handler()
 	return ret;
 }
 
-int   CSLSPuller::get_stat_base(char *stat_base)
-{
-    strcpy(stat_base, SLS_RELAY_STAT_INFO_BASE);
-    return SLS_OK;
-}
 
 
 

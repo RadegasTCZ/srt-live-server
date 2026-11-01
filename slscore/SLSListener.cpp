@@ -38,45 +38,6 @@
 #include "SLSPullerManager.hpp"
 #include "SLSPusherManager.hpp"
 
-const char SLS_SERVER_STAT_INFO_BASE[] = "\
-{\
-\"port\": \"%d\",\
-\"role\": \"%s\",\
-\"pub_domain_app\": \"\",\
-\"stream_name\": \"\",\
-\"url\": \"\",\
-\"remote_ip\": \"\",\
-\"remote_port\": \"\",\
-\"start_time\": \"%s\",\
-\"kbitrate\": \"0\"\
-}";
-
-const char SLS_PUBLISHER_STAT_INFO_BASE[] = "\
-{\
-\"port\": \"%d\",\
-\"role\": \"%s\",\
-\"pub_domain_app\": \"%s\",\
-\"stream_name\": \"%s\",\
-\"url\": \"%s\",\
-\"remote_ip\": \"%s\",\
-\"remote_port\": \"%d\",\
-\"start_time\": \"%s\",\
-\"kbitrate\":\
-";
-
-const char SLS_PLAYER_STAT_INFO_BASE[] = "\
-{\
-\"port\": \"%d\",\
-\"role\": \"%s\",\
-\"pub_domain_app\": \"%s\",\
-\"stream_name\": \"%s\",\
-\"url\": \"%s\",\
-\"remote_ip\": \"%s\",\
-\"remote_port\": \"%d\",\
-\"start_time\": \"%s\",\
-\"kbitrate\":\
-";
-
 /**
  * server conf
  */
@@ -100,7 +61,6 @@ CSLSListener::CSLSListener()
     m_idle_streams_timeout_role = 0;
     m_admission_timeout = SLS_DEFAULT_ADMISSION_TIMEOUT;
     m_admission_limiter = NULL;
-    m_stat_info = std::string("");
     memset(m_http_url_role, 0, URL_MAX_LEN);
     m_on_event_timeout = SLS_DEFAULT_ON_EVENT_TIMEOUT;
     memset(&m_hook_addr, 0, sizeof(m_hook_addr));
@@ -782,9 +742,6 @@ int CSLSListener::handler()
         return client_count;
     }
 
-    char cur_time[STR_DATE_TIME_LEN] = {0};
-    sls_gettime_default_string(cur_time);
-
     //3.is player?
     if (SLS_SID_PLAYER == role) {
         snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
@@ -879,10 +836,7 @@ int CSLSListener::handler()
 		player->set_map_data(key_stream_name, m_map_data);
 		player->attach_reader();
 		//stat info
-	    snprintf(tmp, sizeof(tmp), SLS_PLAYER_STAT_INFO_BASE,
-	    		m_port, player->get_role_name(), app_uplive.c_str(), stream_name, sid, peer_name, peer_port, cur_time);
-	    std::string stat_info = std::string(tmp);
-	    player->set_stat_info_base(stat_info);
+	    player->set_stat_identity(key_stream_name, peer_name, peer_port);
 	    // on_connect is sent by the worker that adopts the role (Ruling R17):
 	    // a role that expires while queued has announced nothing
 	    attach_hook(player);
@@ -925,10 +879,7 @@ int CSLSListener::handler()
 	pub->init();
 	pub->set_idle_streams_timeout(m_idle_streams_timeout_role);
 	//stat info
-    snprintf(tmp, sizeof(tmp), SLS_PUBLISHER_STAT_INFO_BASE,
-    		m_port, pub->get_role_name(), app_uplive.c_str(), stream_name, sid, peer_name, peer_port, cur_time);
-    std::string stat_info = std::string(tmp);
-    pub->set_stat_info_base(stat_info);
+    pub->set_stat_identity(key_stream_name, peer_name, peer_port);
     attach_hook(pub);
 
 	sls_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, new pub=%p, key_stream_name=%s.",
@@ -977,18 +928,6 @@ int CSLSListener::handler()
 					this, peer_name, peer_port, key_stream_name);
 	}
 	return client_count;
-}
-
-std::string   CSLSListener::get_stat_info()
-{
-	if (m_stat_info.length() == 0) {
-	    char tmp[STR_MAX_LEN] = {0};
-	    char cur_time[STR_DATE_TIME_LEN] = {0};
-	    sls_gettime_default_string(cur_time);
-	    snprintf(tmp, sizeof(tmp), SLS_SERVER_STAT_INFO_BASE, m_port, m_role_name, cur_time);
-	    m_stat_info = std::string(tmp);
-	}
-	return m_stat_info;
 }
 
 

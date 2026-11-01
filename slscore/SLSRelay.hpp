@@ -100,7 +100,6 @@ public :
     int           open(const char *url);
     virtual int   close();
     virtual int   get_peer_info(char *peer_name, int &peer_port);
-    virtual int   get_stat_base(char *stat_base) ;
 protected:
     char         m_url[URL_MAX_LEN];
     char         m_upstream[URL_MAX_LEN];

@@ -105,6 +105,10 @@ int      sls_resolve(const char *host, int port, struct sockaddr_storage *out, s
 int      sls_parse_http_url(const char *url, std::string *host, int *port, std::string *uri);
 // RFC 3986 percent-encoding: unreserved characters (A-Z a-z 0-9 - . _ ~) are kept, everything else is %XX
 std::string sls_url_encode(const std::string &s);
+// JSON string escaping, no surrounding quotes: " \ and control characters; other bytes pass through
+std::string sls_json_escape(const std::string &s);
+// the server version: shown by -h, reported in the stats document
+#define SLS_VERSION_STRING "1.5.4"
 // Parse an HTTP/1.x response held in buf. Returns 1: the message is complete; 0: more data needed
 // (or, with no Content-Length and no chunking, the body ends when the peer closes); -1: malformed or
 // larger than 64 KiB. Once the headers are complete *status (second token of the status line),

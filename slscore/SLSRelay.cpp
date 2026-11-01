@@ -337,8 +337,4 @@ int CSLSRelay::get_peer_info(char *peer_name, int &peer_port)
 	return SLS_OK;
 }
 
-int  CSLSRelay::get_stat_base(char *stat_base)
-{
-    return SLS_OK;
-}
 

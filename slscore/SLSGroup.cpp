@@ -318,11 +318,11 @@ void CSLSGroup::relay_ended(CSLSRole *role)
 void CSLSGroup::check_invalid_sock()
 {
 	bool update_stat_info = false;
+	std::string stat_info;      // this tick's snapshot, published whole after the loop
 	int64_t cur_time_ms = sls_gettime_ms();
 	int d = cur_time_ms - m_stat_post_last_tm_ms;
 	if (d >= m_stat_post_interval*1000) {
 		update_stat_info = true;
-		m_stat_info.clear();
 		m_stat_post_last_tm_ms = cur_time_ms ;
 	}
 
@@ -338,9 +338,13 @@ void CSLSGroup::check_invalid_sock()
         }
 
         if (update_stat_info) {
-            std::string stat_info = role->get_stat_info();
-            CSLSLock lock(&m_mutex_stat);
-            m_stat_info.append(stat_info);
+            std::string role_info = role->get_stat_info();
+            if (!role_info.empty()) {
+                if (!stat_info.empty()) {
+                    stat_info += ",";
+                }
+                stat_info += role_info;
+            }
         }
 
         int state = role->get_state(cur_time_ms);
@@ -359,6 +363,11 @@ void CSLSGroup::check_invalid_sock()
 			m_map_role.erase(it_erase);
 			continue;
 		}
+    }
+
+    if (update_stat_info) {
+        CSLSLock lock(&m_mutex_stat);
+        m_stat_info.swap(stat_info);
     }
 }
 
@@ -406,10 +415,17 @@ void CSLSGroup::set_stat_post_interval(int interval)
     m_stat_post_interval = interval;
 }
 
+// append this group's role objects, comma-separated, to info
 void CSLSGroup::get_stat_info(std::string &info)
 {
     CSLSLock lock(&m_mutex_stat);
-    info.append(m_stat_info);
+    if (m_stat_info.empty()) {
+        return;
+    }
+    if (!info.empty()) {
+        info += ",";
+    }
+    info += m_stat_info;
 }
 
 

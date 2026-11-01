@@ -38,7 +38,6 @@ public :
     virtual ~CSLSPusher();
 
     virtual int  handler();
-    virtual int  get_stat_base(char *stat_base);
 protected:
 
 };

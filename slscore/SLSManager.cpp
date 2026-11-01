@@ -375,7 +375,12 @@ int  CSLSManager::stat_client_callback(void *p, HTTP_CALLBACK_TYPE type, void *v
 	CSLSManager *manager = (CSLSManager *)context;
 	if (HCT_REQUEST_CONTENT == type) {
 		std::string * p_response = (std::string *)v;
-		manager->get_stat_info(*p_response);
+		// the whole document: the groups only contribute their role objects
+		std::string roles;
+		manager->get_stat_info(roles);
+		*p_response = std::string("{\"server\":\"sls\",\"version\":\"") + SLS_VERSION_STRING +
+			"\",\"generated_ms\":" + std::to_string(sls_gettime_ms()) +
+			",\"roles\":[" + roles + "]}";
 	} else if (HCT_RESPONSE_END == type) {
 		//response info maybe include info that server send client, such as reload cmd...
 	} else {

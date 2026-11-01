@@ -55,14 +55,11 @@ static void reload_handler(int s){
 /**
  * usage information
  */
-#define SLS_MAJOR_VERSION "1"
-#define SLS_MIN_VERSION "5"
-#define SLS_TEST_VERSION "3"
 static void usage()
 {
     printf("-------------------------------------------------\n");
     printf("           srt-live-srver \n");
-    printf("                    v%s.%s.%s \n", SLS_MAJOR_VERSION, SLS_MIN_VERSION, SLS_TEST_VERSION);
+    printf("                    v%s \n", SLS_VERSION_STRING);
     printf("-------------------------------------------------\n");
     printf("    \n");
 }
@@ -244,6 +241,7 @@ int main(int argc, char* argv[])
             sls_log(SLS_LOG_ERROR, "stat_post_url='%s' is not a usable http:// URL or does not resolve; stat posting is disabled.",
                     conf_srt->stat_post_url);
         } else {
+            http_stat_client->set_stage_callback(CSLSManager::stat_client_callback, sls_manager);
             http_stat_client->open(conf_srt->stat_post_url, &stat_addr, stat_addr_len, stat_method, conf_srt->stat_post_interval);
         }
     }

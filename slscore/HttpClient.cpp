@@ -31,7 +31,7 @@
 //	 GET /sls?on_event=on_connect HTTP/1.1
 #define HTTP_REQUEST_HEADER_ACCEPT         "Accept: text/html, */*\r\n"
 #define HTTP_REQUEST_HEADER_USER_AGENT     "User-Agent: srt-live-server\r\n"
-#define HTTP_REQUEST_HEADER_CONTENT_TYPE   "Content-Type: application/x-www-form-urlencoded\r\n"
+#define HTTP_REQUEST_HEADER_CONTENT_TYPE   "Content-Type: application/json\r\n"
 // one request per connection: the response ends at its length, its last chunk, or the close
 #define HTTP_REQUEST_HEADER_CONNECTION     "Connection: close\r\n"
 #define HTTP_REQUEST_HEADER_CACHE_CONTROL  "Cache-Control: no-cache\r\n"

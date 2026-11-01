@@ -43,6 +43,8 @@ CSLSRole::CSLSRole()
     m_stat_bitrate_interval  = 1000;//ms
     m_stat_bitrate_datacount = 0;
     m_kbitrate               = 0;//kb
+    m_stat_remote_port       = 0;
+    m_stat_start_ms          = 0;
     m_idle_streams_timeout   = 10;//unit: s, -1: unlimited
     m_latency                = 20;//ms
 
@@ -506,16 +508,25 @@ int CSLSRole::handler_write_data()
     return write_size ;
 }
 
-void   CSLSRole::set_stat_info_base(std::string &v)
+void   CSLSRole::set_stat_identity(const char *stream, const char *remote_ip, int remote_port)
 {
-	m_stat_info_base = v;
+	m_stat_stream      = stream;
+	m_stat_remote_ip   = remote_ip;
+	m_stat_remote_port = remote_port;
+	m_stat_start_ms    = sls_gettime_ms();
 }
 
 std::string   CSLSRole::get_stat_info()
 {
-	char tmp[STR_MAX_LEN] = {0};
-    sprintf(tmp, "\"%d\"}", m_kbitrate);
-	return m_stat_info_base + std::string(tmp);
+	if (m_stat_stream.empty()) {
+		return std::string();
+	}
+	return std::string("{\"kind\":\"") + sls_json_escape(m_role_name) +
+		"\",\"stream\":\"" + sls_json_escape(m_stat_stream) +
+		"\",\"remote_ip\":\"" + sls_json_escape(m_stat_remote_ip) +
+		"\",\"remote_port\":" + std::to_string(m_stat_remote_port) +
+		",\"start_ms\":" + std::to_string(m_stat_start_ms) +
+		",\"kbitrate\":" + std::to_string(m_kbitrate) + "}";
 }
 
 

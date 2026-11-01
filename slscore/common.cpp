@@ -262,6 +262,34 @@ std::string sls_url_encode(const std::string &s)
     return out;
 }
 
+std::string sls_json_escape(const std::string &s)
+{
+    static const char hex[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (size_t i = 0; i < s.size(); i++) {
+        unsigned char c = (unsigned char)s[i];
+        switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        case '\t': out += "\\t";  break;
+        case '\b': out += "\\b";  break;
+        case '\f': out += "\\f";  break;
+        default:
+            if (c < 0x20 || c == 0x7f) {
+                out += "\\u00";
+                out += hex[c >> 4];
+                out += hex[c & 15];
+            } else {
+                out += (char)c;
+            }
+        }
+    }
+    return out;
+}
+
 #define SLS_HTTP_MAX_RESPONSE (64 * 1024)
 
 static std::string sls_http_lower_trim(const std::string &s)

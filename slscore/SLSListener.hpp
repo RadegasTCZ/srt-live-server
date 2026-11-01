@@ -126,7 +126,6 @@ public :
     // shared admission limiter (owned by CSLSManager); NULL = no caps
     void set_admission_limiter(CSLSConnLimiter *limiter);
 
-    virtual std::string get_stat_info();
 
 private:
     CSLSRoleList      * m_list_role;
@@ -139,7 +138,6 @@ private:
     int                 m_idle_streams_timeout_role;
     int                 m_admission_timeout;   // ms, from the server block
     CSLSConnLimiter   * m_admission_limiter;
-    std::string 		m_stat_info;
     char                m_http_url_role[URL_MAX_LEN];
     int                 m_on_event_timeout;    // ms
     // on_event_url's server, resolved at start and on reload (never on a hot path);
