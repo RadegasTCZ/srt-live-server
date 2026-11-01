@@ -196,7 +196,7 @@ int CSLSRole::get_state(int64_t cur_time_ms)
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::get_state, get_sock_state, ret=%d, call invalid_srt.",
         		this, ret);
         if (SRTS_BROKEN == ret || SRTS_CLOSED == ret || SRTS_NONEXIST == ret) {
-            int err = CSLSSrt::libsrt_neterrno();
+            int err = CSLSSrt::libsrt_lasterrno();
             set_end_reason(SRT_ECONNLOST == err ? "clean disconnect" :
                            SRT_ETIMEOUT  == err ? "idle timeout (peer silent)" : "error");
         } else {

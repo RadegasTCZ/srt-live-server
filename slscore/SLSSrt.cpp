@@ -135,13 +135,19 @@ SRTS_NONEXIST:
 
 }
 
-int CSLSSrt::libsrt_neterrno()
+int CSLSSrt::libsrt_lasterrno()
+{
+    return srt_getlasterror(NULL);
+}
+
+int CSLSSrt::libsrt_neterrno(bool peer)
 {
     int err = srt_getlasterror(NULL);
     const char *msg = srt_getlasterror_str();
 
     switch (err) {
         case SRT_ECONNLOST:
+        case SRT_ENOCONN:
             sls_log(SLS_LOG_DEBUG,
                     "CSLSSrt: peer disconnected (err=%d, %s).", err, msg);
             break;
@@ -151,8 +157,13 @@ int CSLSSrt::libsrt_neterrno()
                     err, msg);
             break;
         default:
-            sls_log(SLS_LOG_ERROR,
-                    "CSLSSrt::libsrt_neterrno, err=%d, %s.", err, msg);
+            if (peer) {
+                sls_peer_log(SLS_LOG_INFO,
+                        "CSLSSrt::libsrt_neterrno, err=%d, %s.", err, msg);
+            } else {
+                sls_log(SLS_LOG_ERROR,
+                        "CSLSSrt::libsrt_neterrno, err=%d, %s.", err, msg);
+            }
             break;
     }
     return err;
@@ -289,7 +300,7 @@ int CSLSSrt::libsrt_accept()
 
     int new_sock = srt_accept(m_sc.fd, (struct sockaddr*)&scl, &sclen);//NULL, NULL);//(sockaddr*)&scl, &sclen);
     if (new_sock == SRT_INVALID_SOCK) {
-        int err_no = libsrt_neterrno();
+        int err_no = libsrt_neterrno(true);
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_accept failed, sock=%d, error_no=%d,.",
                    this, m_sc.fd, err_no);
         return SLS_ERROR;
@@ -334,10 +345,14 @@ int CSLSSrt::libsrt_set_eid(int eid)
 }
 
 
-int CSLSSrt::libsrt_getsockopt(SRT_SOCKOPT optname, const char * optnamestr, void * optval, int * optlen)
+int CSLSSrt::libsrt_getsockopt(SRT_SOCKOPT optname, const char * optnamestr, void * optval, int * optlen, bool peer)
 {
     if (srt_getsockopt(m_sc.fd, 0, optname, optval, optlen) < 0) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSSrt::libsrt_getsockopt, failed to get option %s on socket: %s.", this, optnamestr, srt_getlasterror_str());
+        if (peer) {
+            sls_peer_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_getsockopt, failed to get option %s on socket: %s.", this, optnamestr, srt_getlasterror_str());
+        } else {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSSrt::libsrt_getsockopt, failed to get option %s on socket: %s.", this, optnamestr, srt_getlasterror_str());
+        }
         return SLSERROR(EIO);
     }
     return 0;
@@ -366,7 +381,7 @@ int CSLSSrt::libsrt_read(char *buf, int size)
     int ret;
     ret = srt_recvmsg(m_sc.fd, buf, size);
     if (ret < 0) {
-        libsrt_neterrno();
+        libsrt_neterrno(true);
     }
     return ret;
 }
@@ -376,8 +391,9 @@ int CSLSSrt::libsrt_write(const char *buf, int size)
     int ret;
     ret = srt_sendmsg(m_sc.fd, buf, size, -1, 0);
     if (ret < 0) {//SRTS_BROKEN
-        int err_no = libsrt_neterrno();
-        sls_log(SLS_LOG_WARNING, "[%p]CSLSSrt::libsrt_write failed, sock=%d, ret=%d, errno=%d.",
+        int err_no = libsrt_neterrno(true);
+        // a player that left: the session end line carries the reason
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSSrt::libsrt_write failed, sock=%d, ret=%d, errno=%d.",
                 this, m_sc.fd, ret, err_no);
     }
     return ret;

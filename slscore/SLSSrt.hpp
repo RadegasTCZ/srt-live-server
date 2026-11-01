@@ -107,7 +107,8 @@ public :
 
     int  libsrt_socket_nonblock(int enable);
 
-    int  libsrt_getsockopt(SRT_SOCKOPT optname, const char * optnamestr, void * optval, int * optlen);
+    // peer: a failure is a peer's doing (the peer already left), see libsrt_neterrno
+    int  libsrt_getsockopt(SRT_SOCKOPT optname, const char * optnamestr, void * optval, int * optlen, bool peer = false);
     int  libsrt_setsockopt(SRT_SOCKOPT optname, const char * optnamestr, const void * optval, int optlen);
 
     int  libsrt_add_to_epoll(int eid, bool write);
@@ -120,7 +121,13 @@ public :
     void libsrt_set_passphrase(const char *passphrase, int pbkeylen);
 
 
-    static int  libsrt_neterrno();
+    // Logs the thread's last libsrt error and returns its code. peer: the error
+    // is a peer's doing (a failed accept, a read or write on a connection that
+    // broke), so an unexpected one is logged through sls_peer_log at INFO, not
+    // as an unbudgeted ERROR line that is flushed to the file.
+    static int  libsrt_neterrno(bool peer = false);
+    // the last libsrt error code, without logging
+    static int  libsrt_lasterrno();
     static void libsrt_print_error_info();
 
 

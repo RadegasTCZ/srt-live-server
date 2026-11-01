@@ -672,8 +672,7 @@ int CSLSListener::handler()
     //1: accept
     fd_client = m_srt->libsrt_accept();
     if (fd_client < 0) {
-        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, srt_accept failed, fd=%d.", this, get_fd());
-        CSLSSrt::libsrt_neterrno();
+        // libsrt_accept has logged it (through sls_peer_log)
         return client_count;
     }
     client_count = 1;
@@ -704,7 +703,7 @@ int CSLSListener::handler()
     // its start at INFO ("new publisher[...]" / "new player[...]").
     sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
 
-    if (0 != srt->libsrt_getsockopt(SRTO_STREAMID, "SRTO_STREAMID", &sid, &sid_size)) {
+    if (0 != srt->libsrt_getsockopt(SRTO_STREAMID, "SRTO_STREAMID", &sid, &sid_size, true)) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], fd=%d, get streamid info failed.",
                 this, peer_name, peer_port, srt->libsrt_get_fd());
     	srt->libsrt_close();
