@@ -41,19 +41,31 @@
  *
  * Caps, all checked together under one mutex:
  * - max_total: every accepted connection;
- * - reserved publishers: players may hold at most max_total - reserved slots,
- *   so viewers (or one streamer's players) can never lock publishers out;
+ * - the reserve: the shared slots (players, and publishers whose claim is
+ *   not verified yet) are at most max_total - reserved, so viewers (or
+ *   anyone who merely names a publisher stream) can never lock verified
+ *   publishers out;
  * - max_per_ip: concurrent connections from one address;
  * - per stream (max_stream, given by the caller): players of one stream.
  * check() gives try_acquire's verdict without taking anything: the listen
  * callback uses it to refuse before the handshake completes.
  */
 enum SLS_CONN_REFUSAL {
-    SLS_CONN_OK      = 0,
-    SLS_CONN_TOTAL   = 1,   // max_total reached
-    SLS_CONN_PER_IP  = 2,   // max_per_ip reached for this address
-    SLS_CONN_PLAYERS = 3,   // the players' share (max_total - reserved) is in use
-    SLS_CONN_STREAM  = 4,   // the stream has max_stream players
+    SLS_CONN_OK         = 0,
+    SLS_CONN_TOTAL      = 1,   // max_total reached
+    SLS_CONN_PER_IP     = 2,   // max_per_ip reached for this address
+    SLS_CONN_PLAYERS    = 3,   // a player: the shared slots (max_total - reserved) are in use
+    SLS_CONN_STREAM     = 4,   // the stream has max_stream players
+    SLS_CONN_UNVERIFIED = 5,   // an unverified publisher: the shared slots are in use
+};
+
+// What a slot is for. Only a VERIFIED publisher may use the reserve: one
+// whose passphrase libsrt checked (user_file, srt_passphrase) or one the
+// on_event_url hook admitted, or any publisher on a server without auth.
+enum SLS_SLOT_KIND {
+    SLS_SLOT_PLAYER    = 0,
+    SLS_SLOT_PUBLISHER = 1,   // verified: may use the reserve
+    SLS_SLOT_PENDING   = 2,   // a publisher the hook has not admitted yet: a shared slot
 };
 
 class CSLSConnLimiter
@@ -63,18 +75,22 @@ public:
     CSLSConnLimiter(int max_total, int max_per_ip, int reserved_publishers = 0);
     ~CSLSConnLimiter();
 
-    // Thread-safe; on refusal *why (if given) says which cap was hit. stream
-    // is a player's stream key ("" for a publisher), max_stream its cap (0 =
-    // none). release() must get the same ip, publisher and stream.
-    bool try_acquire(const char *ip, bool publisher, const std::string &stream, int max_stream, int *why = NULL);
-    void release(const char *ip, bool publisher, const std::string &stream);
+    // Thread-safe; on refusal *why (if given) says which cap was hit. kind is
+    // an SLS_SLOT_KIND; stream is a player's stream key ("" otherwise),
+    // max_stream its cap (0 = none). release() must get the same ip, kind
+    // (after a promote: SLS_SLOT_PUBLISHER) and stream.
+    bool try_acquire(const char *ip, int kind, const std::string &stream, int max_stream, int *why = NULL);
+    void release(const char *ip, int kind, const std::string &stream);
+    // a PENDING slot becomes a PUBLISHER slot (the hook admitted it): it
+    // leaves the shared slots, which another connection may then take
+    void promote();
     // try_acquire's verdict (an SLS_CONN_REFUSAL), taking nothing
-    int  check(const char *ip, bool publisher, const std::string &stream, int max_stream) const;
+    int  check(const char *ip, int kind, const std::string &stream, int max_stream) const;
     int  total() const;
     int  max_total() const  { return m_max_total; }
     int  max_per_ip() const { return m_max_per_ip; }
     int  reserved_publishers() const { return m_reserved; }
-    // what players may hold at most; 0 = unlimited
+    // what players and unverified publishers may hold at most; 0 = unlimited
     int  max_players() const { return m_max_total > 0 ? m_max_total - m_reserved : 0; }
 
 private:
@@ -82,12 +98,12 @@ private:
     int                         m_max_per_ip;
     int                         m_reserved;
     int                         m_total;
-    int                         m_players;
+    int                         m_shared;       // PLAYER + PENDING slots held
     std::map<std::string, int>  m_per_ip;
     std::map<std::string, int>  m_per_stream;   // players per stream key
     mutable CSLSMutex           m_mutex;
 
-    int  verdict_locked(const std::string &ip, bool publisher, const std::string &stream, int max_stream) const;
+    int  verdict_locked(const std::string &ip, int kind, const std::string &stream, int max_stream) const;
 };
 
 #endif

@@ -130,6 +130,10 @@ void CSLSListener::log_admission_refusal(const char *where, const char *peer_nam
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::%s, refused [%s:%d]: player connection limit (%d; %d of %d kept for publishers) reached.",
                      this, where, peer_name, peer_port, m_admission_limiter->max_players(),
                      m_admission_limiter->reserved_publishers(), m_admission_limiter->max_total());
+    } else if (SLS_CONN_UNVERIFIED == why) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::%s, refused [%s:%d]: shared connection limit (%d; %d of %d kept for publishers the hook admitted) reached by a publisher the hook has not admitted yet.",
+                     this, where, peer_name, peer_port, m_admission_limiter->max_players(),
+                     m_admission_limiter->reserved_publishers(), m_admission_limiter->max_total());
     } else if (SLS_CONN_STREAM == why) {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::%s, refused [%s:%d]: stream '%s' has max_players_per_stream (%d) players.",
                      this, where, peer_name, peer_port, stream ? stream : "", m_max_players_per_stream);
@@ -137,6 +141,23 @@ void CSLSListener::log_admission_refusal(const char *where, const char *peer_nam
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::%s, refused [%s:%d]: total connection limit (%d) reached.",
                      this, where, peer_name, peer_port, m_admission_limiter->max_total());
     }
+}
+
+// Who may use the publishers' reserve (R40). With user_file (or a
+// listener-wide srt_passphrase) libsrt has verified the publish passphrase
+// before the accept: a PUBLISHER slot. With only the on_event_url hook the
+// claim is unverified until the hook answers 200: a shared PENDING slot,
+// promoted then (CSLSRole::check_http_passed). Without any auth every
+// publisher counts as verified: the reserve then only keeps viewers from
+// locking publishers out, not someone who merely names a publisher stream.
+int CSLSListener::publisher_slot_kind() const
+{
+    const sls_conf_server_t *c = (const sls_conf_server_t *)m_conf;
+    bool passphrase = (c->user_file[0] != 0) || (c->srt_passphrase[0] != 0);
+    if (!passphrase && m_http_url_role[0] != 0) {
+        return SLS_SLOT_PENDING;
+    }
+    return SLS_SLOT_PUBLISHER;
 }
 
 // Players are counted per stream across the manager's listeners: the key
@@ -159,20 +180,20 @@ struct sls_relay_manager_ref {
 struct sls_slot_guard {
     CSLSConnLimiter *limiter;
     const char      *ip;
-    bool             publisher;
+    int              kind;
     std::string      stream;
-    sls_slot_guard() : limiter(NULL), ip(NULL), publisher(false) {}
-    ~sls_slot_guard() { if (limiter) limiter->release(ip, publisher, stream); }
+    sls_slot_guard() : limiter(NULL), ip(NULL), kind(SLS_SLOT_PLAYER) {}
+    ~sls_slot_guard() { if (limiter) limiter->release(ip, kind, stream); }
     // Takes the slot; false (and *why) if a cap refuses it. No limiter: no caps.
-    bool take(CSLSConnLimiter *l, const char *i, bool pub, const std::string &st, int max_stream, int *why) {
+    bool take(CSLSConnLimiter *l, const char *i, int k, const std::string &st, int max_stream, int *why) {
         *why = SLS_CONN_OK;
         if (NULL == l) return true;
-        if (!l->try_acquire(i, pub, st, max_stream, why)) return false;
-        limiter = l; ip = i; publisher = pub; stream = st;
+        if (!l->try_acquire(i, k, st, max_stream, why)) return false;
+        limiter = l; ip = i; kind = k; stream = st;
         return true;
     }
     void hand_to(CSLSRole *role) {
-        if (limiter) role->set_conn_limiter(limiter, ip, publisher, stream);
+        if (limiter) role->set_conn_limiter(limiter, ip, kind, stream);
         limiter = NULL;
     }
 };
@@ -596,8 +617,15 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     // takes the slot (connections may come and go in between).
     if (NULL != self->m_admission_limiter) {
         std::string key_stream = app_key + "/" + stream;
+        // A publisher's claim is not verified yet here: libsrt checks the
+        // passphrase after this callback. With a passphrase the check skips
+        // the reserve (a real publisher must get in while viewers fill the
+        // shared slots) and holds nothing; the accept, after the passphrase
+        // was verified, takes the slot. Hook-only, the publisher counts
+        // against the shared slots here and at accept (publisher_slot_kind()).
         bool publisher = (SLS_SID_PUBLISHER == role);
-        int why = self->m_admission_limiter->check(peer_ip, publisher,
+        int  kind = publisher ? self->publisher_slot_kind() : SLS_SLOT_PLAYER;
+        int why = self->m_admission_limiter->check(peer_ip, kind,
                       publisher ? std::string() : self->player_stream_key(key_stream.c_str()),
                       publisher ? 0 : self->m_max_players_per_stream);
         if (SLS_CONN_OK != why) {
@@ -917,7 +945,7 @@ int CSLSListener::accept_one()
     if (SLS_SID_PLAYER == role) {
         snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
         // before anything is looked up or pulled for it
-        if (!slot.take(m_admission_limiter, peer_name, false, player_stream_key(key_stream_name),
+        if (!slot.take(m_admission_limiter, peer_name, SLS_SLOT_PLAYER, player_stream_key(key_stream_name),
                        m_max_players_per_stream, &why)) {
             log_admission_refusal("handler", peer_name, peer_port, why, key_stream_name);
             srt->libsrt_close();
@@ -1036,7 +1064,7 @@ int CSLSListener::accept_one()
     //4. is publisher?
     app_uplive = key_app;
 	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
-	if (!slot.take(m_admission_limiter, peer_name, true, std::string(), 0, &why)) {
+	if (!slot.take(m_admission_limiter, peer_name, publisher_slot_kind(), std::string(), 0, &why)) {
 		log_admission_refusal("handler", peer_name, peer_port, why, key_stream_name);
 		srt->libsrt_close();
 		delete srt;

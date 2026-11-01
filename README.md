@@ -94,7 +94,9 @@ check your config and tooling before you restart.
   accepted connections exist at once, and `max_connections_per_ip` (default 16,
   0 = unlimited) caps one address. `reserved_publisher_connections` (default a
   tenth of the cap, at most 16, at least 1) keeps slots that players may not use,
-  so viewers can no longer lock publishers out, and `max_players_per_stream`
+  so viewers can no longer lock publishers out (only verified publishers may use
+  it: passphrase-checked, or admitted by the hook; without any authentication it
+  does not stop someone who merely names a publisher stream), and `max_players_per_stream`
   (default unlimited; the example sets 100) caps the players of one stream. Over
   a cap the connection is closed at accept. An accepted connection waits at most `admission_timeout` ms (default
   5000) for a worker slot. Per-attempt connection lines are DEBUG now, and

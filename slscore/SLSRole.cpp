@@ -86,7 +86,7 @@ CSLSRole::CSLSRole()
     m_http_client     = NULL;
     m_conn_limiter    = NULL;
     memset(m_conn_ip, 0, sizeof(m_conn_ip));
-    m_conn_publisher  = false;
+    m_conn_kind       = SLS_SLOT_PLAYER;
     m_admission_timeout = 0;
 
 	sprintf(m_role_name, "role");
@@ -140,11 +140,11 @@ int CSLSRole::uninit()
 	return ret;
 }
 
-void CSLSRole::set_conn_limiter(CSLSConnLimiter *limiter, const char *ip, bool publisher, const std::string &stream)
+void CSLSRole::set_conn_limiter(CSLSConnLimiter *limiter, const char *ip, int kind, const std::string &stream)
 {
 	release_conn_slot();
 	m_conn_limiter   = limiter;
-	m_conn_publisher = publisher;
+	m_conn_kind      = kind;
 	m_conn_stream    = stream;
 	snprintf(m_conn_ip, sizeof(m_conn_ip), "%s", ip ? ip : "");
 }
@@ -154,7 +154,15 @@ void CSLSRole::release_conn_slot()
 	if (NULL != m_conn_limiter) {
 		CSLSConnLimiter *l = m_conn_limiter;
 		m_conn_limiter = NULL;
-		l->release(m_conn_ip, m_conn_publisher, m_conn_stream);
+		l->release(m_conn_ip, m_conn_kind, m_conn_stream);
+	}
+}
+
+void CSLSRole::promote_conn_slot()
+{
+	if (NULL != m_conn_limiter && SLS_SLOT_PENDING == m_conn_kind) {
+		m_conn_limiter->promote();
+		m_conn_kind = SLS_SLOT_PUBLISHER;
 	}
 }
 
@@ -729,6 +737,7 @@ int CSLSRole::check_http_passed()
 		delete m_http_client;
 		m_http_client = NULL;
 		m_http_passed = true;
+		promote_conn_slot(); // a verified publisher now: it may use the reserve
 		session_start();     // admitted by the hook
 		return SLS_OK;
 	}
