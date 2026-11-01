@@ -290,7 +290,7 @@ int CSLSSrt::libsrt_accept()
     int new_sock = srt_accept(m_sc.fd, (struct sockaddr*)&scl, &sclen);//NULL, NULL);//(sockaddr*)&scl, &sclen);
     if (new_sock == SRT_INVALID_SOCK) {
         int err_no = libsrt_neterrno();
-        sls_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_accept failed, sock=%d, error_no=%d,.",
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_accept failed, sock=%d, error_no=%d,.",
                    this, m_sc.fd, err_no);
         return SLS_ERROR;
     }

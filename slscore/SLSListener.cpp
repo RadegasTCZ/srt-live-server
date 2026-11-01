@@ -671,7 +671,7 @@ int CSLSListener::handler()
     //1: accept
     fd_client = m_srt->libsrt_accept();
     if (fd_client < 0) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, srt_accept failed, fd=%d.", this, get_fd());
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, srt_accept failed, fd=%d.", this, get_fd());
         CSLSSrt::libsrt_neterrno();
         return client_count;
     }
@@ -682,7 +682,8 @@ int CSLSListener::handler()
 	srt->libsrt_set_fd(fd_client);
     ret = srt->libsrt_getpeeraddr(peer_name, peer_port);
     if (ret != 0) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, libsrt_getpeeraddr failed, fd=%d.", this, srt->libsrt_get_fd());
+        // the peer may already be gone again (it closed right after the handshake)
+        sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, libsrt_getpeeraddr failed, fd=%d.", this, srt->libsrt_get_fd());
         srt->libsrt_close();
         delete srt;
         return client_count;
