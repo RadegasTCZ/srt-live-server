@@ -73,19 +73,27 @@ static void sls_libsrt_log_handler(void *opaque, int level, const char *file, in
                                    const char *area, const char *message)
 {
     (void)opaque; (void)file; (void)line; (void)area;
-    int sls_level = level <= LOG_ERR ? SLS_LOG_ERROR :
-                    level == LOG_WARNING ? SLS_LOG_WARNING :
+    // At most WARNING: these lines go through the peer budget because peers
+    // cause them, and a remote peer must not be able to raise ERROR lines.
+    int sls_level = level <= LOG_WARNING ? SLS_LOG_WARNING :
                     level == LOG_NOTICE ? SLS_LOG_INFO : SLS_LOG_DEBUG;
-    // one line, printable: the text can quote what a peer sent
+    // one line of printable ASCII (the text can quote what a peer sent):
+    // other bytes as \xNN, as elsewhere in the sls log
     const char *p = message ? message : "";
     while (*p == ':' || *p == ' ') {
         p++;                 // what is left of the prefix the flags turned off
     }
     char buf[1024];
     size_t n = 0;
-    for (; *p && n + 1 < sizeof(buf); p++) {
+    for (; *p && n + 5 < sizeof(buf); p++) {
         unsigned char c = (unsigned char)*p;
-        buf[n++] = (c < 0x20 || c == 0x7f) ? ' ' : (char)c;
+        if (c == '\n' || c == '\r' || c == '\t') {
+            buf[n++] = ' ';
+        } else if (c < 0x20 || c >= 0x7f) {
+            n += snprintf(buf + n, sizeof(buf) - n, "\\x%02x", c);
+        } else {
+            buf[n++] = (char)c;
+        }
     }
     while (n > 0 && buf[n - 1] == ' ') {
         n--;
