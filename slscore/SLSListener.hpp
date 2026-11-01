@@ -84,9 +84,11 @@ SLS_CONF_CMD_DYNAMIC_DECLARE_END
 // connections accepted at most by the listener's one-off startup drain (on_added_to_epoll)
 #define SLS_LISTENER_DRAIN_MAX 1024
 #define SLS_DEFAULT_IDLE_STREAMS_TIMEOUT 10   // seconds; 0 would drop a role the moment it is idle
+#define SLS_DEFAULT_BACKLOG 10                // pending handshakes; 0 makes srt_listen fail (err 5003)
 inline void sls_conf_server_defaults(sls_conf_server_t *c)
 {
     c->idle_streams_timeout = SLS_DEFAULT_IDLE_STREAMS_TIMEOUT;
+    c->backlog = SLS_DEFAULT_BACKLOG;
     c->admission_timeout = SLS_DEFAULT_ADMISSION_TIMEOUT;
     c->on_event_timeout  = SLS_DEFAULT_ON_EVENT_TIMEOUT;
 }

@@ -132,7 +132,8 @@ check your config and tooling before you restart.
   as one broken state, and the old lines read a stale error code).
 - **Idle timeout default.** An omitted `idle_streams_timeout` is `10` seconds, in a
   server block and in a relay block (it was `0`, which dropped idle roles and pulls
-  at once); `-1` still disables it.
+  at once); `-1` still disables it. An omitted `backlog` is `10` (it was `0`, and sls
+  could not listen).
 - **Log file.** `log_file` is opened without following symlinks (mode 0640) and
   must be a plain file you own (when sls starts as root: owned by root) with one link; otherwise, or when it cannot be
   opened, sls refuses to start. Session start/end lines are limited to 20 per

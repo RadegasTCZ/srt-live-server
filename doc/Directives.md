@@ -217,6 +217,12 @@ an explicit value, `0` included, is used as written. A relay block has its own
 `idle_streams_timeout` (see below), with the same default of `10` when omitted
 (it too was `0` before).
 
+## backlog (server block)
+
+Length of the queue of SRT handshakes waiting to be accepted (1-1024). Default
+`10` when the directive is omitted (before, an omitted value was `0`, and sls
+could not listen on the port).
+
 ## admission_timeout (server block)
 
 Milliseconds (100-60000, default 5000) an accepted connection may wait for a
