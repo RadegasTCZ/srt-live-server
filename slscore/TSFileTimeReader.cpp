@@ -281,7 +281,7 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
     struct { int es_pid; int64_t dts; int64_t pts; } ti = {INVALID_PID, INVALID_DTS_PTS, INVALID_DTS_PTS};
     bool write_ok = true;
     int  write_errno = 0;
-    while(true) {
+    while (write_ok) {           // the first failed write ends the whole run
     	int n = read(ts_fd, ts_pack, TS_PACK_LEN);
     	if (n < TS_PACK_LEN)
     		break;
@@ -329,6 +329,7 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
                 if (write_ok && !write_rts_record(m_rts_fd, rts, rts_data)) {
                     write_ok = false;
                     write_errno = errno;
+                    break;
                 }
                 rts += m_udp_duration;
             }
@@ -350,7 +351,7 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
 	int ts_udp_count = ts_count/TS_UDP_LEN;
 	int n = 0;
 	uint8_t udp_data[TS_UDP_LEN];
-	if (ts_count > 0){
+	if (write_ok && ts_count > 0){
 		for (int i = 0; i < ts_udp_count+1; i++) {
 			n = m_array_data.get(udp_data, TS_UDP_LEN);
 			if (n != TS_UDP_LEN) {
@@ -359,6 +360,7 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
 			if (write_ok && !write_rts_record(m_rts_fd, rts, udp_data)) {
 				write_ok = false;
 				write_errno = errno;
+				break;
 			}
 			rts += m_udp_duration;
 		}
