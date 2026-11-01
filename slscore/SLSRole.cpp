@@ -178,6 +178,28 @@ int CSLSRole::invalid_srt()
     return SLS_OK;
 }
 
+// Why a connection ended, from the socket's own state. srt_getsockstate()
+// sets no error code, so the thread's last libsrt error belongs to whatever
+// call came before, often for another socket. libsrt reports a peer that
+// closed and a peer that went silent (SRTO_PEERIDLETIMEO) the same way, as
+// SRTS_BROKEN, so the two are one reason; sls's own idle timer, a shutdown
+// and an error are set where they happen.
+const char *CSLSRole::end_reason_of_sock_state(int st)
+{
+    if (SRTS_BROKEN == st) {
+        return "peer disconnected";
+    }
+    if (SRTS_CLOSED == st || SRTS_NONEXIST == st) {
+        return "closed";
+    }
+    return "error";          // still connected (or no socket): sls dropped it on an error
+}
+
+void CSLSRole::set_end_reason_from_sock()
+{
+    set_end_reason(end_reason_of_sock_state(get_sock_state()));
+}
+
 int CSLSRole::get_state(int64_t cur_time_ms)
 {
 	if (SLS_RS_INVALID == m_state)
@@ -199,13 +221,7 @@ int CSLSRole::get_state(int64_t cur_time_ms)
 	if (SLS_ERROR == ret || SRTS_BROKEN == ret || SRTS_CLOSED == ret || SRTS_NONEXIST == ret) {
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSRole::get_state, get_sock_state, ret=%d, call invalid_srt.",
         		this, ret);
-        if (SRTS_BROKEN == ret || SRTS_CLOSED == ret || SRTS_NONEXIST == ret) {
-            int err = CSLSSrt::libsrt_lasterrno();
-            set_end_reason(SRT_ECONNLOST == err ? "clean disconnect" :
-                           SRT_ETIMEOUT  == err ? "idle timeout (peer silent)" : "error");
-        } else {
-            set_end_reason("error");
-        }
+        set_end_reason(end_reason_of_sock_state(ret));
 		m_state = SLS_RS_INVALID;
 		invalid_srt();
 		return m_state;
@@ -535,8 +551,10 @@ bool CSLSRole::end_was_failure() const
 	if (!m_ever_connected || NULL == m_end_reason) {
 		return true;      // never connected, or ended with no recorded reason
 	}
+	// a peer that disconnected may have closed or gone silent (libsrt cannot
+	// tell): a dead upstream must be looked up again, so it counts as failed
 	return 0 == strcmp(m_end_reason, "error") ||
-	       0 == strcmp(m_end_reason, "idle timeout (peer silent)");
+	       0 == strcmp(m_end_reason, "peer disconnected");
 }
 
 void CSLSRole::session_start()

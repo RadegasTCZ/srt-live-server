@@ -174,8 +174,9 @@ the budget carries `[N session line(s) suppressed]`, and the main loop logs
 Without `on_event_url` the start is logged when a worker adopts the
 connection; with it, when the hook answers 200. A refused connection (hook
 answer other than 200, no answer, refused at accept) logs neither line. The
-reason is `clean disconnect`, `idle timeout (peer silent)`, `idle timeout (no
-data)`, `shutdown`, `error` or `closed`. The per-session bookkeeping lines
+reason is `peer disconnected` (the peer closed the connection or stopped
+answering: libsrt reports both the same way), `idle timeout (no data)`,
+`shutdown`, `error` or `closed`. The per-session bookkeeping lines
 (map add/remove, epoll, socket close, reader resync, pull manager and relay
 open/close) are DEBUG. An unexpected libsrt error caused by a peer (a failed
 accept, a read or write on a broken connection) is logged through the refusal
@@ -236,10 +237,11 @@ is appended). Hosts are resolved when the configuration is loaded; a relay
 block with an upstream that does not resolve is refused with an error in the
 log. The addresses are looked up again only after a relay connection has
 failed (it never reached the connected state and carried no data, it broke, or
-the peer went silent) or failed to open, by the main loop (within about 100 ms,
+the upstream disconnected: libsrt cannot tell an upstream that closed from one
+that went silent) or failed to open, by the main loop (within about 100 ms,
 and at most once per 5 seconds), never by a worker thread and never per packet.
-A relay that connected and ended cleanly (the upstream closed it, or no player
-was left) keeps the cached addresses, so a churn of short pulls costs no lookup; if that lookup fails the previous
+A relay that connected and that sls ended itself (no player was left, its idle
+timeout, a shutdown) keeps the cached addresses, so a churn of short pulls costs no lookup; if that lookup fails the previous
 addresses stay in use. (With `worker_threads 0` the main thread is also the
 serving thread, so this lookup runs on it and can briefly block serving.)
 An upstream with a `?` but no `streamid=` is refused when the relay tries to

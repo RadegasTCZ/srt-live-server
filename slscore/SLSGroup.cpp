@@ -182,6 +182,7 @@ int CSLSGroup::handler()
         	//handle exception
             sls_log(SLS_LOG_TRACE, "[%p]CSLSGroup::handle, worker_number=%d, write sock=%d is invalid, %s=%p, write_len=%d, role_map.size=%zu.",
                     this, m_worker_number, m_write_socks[i], role->get_role_name(), role, write_len, m_map_role.size());
+        	role->set_end_reason_from_sock();   // before the close: the socket says why
         	role->invalid_srt();
         } else {
             handler_count += ret;
@@ -208,6 +209,7 @@ int CSLSGroup::handler()
         	//handle exception
             sls_log(SLS_LOG_TRACE, "[%p]CSLSGroup::handle, worker_number=%d, readable sock=%d is invalid, %s=%p, readable len=%d, role_map.size=%zu.",
                       this, m_worker_number, m_read_socks[i], role->get_role_name(), role, read_len, m_map_role.size());
+        	role->set_end_reason_from_sock();   // before the close: the socket says why
         	role->invalid_srt();
         } else {
             handler_count += ret;

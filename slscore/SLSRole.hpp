@@ -103,6 +103,9 @@ public :
     void        session_start();
     void        session_end();
     void        set_end_reason(const char *why) { if (NULL == m_end_reason) m_end_reason = why; }
+    // the end reason from the socket state (peer disconnected / closed / error), if none is set yet
+    void        set_end_reason_from_sock();
+    static const char *end_reason_of_sock_state(int st);
     // The socket reached the connected state or carried data. A relay that
     // never did, or that ended on an error or a silent peer, tells the manager
     // its upstream address may have changed (CSLSRelayManager::relay_ended).
