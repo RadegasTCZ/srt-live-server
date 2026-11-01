@@ -29,6 +29,7 @@
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 
 /**
@@ -121,7 +122,11 @@ public :
             ret = clock->lock_read();
         }
 	    if (0 != ret) {
-            printf("SLS Error: clock failure, ret=%d.\n", ret);
+            // Carrying on unlocked would corrupt the shared maps and rings:
+            // stop, loudly. (Cannot use sls_log here: SLSLog.hpp includes this file.)
+            fprintf(stderr, "SLS FATAL: rwlock acquisition failed, ret=%d; aborting.\n", ret);
+            fflush(stderr);
+            abort();
 	    } else {
 	        m_clock = clock;
 	        m_locked =true;
@@ -139,7 +144,9 @@ public :
             if (0 == ret) {
                 m_locked = true;
             } else {
-                printf("SLS Error: pthread_mutex_lock failure, ret=%d.\n", ret);
+                fprintf(stderr, "SLS FATAL: pthread_mutex_lock failed, ret=%d; aborting.\n", ret);
+                fflush(stderr);
+                abort();
             }
         }
 
