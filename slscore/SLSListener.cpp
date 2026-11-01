@@ -675,7 +675,21 @@ int CSLSListener::start()
                 this, m_users.size());
     }
 
-    // srt_listen() is deliberately NOT called here: see on_added_to_epoll().
+    // Non-blocking: srt_accept() returns at once when nothing is queued, so
+    // on_added_to_epoll() can drain the queue without waiting.
+    if (m_srt->libsrt_socket_nonblock(0) < 0) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, cannot make the listener non-blocking: %s.",
+                this, srt_getlasterror_str());
+        return SLS_ERROR;
+    }
+    // Here, at startup: a listen failure (a bad backlog, a port another
+    // server block already listens on) stops sls before it serves anything.
+    ret = m_srt->libsrt_listen(m_back_log);
+    if (SLS_OK != ret) {
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, libsrt_listen failed on port %d (err=%d, %s).",
+                this, m_port, ret, srt_getlasterror_str());
+        return SLS_ERROR;
+    }
 
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, m_list_role=%p.", this, m_list_role);
     if (NULL == m_list_role) {
@@ -701,18 +715,22 @@ int CSLSListener::stop()
 
 // libsrt raises the listener's readable event only for a connection that
 // completes while the socket is subscribed to the epoll; adding an already
-// listening socket does not report the connections queued before. So the
-// socket must be in the worker's epoll BEFORE it listens, otherwise a client
-// whose handshake lands between srt_listen() and the worker's first
-// check_new_role() (a few ms; ASan builds, a busy host) is never accepted and
-// sits connected-but-unserved until it times out.
+// listening socket does not report the connections queued before. The socket
+// listens from start() on, but a worker adds it to its epoll only later, so a
+// client whose handshake landed in between (a few ms; ASan builds, a busy
+// host) would never be accepted. The worker calls this right after the add:
+// the queue is drained once here (non-blocking accepts until none is left),
+// and from now on the epoll reports every new connection.
 int CSLSListener::on_added_to_epoll()
 {
-    int ret = m_srt->libsrt_listen(m_back_log);
-    if (SLS_OK != ret) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::on_added_to_epoll, libsrt_listen failure.", this);
-        return ret;
+    int drained = 0;
+    while (drained < SLS_LISTENER_DRAIN_MAX && handler() > 0) {
+        drained++;
     }
+    // The text is the one the startup line always had (scripts wait for it);
+    // it now also means a worker polls the listener.
+    sls_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_listen, ok, fd=%d, at port=%d, polled by a worker (%d queued connection(s) accepted).",
+            this, m_srt->libsrt_get_fd(), m_port, drained);
     return SLS_OK;
 }
 
@@ -741,6 +759,10 @@ int CSLSListener::handler()
     //2.check streamid, split it
 	srt = new CSLSSrt;
 	srt->libsrt_set_fd(fd_client);
+	// An accepted socket inherits the listener's modes, and the listener is
+	// non-blocking only for its own accepts: give the connection the
+	// blocking mode it always had (players switch to non-blocking below).
+	srt->libsrt_socket_nonblock(1);
     ret = srt->libsrt_getpeeraddr(peer_name, peer_port);
     if (ret != 0) {
         // the peer may already be gone again (it closed right after the handshake)

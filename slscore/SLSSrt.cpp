@@ -326,7 +326,8 @@ int CSLSSrt::libsrt_listen(int backlog)
     if (ret)
         return libsrt_neterrno();
 
-    sls_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_listen, ok, fd=%d, at port=%d.", this, m_sc.fd, m_sc.port);
+    // the INFO "libsrt_listen, ok" line is the listener's, once a worker polls it
+    sls_log(SLS_LOG_DEBUG, "[%p]CSLSSrt::libsrt_listen, listening, fd=%d, port=%d, backlog=%d.", this, m_sc.fd, m_sc.port, backlog);
     return SLS_OK;
 }
 
@@ -340,6 +341,9 @@ int CSLSSrt::libsrt_accept()
     int new_sock = srt_accept(m_sc.fd, (struct sockaddr*)&scl, &sclen);//NULL, NULL);//(sockaddr*)&scl, &sclen);
     if (new_sock == SRT_INVALID_SOCK) {
         int err_no = libsrt_lasterrno();
+        if (SRT_EASYNCRCV == err_no) {
+            return SLS_ERROR;        // non-blocking listener, nothing queued
+        }
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_accept failed, sock=%d, error_no=%d (%s).",
                    this, m_sc.fd, err_no, srt_getlasterror_str());
         return SLS_ERROR;

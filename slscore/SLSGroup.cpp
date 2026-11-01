@@ -124,7 +124,7 @@ void CSLSGroup::check_new_role() {
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll fd=%d, role_map.size=%zu.",
                 this, m_worker_number, role->get_role_name(), role, fd, m_map_role.size());
     } else {
-        sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll failed, fd=%d.",
+        sls_log(SLS_LOG_INFO, "[%p]CSLSGroup::check_new_role, worker_number=%d, %s=%p, add_to_epoll or on_added_to_epoll failed, fd=%d.",
                 this, m_worker_number, role->get_role_name(), role, fd);
         relay_ended(role);
         delete role;
