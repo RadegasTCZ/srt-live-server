@@ -116,7 +116,7 @@ void CSLSLog::peer_flush()
     }
     int held = s_peer_held.exchange(0);
     if (held > 0) {
-        log(SLS_LOG_INFO, "peer lines: %d held back in the last %.1f s (handshake refusals / connection attempts, at most 1 line/s; log_level debug shows each).",
+        log(SLS_LOG_INFO, "peer lines: %d held back in the last %.1f s (refusals of connections and requests, at most 1 line/s; log_level debug shows each).",
             held, (now - last) / 1000.0);
     }
 }

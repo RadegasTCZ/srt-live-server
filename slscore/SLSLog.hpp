@@ -55,8 +55,11 @@ static const char APP_NAME[] __attribute__((unused)) = "SLS";
 #define sls_set_log_file CSLSLog::set_log_file
 
 /*
- * Peer-triggered lines: handshake and admission refusals (per-attempt lines
- * that are not refusals are DEBUG, so they never use up this budget). A
+ * Peer-triggered lines: refusals of a handshake, an admission or a request
+ * (including a player request that cannot start a pull). Per-attempt lines
+ * that are not refusals are DEBUG, and an admitted session's start and end
+ * lines are plain INFO (CSLSRole::session_start/end), so neither uses up this
+ * budget. A
  * remote peer can cause any number of them (one per handshake), so
  * they share one budget of one line per second, process-wide, whatever
  * thread logs them (libsrt's receive thread runs the listen callback). A
