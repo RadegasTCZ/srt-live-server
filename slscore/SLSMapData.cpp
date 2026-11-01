@@ -153,8 +153,9 @@ int CSLSMapData::put(char *key, char *data, int len, int64_t *last_read_time)
     }
     CSLSRecycleArray *array_data = item->second;
     if (NULL == array_data) {
-        sls_log(SLS_LOG_ERROR, "[%p]CSLSMapData::get, key=%s, array_data is NULL.",
+        sls_log(SLS_LOG_ERROR, "[%p]CSLSMapData::put, key=%s, array_data is NULL.",
                 this, key);
+        return SLS_ERROR;
     }
 
     ret = array_data->put(data, len);
