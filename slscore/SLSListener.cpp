@@ -24,6 +24,8 @@
 
 
 #include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include <string.h>
 #include <fstream>
@@ -315,24 +317,37 @@ int CSLSListener::load_users(const char *path, std::string *err)
     // columns swapped or a stray character, a passphrase can land in the name
     // column. They carry the line number and the column name only.
     char msg[512];
-    struct stat st;
-    if (stat(path, &st) != 0) {
+    // open once, check and read the same descriptor (no swap between the two)
+    int rfd = ::open(path, O_RDONLY|O_CLOEXEC);
+    if (rfd < 0) {
         snprintf(msg, sizeof(msg), "cannot open '%s': %s", path, strerror(errno));
         if (err) *err = msg;
+        return SLS_ERROR;
+    }
+    struct stat st;
+    if (fstat(rfd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        snprintf(msg, sizeof(msg), "'%s' is not a regular file", path);
+        if (err) *err = msg;
+        ::close(rfd);
         return SLS_ERROR;
     }
     if (st.st_mode & 077) {
         snprintf(msg, sizeof(msg), "'%s' is accessible to group or others (mode %03o): it holds passphrases, "
                  "refusing to use it; run chmod 600 on it", path, (unsigned)(st.st_mode & 0777));
         if (err) *err = msg;
+        ::close(rfd);
         return SLS_ERROR;
     }
-    std::ifstream f(path);
-    if (!f.is_open()) {
-        snprintf(msg, sizeof(msg), "cannot open '%s': %s", path, strerror(errno));
-        if (err) *err = msg;
-        return SLS_ERROR;
+    std::string content;
+    {
+        char buf[4096];
+        ssize_t n;
+        while ((n = ::read(rfd, buf, sizeof(buf))) > 0 && content.size() < (1u << 20)) {
+            content.append(buf, (size_t)n);
+        }
     }
+    ::close(rfd);
+    std::istringstream f(content);
 
     // Parse into a staging map, then swap under the write lock so
     // listen_callback never observes a half-loaded m_users.
