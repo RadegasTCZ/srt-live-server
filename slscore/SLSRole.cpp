@@ -643,7 +643,9 @@ void   CSLSRole::set_stat_identity(const char *stream, const char *remote_ip, in
 
 std::string   CSLSRole::get_stat_info()
 {
-	if (m_stat_stream.empty()) {
+	// a role still waiting for the hook's 200 is not a session yet (S2):
+	// listing it would show an unadmitted, caller-chosen name as live
+	if (m_stat_stream.empty() || !m_http_passed) {
 		return std::string();
 	}
 	return std::string("{\"kind\":\"") + sls_json_escape(m_role_name) +

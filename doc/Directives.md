@@ -297,7 +297,9 @@ request carries `Content-Type: application/json`; the response is ignored.
                "start_ms":1730000000000,"kbitrate":5980}]}
 
 - `kind` is `publisher`, `player`, `puller` or `pusher`. Listeners are not
-  reported; `roles` is `[]` when nothing is connected.
+  reported, nor is a connection still waiting for the `on_event_url` hook's
+  answer (it is not a session until admitted); `roles` is `[]` when nothing
+  is connected.
 - `stream` is `<domain>/<app>/<stream>` as the role asked for it (a player
   shows the publisher domain). `remote_ip`/`remote_port` are the peer; for a
   puller or pusher that is the upstream or downstream relay server.
