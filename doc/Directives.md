@@ -150,6 +150,13 @@ seconds, as before. The next player request starts a new pull.
 A relay block (pull or push) without `upstreams` is a configuration error:
 sls refuses to start.
 
+Each upstream is `host:port?streamid=...` or `host:port/app` (the stream name
+is appended). Hosts are resolved when the configuration is loaded; a relay
+block with an upstream that does not resolve is refused with an error in the
+log. The addresses are looked up again only after a relay connection has
+ended, never per packet. An upstream with a `?` but no `streamid=` is refused
+when the relay tries to connect (error logged, no socket left open).
+
 ## srt_passphrase
 
 Listener-wide passphrase. The value is never written to the log; config lines
