@@ -82,9 +82,16 @@ typedef struct SRTContext {
 /**
  * CSLSSrt ,functions of srt
  */
+// called with the socket libsrt rejected for a wrong passphrase (see CSLSSrt::set_bad_secret_observer)
+typedef void (*sls_bad_secret_observer_t)(int ns);
+
 class CSLSSrt
 {
 public :
+    // libsrt's log handler calls fn for every "@<socket>:newConnection:
+    // connection rejected due to: ... BADSECRET" line, on libsrt's thread
+    // (S8: the listener has no other way to see a wrong passphrase)
+    static void set_bad_secret_observer(sls_bad_secret_observer_t fn);
     CSLSSrt();
     ~CSLSSrt();
 

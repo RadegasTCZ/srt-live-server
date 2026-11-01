@@ -174,6 +174,36 @@ lock anyone out. A connection whose note was dropped is refused at accept
 (`no handshake record for user ...`); the handshake rate limit bounds how fast
 one address can add notes.
 
+### Wrong passphrases
+
+libsrt checks a passphrase only after the callback, and it tells sls nothing
+when one is wrong: no accept, no event, and the rejected socket is gone (its
+reject reason reads as unknown). The one trace is libsrt's own log line
+`@<socket>:newConnection: connection rejected due to: ... ERROR:BADSECRET`,
+which reaches sls's log handler (shown as `libsrt: ...`). sls matches that line
+to the address and user the callback saw for that socket. **5 wrong
+passphrases for one user from one address within 60 s** make the callback
+refuse that user from that address for **60 s** (reject reason `1403`, also
+with the right passphrase), logged once as `5 wrong passphrases for user '<name>'
+from <ip> within 60 s: refusing that user from that address for 60 s` and then
+per attempt as `listen_callback, refused [...]: too many wrong passphrases ...`
+(refusal budget). Other addresses and other users are not affected. Without
+`user_file` the same applies to `srt_passphrase`, keyed on the stream name.
+Addresses are keyed like the per-IP cap (an IPv6 /64 as one address). Up to
+16384 (address, user) pairs are tracked; when the table is full and nothing
+in it can be forgotten, all new pairs share one entry, so a spray from many
+addresses gets new pairs refused for a while instead of letting their guesses
+go uncounted.
+
+This depends on that libsrt log text (checked against libsrt 1.5.4) and on a
+libsrt built with logging (the distribution packages are). If a libsrt
+version words the line differently, the throttle silently stops counting;
+what remains is the handshake rate limit, which bounds guessing to
+`max_handshakes_per_ip_per_sec` per address. Either way, a passphrase must
+resist guessing on its own: use 20 or more random characters (for example
+`openssl rand -base64 24`), never a word or a name, and one per user and
+direction.
+
 ## on_event_url, on_event_timeout (server block)
 
 `on_event_url http://host[:port][/path][?query];` makes sls call a webhook

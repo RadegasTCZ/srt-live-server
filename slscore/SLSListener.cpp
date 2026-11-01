@@ -38,6 +38,7 @@
 #include <atomic>
 
 #include "SLSListener.hpp"
+#include "SLSAuthThrottle.hpp"
 #include "SLSLog.hpp"
 #include "SLSPublisher.hpp"
 #include "SLSPlayer.hpp"
@@ -583,6 +584,18 @@ static void sls_peer_of(const struct sockaddr *sa, char *ip, size_t ip_len, int 
 // block: no DNS, no file access, and only locks that are never held across a
 // system call (the users read lock, the limiter's mutex; the log's own, as
 // for every peer line).
+// libsrt rejected socket ns for a wrong passphrase (CSLSSrt's log handler,
+// on libsrt's receive thread): count it against the address and user the
+// callback noted for that handshake.
+static void sls_on_bad_secret(int ns)
+{
+    std::string ip, user;
+    if (sls_auth_throttle().bad_secret(ns, sls_gettime_ms(), &ip, &user)) {
+        sls_peer_log(SLS_LOG_INFO, "CSLSListener, %d wrong passphrases for user '%s' from %s within %d s: refusing that user from that address for %d s.",
+                     SLS_AUTH_FAIL_MAX, user.c_str(), ip.c_str(), SLS_AUTH_FAIL_WINDOW_MS / 1000, SLS_AUTH_BLOCK_MS / 1000);
+    }
+}
+
 int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
                                   const struct sockaddr *peeraddr, const char *streamid)
 {
@@ -623,6 +636,16 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     }
     const char *direction = (SLS_SID_PUBLISHER == role) ? "publish" : "play";
 
+    // Too many wrong passphrases for this user from this address (S8):
+    // refused before any key exchange, the right passphrase included.
+    int blocked_ms = 0;
+    if (sls_auth_throttle().blocked(peer_ip, stream, sls_gettime_ms(), &blocked_ms)) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: too many wrong passphrases for user '%s' from this address, %d s left.",
+                self, peer_ip, peer_port, stream.c_str(), (blocked_ms + 999) / 1000);
+        srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
+        return -1;
+    }
+
     // The admission caps, before the handshake completes: a refused peer
     // costs no key exchange and no accept. The accept checks them again and
     // takes the slot (connections may come and go in between).
@@ -645,9 +668,14 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         }
     }
 
-    // Without user_file there is no passphrase to set per connection.
+    // Without user_file there is no passphrase to set per connection; the
+    // listener-wide srt_passphrase (if any) is checked by libsrt, so note
+    // the handshake for the wrong-passphrase throttle.
     const char *user_file = ((sls_conf_server_t*)self->m_conf)->user_file;
     if (!(user_file && *user_file)) {
+        if (((sls_conf_server_t*)self->m_conf)->srt_passphrase[0] != 0) {
+            sls_auth_throttle().note_handshake(ns, peer_ip, stream, sls_gettime_ms());
+        }
         return 0;
     }
 
@@ -688,6 +716,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
                     self, stream.c_str(), direction, srt_getlasterror_str());
             return -1;
         }
+        sls_auth_throttle().note_handshake(ns, peer_ip, stream, sls_gettime_ms());
         // per attempt, so DEBUG: the admitted session logs its start at INFO
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, encrypted).",
                 self, stream.c_str(), direction);
@@ -786,6 +815,7 @@ int CSLSListener::start()
     // Always installed: it refuses a bad streamid and a connection over a cap
     // before the handshake completes, and with user_file it sets the user's
     // passphrase (with no callback every streamid would be accepted).
+    CSLSSrt::set_bad_secret_observer(sls_on_bad_secret);   // the same for every listener
     if (srt_listen_callback(m_srt->libsrt_get_fd(), listen_callback, this) < 0) {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, srt_listen_callback failed: %s.",
                 this, srt_getlasterror_str());
@@ -896,6 +926,7 @@ int CSLSListener::accept_one()
         return 0;
     }
     client_count = 1;
+    sls_auth_throttle().handshake_done(fd_client);   // its passphrase (if any) was right
 
     // With user_file, the credentials the callback checked this socket's
     // handshake against (S4). Taken first, so no early return leaves it.

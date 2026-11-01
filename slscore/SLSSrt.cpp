@@ -29,6 +29,8 @@
 #include <string>
 #include <memory.h>
 #include <syslog.h>
+#include <stdlib.h>
+#include <atomic>
 
 #include "SLSSrt.hpp"
 #include "SLSLog.hpp"
@@ -69,6 +71,33 @@ CSLSSrt::~CSLSSrt()
 // (a rejected handshake), and with sls's own refusal line they make one
 // line a second, the rest at DEBUG and counted. Called on libsrt's threads:
 // no libsrt call and no lock but the log's own.
+static std::atomic<sls_bad_secret_observer_t> sls_bad_secret_observer(NULL);
+
+void CSLSSrt::set_bad_secret_observer(sls_bad_secret_observer_t fn)
+{
+    sls_bad_secret_observer.store(fn);
+}
+
+// libsrt 1.5.4 (core.cpp, CUDT::processConnectRequest -> newConnection)
+// logs "@<socket>:newConnection: connection rejected due to: <reason>"
+// with "ERROR:BADSECRET" in the reason when the passphrase was wrong. The
+// only signal there is: this depends on that text (and on a libsrt built
+// with logging); without it the handshake rate limit is what remains.
+static bool sls_parse_bad_secret(const char *line, int *ns)
+{
+    static const char tag[] = ":newConnection: connection rejected due to:";
+    if (line[0] != '@' || line[1] < '0' || line[1] > '9') {
+        return false;
+    }
+    char *end = NULL;
+    long id = strtol(line + 1, &end, 10);
+    if (NULL == end || 0 != strncmp(end, tag, sizeof(tag) - 1) || NULL == strstr(end, "BADSECRET")) {
+        return false;
+    }
+    *ns = (int)id;
+    return true;
+}
+
 static void sls_libsrt_log_handler(void *opaque, int level, const char *file, int line,
                                    const char *area, const char *message)
 {
@@ -105,6 +134,11 @@ static void sls_libsrt_log_handler(void *opaque, int level, const char *file, in
     if (NULL != strstr(buf, "srt_accept: no pending connection available")) {
         sls_log(SLS_LOG_DEBUG, "libsrt: %s", buf);
         return;
+    }
+    int ns = 0;
+    sls_bad_secret_observer_t obs = sls_bad_secret_observer.load();
+    if (NULL != obs && sls_parse_bad_secret(buf, &ns)) {
+        obs(ns);
     }
     sls_peer_log(sls_level, "libsrt: %s", buf);
 }
