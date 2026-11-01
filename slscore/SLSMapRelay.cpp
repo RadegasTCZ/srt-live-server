@@ -212,6 +212,16 @@ int CSLSMapRelay::add_relay_conf(std::string app_uplive, sls_conf_relay_t * cr)
 
 }
 
+void CSLSMapRelay::refresh_stale_upstreams()
+{
+    std::map<std::string, SLS_RELAY_INFO *>::iterator it;
+    for (it = m_map_relay_info.begin(); it != m_map_relay_info.end(); ++it) {
+        if (NULL != it->second) {
+            it->second->refresh_if_stale();
+        }
+    }
+}
+
 SLS_RELAY_INFO *CSLSMapRelay::get_relay_conf(std::string app_uplive)
 {
     SLS_RELAY_INFO * sri = NULL;

@@ -177,7 +177,9 @@ Each upstream is `host:port?streamid=...` or `host:port/app` (the stream name
 is appended). Hosts are resolved when the configuration is loaded; a relay
 block with an upstream that does not resolve is refused with an error in the
 log. The addresses are looked up again only after a relay connection has
-ended, never per packet. An upstream with a `?` but no `streamid=` is refused
+ended or failed to open, by the main loop (within about 100 ms), never by a
+worker thread and never per packet; if that lookup fails the previous
+addresses stay in use. An upstream with a `?` but no `streamid=` is refused
 when the relay tries to connect (error logged, no socket left open).
 
 ## Command line

@@ -273,6 +273,8 @@ int main(int argc, char* argv[])
 		if (cur_tm_ms - tm_begin_ms >= 100) {
 			tm_begin_ms = cur_tm_ms;
 			sls_manager->expire_queued_roles(cur_tm_ms);
+			// relay upstreams a relay end marked stale: resolved here, not on a worker
+			sls_manager->refresh_relay_upstreams();
 			// peer lines held back by the 1/s limit: a summary once a second
 			sls_peer_log_flush();
 		}

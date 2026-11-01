@@ -266,7 +266,8 @@ int CSLSRelayManager::connect(const char *url)
 	if (NULL == m_sri) {
 		return ret;
 	}
-	m_sri->refresh_if_stale();
+	// no DNS here (a worker, under m_mutex): open() only reads the cache,
+	// which the main loop refreshes once a relay end marked it stale
 
 	CSLSRelay * cur_relay = create_relay();//new relay;
     cur_relay->init();

@@ -99,6 +99,9 @@ public :
     int  reload_users();
     // close queued roles past their listener's admission_timeout (main thread)
     int  expire_queued_roles(int64_t now_ms);
+    // main thread: re-resolve relay upstreams marked stale (the workers never
+    // resolve names: relay connects only read the cached addresses)
+    void refresh_relay_upstreams();
     int  single_thread_handler();
     int  check_invalid();
     bool is_single_thread();

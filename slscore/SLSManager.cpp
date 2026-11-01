@@ -282,6 +282,14 @@ int CSLSManager::expire_queued_roles(int64_t now_ms)
     return m_list_role->expire(now_ms, SLS_DEFAULT_ADMISSION_TIMEOUT);
 }
 
+void CSLSManager::refresh_relay_upstreams()
+{
+    for (int i = 0; i < m_server_count; i ++) {
+        if (m_map_puller) m_map_puller[i].refresh_stale_upstreams();
+        if (m_map_pusher) m_map_pusher[i].refresh_stale_upstreams();
+    }
+}
+
 int CSLSManager::reload_users()
 {
     int reloaded = 0, failed = 0;
