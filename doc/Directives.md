@@ -167,11 +167,17 @@ request
 Only capacity refusals say so (`1402`); every other refusal is the same
 `1403` (also a blocked address, see `user_file`), so the answer does not tell
 a caller which apps exist. With `user_file`, an unknown user is not refused
-here at all: its handshake is given a random passphrase nobody knows, so
-libsrt refuses it exactly like a wrong passphrase (a bad secret, or
-"unsecure" without one), and the wrong-passphrase throttle counts it. A caller
-cannot tell an unknown user from a wrong passphrase. (A user whose
-`publish_pass`/`play_pass` is `-` is open to anyone and so visible as such.)
+here at all: it is checked against the connection caps as a user with a
+passphrase for that direction would be (a publisher may use the reserve), and
+its handshake is then given a random passphrase nobody knows, so libsrt
+refuses it exactly like a wrong passphrase (a bad secret, or "unsecure"
+without one), and the wrong-passphrase throttle counts it. So a caller cannot
+tell an unknown user from a known user with a wrong passphrase, whether the
+server is idle, its shared slots are full (both pass the cap check and get a
+bad secret) or the reserve is full too (both get `1402`). It takes no slot and
+never completes the handshake, so it cannot hold the reserve. (A user whose
+`publish_pass`/`play_pass` is `-` is open to anyone and so visible as such: a
+plaintext publisher is checked against the shared slots only.)
 Refusals are logged as `listen_callback, refused ...` through the refusal budget.
 
 With `user_file`, the callback notes which user and passphrase each request

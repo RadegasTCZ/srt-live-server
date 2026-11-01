@@ -600,6 +600,10 @@ static void sls_peer_of(const struct sockaddr *sa, char *ip, size_t ip_len, int 
     }
 }
 
+namespace {
+const size_t SLS_DUMMY_PASS_BYTES = 24;   // 48 hex characters
+}
+
 // libsrt rejected socket ns for a wrong passphrase (CSLSSrt's log handler,
 // on libsrt's receive thread): count it against the address the callback
 // noted for that handshake.
@@ -675,18 +679,37 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         return -1;
     }
 
+    // With user_file: the user's passphrase, its generation and the db epoch,
+    // copied out under the db's read lock (dropped before anything calls into
+    // libsrt). Looked up before the caps (R47): an unknown user is checked
+    // against them as a user with a passphrase for this direction, so neither
+    // the reject code nor the path through here tells it from a known one
+    // (with the shared slots full, a publisher's slot kind would otherwise
+    // answer 1402 for an unknown name and a bad secret for a known one). It
+    // takes no slot here and never completes the handshake, so it cannot use
+    // the reserve.
+    std::string pass_value;
+    sls_inflight_t rec;
+    rec.user    = stream;
+    rec.publish = (SLS_SID_PUBLISHER == role);
+    bool unknown_user = has_users &&
+        !self->m_userdb->lookup(stream, rec.publish, &pass_value, &rec.gen, &rec.epoch);
+    bool checked_as_verified = unknown_user || !pass_value.empty();
+
     // The admission caps, before the handshake completes: a refused peer
     // costs no key exchange and no accept. The accept checks them again and
     // takes the slot (connections may come and go in between).
     if (NULL != self->m_admission_limiter) {
         std::string key_stream = app_key + "/" + stream;
         // libsrt checks the passphrase only after this callback, so nothing
-        // is held here. A publisher whose passphrase will be enforced is
-        // checked without the reserve test (a real publisher must get in
-        // while viewers fill the shared slots); any other one against the
-        // shared slots, as at accept (publisher_slot_kind()).
+        // is held here. A publisher whose passphrase will be enforced (an
+        // unknown user's too, R47) is checked without the reserve test (a
+        // real publisher must get in while viewers fill the shared slots);
+        // any other one against the shared slots, as at accept
+        // (publisher_slot_kind()).
         bool publisher = (SLS_SID_PUBLISHER == role);
-        int  kind = publisher ? self->publisher_slot_kind(stream) : SLS_SLOT_PLAYER;
+        int  kind = publisher ? self->publisher_slot_kind(stream, has_users ? &checked_as_verified : NULL)
+                              : SLS_SLOT_PLAYER;
         int why = self->m_admission_limiter->check(peer_ip, kind,
                       publisher ? std::string() : self->player_stream_key(key_stream.c_str()),
                       publisher ? 0 : self->m_max_players_per_stream);
@@ -707,21 +730,14 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         return 0;
     }
 
-    // The passphrase, its generation and the db epoch, copied out under the
-    // db's read lock (dropped before anything calls into libsrt).
-    std::string pass_value;
-    sls_inflight_t rec;
-    rec.user    = stream;
-    rec.publish = (SLS_SID_PUBLISHER == role);
     // An unknown user is not refused here (R46): a distinct answer would
     // tell a caller which user names exist. Its handshake gets a random
     // passphrase nobody knows instead, so libsrt refuses it exactly like a
     // wrong passphrase (BADSECRET, or UNSECURE without one), and the
     // wrong-passphrase throttle counts it. It gets no in-flight record, so
     // even a handshake that completed would be refused at accept.
-    bool unknown_user = !self->m_userdb->lookup(stream, rec.publish, &pass_value, &rec.gen, &rec.epoch);
     if (unknown_user) {
-        unsigned char rnd[24];
+        unsigned char rnd[SLS_DUMMY_PASS_BYTES];
         size_t got = 0;
         while (got < sizeof(rnd)) {
             ssize_t n = getrandom(rnd + got, sizeof(rnd) - got, 0);
@@ -738,7 +754,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         }
         static const char hex[] = "0123456789abcdef";
         pass_value.clear();
-        for (size_t i = 0; i < sizeof(rnd); i++) {      // 48 characters, never logged
+        for (size_t i = 0; i < sizeof(rnd); i++) {      // never logged
             pass_value += hex[rnd[i] >> 4];
             pass_value += hex[rnd[i] & 15];
         }
