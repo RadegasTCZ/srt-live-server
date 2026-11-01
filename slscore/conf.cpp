@@ -24,6 +24,7 @@
 
 
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
@@ -235,8 +236,15 @@ sls_conf_base_t * sls_conf_create_block_by_name(string n, sls_runtime_conf_t *& 
 static bool sls_conf_line_is_secret(const string& raw)
 {
     string::size_type b = raw.find_first_not_of(" \t");
-    static const char key[] = "srt_passphrase";
-    return b != string::npos && raw.compare(b, sizeof(key) - 1, key) == 0;
+    if (b == string::npos) {
+        return false;
+    }
+    // srt_passphrase, and anything that looks like a secret by name: a mistyped
+    // directive name must not get its value logged
+    string::size_type e = raw.find_first_of(" \t;", b);
+    string key = raw.substr(b, e == string::npos ? string::npos : e - b);
+    for (size_t i = 0; i < key.size(); i++) key[i] = (char)tolower((unsigned char)key[i]);
+    return key.find("pass") != string::npos || key.find("secret") != string::npos || key.find("token") != string::npos;
 }
 
 // Any text from the config shown in a log line goes through here. A value may be
@@ -330,7 +338,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
         //remove #
         index = str_line.find('#');
         if (index != -1) {
-            if (secret && index > 0 && str_line[index - 1] != ' ' && str_line[index - 1] != 9) {
+            if (secret && index > 0 && str_line[index - 1] != ' ' && str_line[index - 1] != 9 && str_line[index - 1] != ';') {
                 // would cut the passphrase short without a word
                 sls_log(SLS_LOG_ERROR, "line:%d, srt_passphrase: '#' inside the value (it starts a comment, so the "
                         "passphrase would be cut short); a passphrase cannot contain '#'.", line);
@@ -375,8 +383,8 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
 
             sls_conf_cmd_t * it = sls_conf_find(n.c_str(), p_runtime->conf_cmd, p_runtime->conf_cmd_size);
             if (!it) {
-                sls_log(SLS_LOG_ERROR, "line:%d='%s', wrong name='%s'.", line, sls_conf_show_line(secret, url, str_line).c_str(),
-                        sls_conf_show(secret, n).c_str());
+                // the name only, never the line: the value of a mistyped secret directive must not leak
+                sls_log(SLS_LOG_ERROR, "line:%d, wrong name='%s'.", line, sls_conf_show(secret, n).c_str());
                 ret = SLS_ERROR;
                 break;
             }
