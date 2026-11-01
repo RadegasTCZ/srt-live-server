@@ -60,6 +60,10 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
 
     std::string key_stream_name = std::string(app_uplive) + std::string("/") + std::string(stream_name);
     bool is_pull = (strcmp(sri->m_type, "pull") == 0);
+    bool is_push = (strcmp(sri->m_type, "push") == 0);
+    // concurrent managers per relay block: max_pull_streams / max_push_streams
+    int  max_streams = is_pull ? sri->m_max_pull_streams : sri->m_max_push_streams;
+    const char *max_name = is_pull ? "max_pull_streams" : "max_push_streams";
     CSLSRelayManager * cur_mananger = NULL;
     int  count = 0;
     bool existed = false;
@@ -72,16 +76,16 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
             cur_mananger->add_ref();     // the caller's
             existed = true;
         } else {
-            if (is_pull) {
+            if (is_pull || is_push) {
                 for (item = m_map_relay_manager.begin(); item != m_map_relay_manager.end(); ++item) {
                     if (item->second && item->second->get_relay_conf() == sri) count++;
                 }
             }
-            if (is_pull && count >= sri->m_max_pull_streams) {
+            if ((is_pull || is_push) && count >= max_streams) {
                 // refused below, outside the lock
             } else if (is_pull) {
                 cur_mananger = new CSLSPullerManager;
-            } else if (strcmp(sri->m_type, "push") == 0) {
+            } else if (is_push) {
                 cur_mananger = new CSLSPusherManager;
             }
             if (cur_mananger) {
@@ -102,10 +106,11 @@ CSLSRelayManager * CSLSMapRelay::add_relay_manager(const char *app_uplive, const
     } else if (cur_mananger) {
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapRelay::add_relay_manager, ok, app_uplive=%s, stream_name=%s, cur_mananger=%p%s.",
                 this, app_uplive, stream_name, cur_mananger,
-                is_pull ? (std::string(", pull managers=") + std::to_string(count) + "/" + std::to_string(sri->m_max_pull_streams)).c_str() : "");
-    } else if (is_pull) {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, refused, app_uplive=%s, stream_name=%s: max_pull_streams=%d reached.",
-                this, app_uplive, stream_name, sri->m_max_pull_streams);
+                (std::string(is_pull ? ", pull managers=" : ", push managers=") + std::to_string(count) + "/" + std::to_string(max_streams)).c_str());
+    } else if (is_pull || is_push) {
+        // a push refused here only means no push: the publisher is admitted
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add_relay_manager, refused, app_uplive=%s, stream_name=%s: %s=%d reached.",
+                this, app_uplive, stream_name, max_name, max_streams);
     } else {
         sls_log(SLS_LOG_INFO, "[%p]CSLSMapRelay::add, failed, wrong type='%s', app_uplive=%s, stream_name=%s.",
                 this, sri->m_type, app_uplive, stream_name);
@@ -181,6 +186,7 @@ int CSLSMapRelay::add_relay_conf(std::string app_uplive, sls_conf_relay_t * cr)
     sri->m_reconnect_interval   = cr->reconnect_interval;
     sri->m_idle_streams_timeout = cr->idle_streams_timeout;
     sri->m_max_pull_streams     = cr->max_pull_streams;
+    sri->m_max_push_streams     = cr->max_push_streams;
     sri->m_live_relays          = 0;
 
     if (strcmp(cr->mode, "loop") == 0) {

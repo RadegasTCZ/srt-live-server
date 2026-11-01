@@ -47,10 +47,11 @@ struct SLS_RELAY_INFO {
     int      m_reconnect_interval;//unit: s
     int      m_idle_streams_timeout;//unit: s
     int      m_max_pull_streams;   // pull: concurrent managers per relay block
+    int      m_max_push_streams;   // push: the same
     std::atomic<int> m_live_relays; // relay roles alive for this block (all its managers)
 
     SLS_RELAY_INFO() : m_mode(0), m_reconnect_interval(0), m_idle_streams_timeout(0),
-                       m_max_pull_streams(0), m_live_relays(0), m_stale(false), m_last_refresh_ms(0) { m_type[0] = 0; }
+                       m_max_pull_streams(0), m_max_push_streams(0), m_live_relays(0), m_stale(false), m_last_refresh_ms(0) { m_type[0] = 0; }
 
     // Upstream addresses are resolved here, once, when the relay is configured,
     // and cached per "host:port"; relay opens only read the cache (no DNS on

@@ -393,10 +393,16 @@ is refused (`waiting to reconnect`) and may retry, so retrying players never
 raise the upstream connect rate. The next player request after a pull was
 dropped starts a new pull.
 
-## Push relay lifetime
+## max_push_streams (relay block), push relay lifetime
 
 A push relay is started when a publisher is admitted on an app with a push
-relay block, and exists only for that publisher. While the publisher is there
+relay block, and exists only for that publisher. `max_push_streams` (default
+16, as `max_pull_streams`; 1-1024) caps how many streams one push relay block
+(one app) pushes at once. A publisher beyond it is admitted all the same, but
+is not pushed (`add_relay_manager, refused ... max_push_streams=N reached`), so
+publishers on random names cannot open any number of outbound connections.
+Each block counts its own; the directive in a pull block (and
+`max_pull_streams` in a push block) has no effect. While the publisher is there
 a broken push reconnects every `reconnect_interval` seconds. Once it is gone
 the push is dropped, with no reconnect (`CSLSRelayManager::retire, publisher
 gone`): when its pusher ends (it gets no more data, so at the latest after the

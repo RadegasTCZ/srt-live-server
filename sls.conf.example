@@ -153,6 +153,7 @@ srt {
             #    mode all;                   # all | hash
             #    reconnect_interval 10;
             #    idle_streams_timeout 10;
+            #    max_push_streams 16;        # concurrent pushed streams for this app (1-1024)
             #    upstreams 192.0.2.10:8080?streamid=uplive.example.com/live;
             #}
         }

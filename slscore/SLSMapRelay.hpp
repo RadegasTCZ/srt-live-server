@@ -40,7 +40,7 @@ public:
 
     // Find or create the manager for app_uplive/stream_name. The result
     // carries a reference for the caller (release() it when done); NULL if
-    // the app has no relay conf or, for pull, max_pull_streams managers
+    // the app has no relay conf or max_pull_streams / max_push_streams managers
     // already exist for it. *created (optional) tells whether this call made it.
     CSLSRelayManager *add_relay_manager(const char *app_uplive, const char *stream_name,
                                         bool *created = NULL);

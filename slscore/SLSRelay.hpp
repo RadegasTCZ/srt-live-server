@@ -42,6 +42,7 @@ char             upstreams[1024];
 int              reconnect_interval;
 int              idle_streams_timeout;
 int              max_pull_streams;
+int              max_push_streams;
 SLS_CONF_DYNAMIC_DECLARE_END
 
 
@@ -56,16 +57,19 @@ SLS_SET_CONF(relay, string, upstreams,            "upstreams",   1, 1023),
 SLS_SET_CONF(relay, int,    reconnect_interval,   "reconnect interval, unit s", 1, 3600),
 SLS_SET_CONF(relay, int,    idle_streams_timeout, "idle streams timeout, unit s", -1, 3600),
 SLS_SET_CONF(relay, int,    max_pull_streams,     "pull: max concurrent pulled streams for this app (default 16)", 1, 1024),
+SLS_SET_CONF(relay, int,    max_push_streams,     "push: max concurrent pushed streams for this app (default 16)", 1, 1024),
 
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_MAX_PULL_STREAMS 16
+#define SLS_DEFAULT_MAX_PUSH_STREAMS SLS_DEFAULT_MAX_PULL_STREAMS
 // seconds, as the server block's (SLS_DEFAULT_IDLE_STREAMS_TIMEOUT): a
 // zero-filled 0 dropped a pull the moment it had no player
 #define SLS_DEFAULT_RELAY_IDLE_STREAMS_TIMEOUT 10
 inline void sls_conf_relay_defaults(sls_conf_relay_t *c)
 {
     c->max_pull_streams     = SLS_DEFAULT_MAX_PULL_STREAMS;
+    c->max_push_streams     = SLS_DEFAULT_MAX_PUSH_STREAMS;
     c->idle_streams_timeout = SLS_DEFAULT_RELAY_IDLE_STREAMS_TIMEOUT;
 }
 

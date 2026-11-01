@@ -127,9 +127,10 @@ check your config and tooling before you restart.
   need a restart.
 - **Relays.** A relay block without `upstreams` is a configuration error. Upstream
   hosts are resolved when the configuration loads, `host:port/app` honours the
-  port, and a pull is capped by `max_pull_streams` (default 16). A pull now lives
-  only for its players: once idle or ended with none attached it is dropped, not
-  reconnected, until a player asks again.
+  port, and a pull is capped by `max_pull_streams` (default 16), a push by
+  `max_push_streams` (default 16). A pull now lives only for its players: once
+  idle or ended with none attached it is dropped, not reconnected, until a player
+  asks again. A push lives only for its publisher.
 - **Startup warnings.** sls logs a WARNING when a server block has no
   authentication at all (no `user_file`, `srt_passphrase` or `on_event_url`) and
   when it runs as root without `user`. The shipped `sls.conf.example` is an open
