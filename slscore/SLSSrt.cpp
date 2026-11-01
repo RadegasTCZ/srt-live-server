@@ -357,11 +357,11 @@ int CSLSSrt::libsrt_accept()
     if (new_sock == SRT_INVALID_SOCK) {
         int err_no = libsrt_lasterrno();
         if (SRT_EASYNCRCV == err_no) {
-            return SLS_ERROR;        // non-blocking listener, nothing queued
+            return SLS_ACCEPT_EMPTY;     // non-blocking listener, nothing queued
         }
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_accept failed, sock=%d, error_no=%d (%s).",
                    this, m_sc.fd, err_no, srt_getlasterror_str());
-        return SLS_ERROR;
+        return SLS_ACCEPT_FAILED;
     }
     addrtmp = (struct sockaddr_in *)&scl;
     inet_ntop(AF_INET, &addrtmp->sin_addr, ip, sizeof(ip));

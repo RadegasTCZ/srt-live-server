@@ -75,6 +75,10 @@ typedef struct SRTContext {
     SRT_TRANSTYPE transtype;
 } SRTContext;
 
+// CSLSSrt::libsrt_accept's two "no socket" results
+#define SLS_ACCEPT_EMPTY  (-1)
+#define SLS_ACCEPT_FAILED (-2)
+
 /**
  * CSLSSrt ,functions of srt
  */
@@ -95,6 +99,10 @@ public :
     int  libsrt_close();
 
     int  libsrt_listen(int backlog);
+    // The new socket (> 0), or SLS_ACCEPT_EMPTY (nothing queued: a
+    // non-blocking listener's normal "try again") or SLS_ACCEPT_FAILED (the
+    // accept failed, e.g. libsrt took a queued connection off the queue that
+    // had closed meanwhile: there may be more queued behind it).
     int  libsrt_accept();
 
     int  libsrt_get_fd();

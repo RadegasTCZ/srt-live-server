@@ -723,11 +723,22 @@ int CSLSListener::stop()
 // host) would never be accepted. The worker calls this right after its own
 // add: non-blocking accepts until none is queued (SRT_EASYNCRCV) drain what
 // came before, and the worker's epoll reports every later connection.
+// An accept that fails (libsrt took a queued connection off the queue that
+// had closed meanwhile) does not end the drain: the connections queued
+// behind it raise no event of their own either. Only "nothing queued" does,
+// or the cap: each round takes one socket off a queue that is at most
+// backlog long, so the loop cannot spin.
 int CSLSListener::on_added_to_epoll()
 {
     int drained = 0;
-    while (drained < SLS_LISTENER_DRAIN_MAX && handler() > 0) {
-        drained++;
+    int rounds  = 0;
+    while (rounds < SLS_LISTENER_DRAIN_MAX) {
+        int r = accept_one();
+        if (r < 0) {
+            break;            // nothing queued
+        }
+        rounds++;
+        drained += r;
     }
     // The text is the one the startup line always had (scripts wait for it);
     // it now also means a worker polls the listener.
@@ -737,6 +748,11 @@ int CSLSListener::on_added_to_epoll()
 }
 
 int CSLSListener::handler()
+{
+    return accept_one() > 0 ? 1 : 0;
+}
+
+int CSLSListener::accept_one()
 {
 	int ret = SLS_OK;
 	int fd_client = 0;
@@ -752,9 +768,12 @@ int CSLSListener::handler()
 
     //1: accept
     fd_client = m_srt->libsrt_accept();
+    if (SLS_ACCEPT_EMPTY == fd_client) {
+        return -1;
+    }
     if (fd_client < 0) {
-        // libsrt_accept has logged it (through sls_peer_log)
-        return client_count;
+        // dequeued but failed; libsrt_accept has logged it (through sls_peer_log)
+        return 0;
     }
     client_count = 1;
 

@@ -170,6 +170,9 @@ private:
     std::map<std::string, sls_user_t>      m_users;
 
     int  init_conf_app();
+    // One accept and its admission: 1 = a socket came off the queue (admitted
+    // or refused), 0 = the accept failed (more may be queued), -1 = nothing queued.
+    int  accept_one();
     // one INFO line per second at most for accept-time refusals
     void log_admission_refusal(const char *peer_name, int peer_port, int why);
     // Role of a parsed streamid by host/app (never by app name alone); on
