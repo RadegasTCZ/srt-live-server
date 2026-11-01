@@ -215,7 +215,8 @@ int CSLSLog::set_log_file(char * file_name)
     if (strlen(m_pInstance->log_filename) != 0) {
         return 0;                // already open
     }
-    int fd = open(file_name, O_WRONLY|O_APPEND|O_CREAT|O_NOFOLLOW|O_CLOEXEC, 0640);
+    int fd = open(file_name, O_WRONLY|O_APPEND|O_CREAT|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK|O_NOCTTY, 0640);
+    // O_NONBLOCK: a FIFO with no reader must fail the check below, not block the open
     if (fd < 0) {
         printf("%s ERROR: cannot open log_file '%s' for appending: %s. sls does not follow a symlink for this file; "
                "set 'log_file' in the srt block to a writable path in an existing directory.\n",
@@ -229,6 +230,7 @@ int CSLSLog::set_log_file(char * file_name)
         close(fd);
         return -1;
     }
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK);     // a plain file: no effect, but not left set
     FILE *fp = fdopen(fd, "a");
     if (!fp) {
         printf("%s ERROR: cannot use log_file '%s': %s.\n", APP_NAME, file_name, strerror(errno));
