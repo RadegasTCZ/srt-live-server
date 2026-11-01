@@ -143,7 +143,7 @@ whichever way it closes.
 
 Every connection request first reaches sls's listen callback, before libsrt
 completes the handshake (and before it checks a passphrase). The callback
-refuses, with an SRT reject reason (`1402` overload for the limits below), a
+refuses, with an SRT reject reason (shown in brackets), a
 request
 - over `max_handshakes_per_ip_per_sec` (default `20`, `0` = no limit,
   0-100000): connection requests one IP address may make per second, counted
@@ -156,11 +156,13 @@ request
   max(4 x the rate, the connection cap) requests a second. The trade-off: under
   a spray from more active addresses than the table holds, newcomers share
   that bounded budget (and may be refused) until buckets refill; handshakes
-  stay bounded rather than unlimited;
-- with a malformed streamid, or one that is neither a publisher nor a player app;
+  stay bounded rather than unlimited [`1402`, overload];
+- with an empty or malformed streamid [`1400`, bad request], or one that is
+  neither a publisher nor a player app [`1404`, not found];
 - over the connection caps above (they are checked again at accept, where the
-  slot is taken);
-- with `user_file`, for an unknown user.
+  slot is taken) [`1402`];
+- with `user_file`, for an unknown user [`1403`, forbidden], or when the
+  user's passphrase cannot be set on the connection [`1500`, internal error].
 Refusals are logged as `listen_callback, refused ...` through the refusal budget.
 
 With `user_file`, the callback notes which user and passphrase each request

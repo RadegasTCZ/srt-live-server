@@ -635,6 +635,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
 
     if (!streamid || !*streamid) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, empty streamid; rejecting.", self);
+        srt_setrejectreason(ns, SRT_REJX_BAD_REQUEST);
         return -1;
     }
 
@@ -643,6 +644,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     if (!sls_sid_parse(streamid, &sid)) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, refused: streamid must be host/app/stream, sid='%s'.",
                 self, sls_escape_for_log(streamid).c_str());
+        srt_setrejectreason(ns, SRT_REJX_BAD_REQUEST);
         return -1;
     }
     const std::string &stream = sid.stream;
@@ -652,6 +654,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     if (SLS_SID_REJECT == role) {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused: '%s/%s' is neither a publisher nor a player app (user '%s').",
                 self, sid.host.c_str(), sid.app.c_str(), stream.c_str());
+        srt_setrejectreason(ns, SRT_REJX_NOTFOUND);
         return -1;
     }
     const char *direction = (SLS_SID_PUBLISHER == role) ? "publish" : "play";
@@ -711,6 +714,8 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     if (!self->m_userdb->lookup(stream, rec.publish, &pass_value, &rec.gen, &rec.epoch)) {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
                 self, stream.c_str());
+        // not "not found": the answer is the same whatever the reason access is denied
+        srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
         return -1;
     }
     bool pass_empty = pass_value.empty();
@@ -725,12 +730,14 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
             sls_peer_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_PBKEYLEN=%d for user '%s' (%s) failed: %s.",
                     self, pbkeylen, stream.c_str(), direction, srt_getlasterror_str());
+            srt_setrejectreason(ns, SRT_REJX_ISE);
             return -1;
         }
         if (srt_setsockflag(ns, SRTO_PASSPHRASE, pass_value.c_str(), (int)pass_value.length()) < 0) {
             sls_peer_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_PASSPHRASE for user '%s' (%s) failed: %s.",
                     self, stream.c_str(), direction, srt_getlasterror_str());
+            srt_setrejectreason(ns, SRT_REJX_ISE);
             return -1;
         }
         int enforce = 1;
@@ -738,6 +745,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
             sls_peer_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_ENFORCEDENCRYPTION for user '%s' (%s) failed: %s.",
                     self, stream.c_str(), direction, srt_getlasterror_str());
+            srt_setrejectreason(ns, SRT_REJX_ISE);
             return -1;
         }
         sls_auth_throttle().note_handshake(ns, peer_ip, sls_monotonic_ms());
