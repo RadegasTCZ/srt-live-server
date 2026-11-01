@@ -92,8 +92,11 @@ check your config and tooling before you restart.
   or set `pid_file`; sls refuses to start if it cannot write the file.
 - **Connection limits.** At most `worker_connections` x `max(1, worker_threads)`
   accepted connections exist at once, and `max_connections_per_ip` (default 16,
-  0 = unlimited) caps one address. Over either cap the connection is closed at
-  accept. An accepted connection waits at most `admission_timeout` ms (default
+  0 = unlimited) caps one address. `reserved_publisher_connections` (default a
+  tenth of the cap, at most 16, at least 1) keeps slots that players may not use,
+  so viewers can no longer lock publishers out, and `max_players_per_stream`
+  (default unlimited; the example sets 100) caps the players of one stream. Over
+  a cap the connection is closed at accept. An accepted connection waits at most `admission_timeout` ms (default
   5000) for a worker slot. Per-attempt connection lines are DEBUG now, and
   refusals are logged at most once per second (with a count of the rest);
   `log_level debug` shows them all.

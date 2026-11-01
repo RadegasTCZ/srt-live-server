@@ -131,7 +131,7 @@ public :
     // Hand the role the admission slot the listener took for its socket at
     // accept; the role gives it back exactly once, in uninit (also run by the
     // destructor). Only listener-accepted roles carry a slot.
-    void        set_conn_limiter(CSLSConnLimiter *limiter, const char *ip);
+    void        set_conn_limiter(CSLSConnLimiter *limiter, const char *ip, bool publisher, const std::string &stream);
     bool        holds_conn_slot() const { return NULL != m_conn_limiter; }
     // ms a queued (accepted, not yet polled) role may wait; 0 = never expires
     void        set_admission_timeout(int ms) { m_admission_timeout = ms; }
@@ -192,6 +192,8 @@ protected:
 private:
     CSLSConnLimiter *m_conn_limiter;          // non-NULL while holding a slot
     char             m_conn_ip[IP_MAX_LEN];
+    bool             m_conn_publisher;        // the slot's kind and, for a player,
+    std::string      m_conn_stream;           // its stream key (CSLSConnLimiter::release)
     int              m_admission_timeout;     // ms
 
     void release_conn_slot();

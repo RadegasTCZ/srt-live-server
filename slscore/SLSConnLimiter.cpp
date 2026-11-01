@@ -25,49 +25,90 @@
 #include "SLSConnLimiter.hpp"
 #include "SLSLog.hpp"
 
-CSLSConnLimiter::CSLSConnLimiter(int max_total, int max_per_ip)
+CSLSConnLimiter::CSLSConnLimiter(int max_total, int max_per_ip, int reserved_publishers)
 {
     m_max_total  = max_total;
     m_max_per_ip = max_per_ip;
+    m_reserved   = (max_total > 0 && reserved_publishers > 0 && reserved_publishers < max_total) ? reserved_publishers : 0;
     m_total      = 0;
+    m_players    = 0;
 }
 
 CSLSConnLimiter::~CSLSConnLimiter()
 {
 }
 
-bool CSLSConnLimiter::try_acquire(const char *ip, int *why)
+int CSLSConnLimiter::verdict_locked(const std::string &ip, bool publisher, const std::string &stream, int max_stream) const
+{
+    if (m_max_total > 0 && m_total >= m_max_total) {
+        return SLS_CONN_TOTAL;
+    }
+    if (!publisher && m_max_total > 0 && m_players >= m_max_total - m_reserved) {
+        return SLS_CONN_PLAYERS;
+    }
+    if (m_max_per_ip > 0) {
+        std::map<std::string, int>::const_iterator it = m_per_ip.find(ip);
+        if (it != m_per_ip.end() && it->second >= m_max_per_ip) {
+            return SLS_CONN_PER_IP;
+        }
+    }
+    if (!publisher && max_stream > 0) {
+        std::map<std::string, int>::const_iterator it = m_per_stream.find(stream);
+        if (it != m_per_stream.end() && it->second >= max_stream) {
+            return SLS_CONN_STREAM;
+        }
+    }
+    return SLS_CONN_OK;
+}
+
+int CSLSConnLimiter::check(const char *ip, bool publisher, const std::string &stream, int max_stream) const
 {
     std::string key = ip ? ip : "";
     CSLSLock lock(&m_mutex);
-    if (m_max_total > 0 && m_total >= m_max_total) {
-        if (why) *why = SLS_CONN_TOTAL;
+    return verdict_locked(key, publisher, stream, max_stream);
+}
+
+bool CSLSConnLimiter::try_acquire(const char *ip, bool publisher, const std::string &stream, int max_stream, int *why)
+{
+    std::string key = ip ? ip : "";
+    CSLSLock lock(&m_mutex);
+    int v = verdict_locked(key, publisher, stream, max_stream);
+    if (why) *why = v;
+    if (SLS_CONN_OK != v) {
         return false;
     }
-    std::map<std::string, int>::iterator it = m_per_ip.find(key);
-    int n = (it == m_per_ip.end()) ? 0 : it->second;
-    if (m_max_per_ip > 0 && n >= m_max_per_ip) {
-        if (why) *why = SLS_CONN_PER_IP;
-        return false;
-    }
-    m_per_ip[key] = n + 1;
+    m_per_ip[key]++;
     m_total++;
-    if (why) *why = SLS_CONN_OK;
+    if (!publisher) {
+        m_players++;
+        m_per_stream[stream]++;
+    }
     return true;
 }
 
-void CSLSConnLimiter::release(const char *ip)
+void CSLSConnLimiter::release(const char *ip, bool publisher, const std::string &stream)
 {
     std::string key = ip ? ip : "";
     bool held = false;
     {
         CSLSLock lock(&m_mutex);
         std::map<std::string, int>::iterator it = m_per_ip.find(key);
-        if (it != m_per_ip.end() && it->second > 0 && m_total > 0) {
+        std::map<std::string, int>::iterator st = m_per_stream.end();
+        if (!publisher) {
+            st = m_per_stream.find(stream);
+        }
+        if (it != m_per_ip.end() && it->second > 0 && m_total > 0 &&
+            (publisher || (st != m_per_stream.end() && st->second > 0 && m_players > 0))) {
             held = true;
             m_total--;
             if (--it->second == 0) {
                 m_per_ip.erase(it);
+            }
+            if (!publisher) {
+                m_players--;
+                if (--st->second == 0) {
+                    m_per_stream.erase(st);
+                }
             }
         }
     }

@@ -65,6 +65,7 @@ CSLSListener::CSLSListener()
     m_idle_streams_timeout_role = 0;
     m_admission_timeout = SLS_DEFAULT_ADMISSION_TIMEOUT;
     m_admission_limiter = NULL;
+    m_max_players_per_stream = 0;
     memset(m_http_url_role, 0, URL_MAX_LEN);
     m_on_event_timeout = SLS_DEFAULT_ON_EVENT_TIMEOUT;
     memset(&m_hook_addr, 0, sizeof(m_hook_addr));
@@ -117,15 +118,29 @@ void CSLSListener::set_admission_limiter(CSLSConnLimiter *limiter)
 
 // Rate-limited with every other peer-triggered line (sls_peer_log): a flood
 // from many listeners still logs one line per second.
-void CSLSListener::log_admission_refusal(const char *peer_name, int peer_port, int why)
+void CSLSListener::log_admission_refusal(const char *peer_name, int peer_port, int why, const char *stream)
 {
     if (SLS_CONN_PER_IP == why) {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: per-IP connection limit (%d) reached.",
                      this, peer_name, peer_port, m_admission_limiter->max_per_ip());
+    } else if (SLS_CONN_PLAYERS == why) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: player connection limit (%d; %d of %d kept for publishers) reached.",
+                     this, peer_name, peer_port, m_admission_limiter->max_players(),
+                     m_admission_limiter->reserved_publishers(), m_admission_limiter->max_total());
+    } else if (SLS_CONN_STREAM == why) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: stream '%s' has max_players_per_stream (%d) players.",
+                     this, peer_name, peer_port, stream ? stream : "", m_max_players_per_stream);
     } else {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: total connection limit (%d) reached.",
                      this, peer_name, peer_port, m_admission_limiter->max_total());
     }
+}
+
+// Players are counted per stream across the manager's listeners: the key
+// carries the port, so equal names on two server blocks stay apart.
+std::string CSLSListener::player_stream_key(const char *key_stream_name) const
+{
+    return std::to_string(m_port) + " " + key_stream_name;
 }
 
 namespace {
@@ -136,15 +151,25 @@ struct sls_relay_manager_ref {
     ~sls_relay_manager_ref() { if (mgr) mgr->release(); }
 };
 
-// The admission slot taken at accept: given back when handler() returns,
+// The admission slot taken at accept: given back when accept_one() returns,
 // unless it was handed to the role that now owns the socket.
 struct sls_slot_guard {
     CSLSConnLimiter *limiter;
     const char      *ip;
-    sls_slot_guard(CSLSConnLimiter *l, const char *i) : limiter(l), ip(i) {}
-    ~sls_slot_guard() { if (limiter) limiter->release(ip); }
+    bool             publisher;
+    std::string      stream;
+    sls_slot_guard() : limiter(NULL), ip(NULL), publisher(false) {}
+    ~sls_slot_guard() { if (limiter) limiter->release(ip, publisher, stream); }
+    // Takes the slot; false (and *why) if a cap refuses it. No limiter: no caps.
+    bool take(CSLSConnLimiter *l, const char *i, bool pub, const std::string &st, int max_stream, int *why) {
+        *why = SLS_CONN_OK;
+        if (NULL == l) return true;
+        if (!l->try_acquire(i, pub, st, max_stream, why)) return false;
+        limiter = l; ip = i; publisher = pub; stream = st;
+        return true;
+    }
     void hand_to(CSLSRole *role) {
-        if (limiter) role->set_conn_limiter(limiter, ip);
+        if (limiter) role->set_conn_limiter(limiter, ip, publisher, stream);
         limiter = NULL;
     }
 };
@@ -179,6 +204,7 @@ int CSLSListener::init_conf_app()
     m_back_log                   = conf_server->backlog;
     m_idle_streams_timeout_role  = conf_server->idle_streams_timeout;
     m_admission_timeout          = conf_server->admission_timeout;
+    m_max_players_per_stream     = conf_server->max_players_per_stream;
     snprintf(m_http_url_role, sizeof(m_http_url_role), "%s", conf_server->on_event_url);
     m_on_event_timeout           = conf_server->on_event_timeout;
     if (m_http_url_role[0] != 0 && SLS_OK != resolve_hook()) {
@@ -793,19 +819,13 @@ int CSLSListener::accept_one()
         return client_count;
     }
 
-    // admission: over the total or per-IP cap the socket is closed right here
+    // The admission slot is taken once the role is known (players may not
+    // use the slots kept for publishers); over a cap the socket is closed.
+    sls_slot_guard slot;
     int why = SLS_CONN_OK;
-    if (NULL != m_admission_limiter && !m_admission_limiter->try_acquire(peer_name, &why)) {
-        log_admission_refusal(peer_name, peer_port, why);
-        srt->libsrt_close();
-        delete srt;
-        return client_count;
-    }
-    sls_slot_guard slot(m_admission_limiter, peer_name);
     // Per-attempt lines are DEBUG, so they never take the peer-line budget
     // from the refusal that explains the attempt; an admitted session logs
-    // its start at INFO ("new publisher[...]" / "new player[...]").
-    sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
+    // its start at INFO. "new client" is logged once the slot is taken.
 
     if (0 != srt->libsrt_getsockopt(SRTO_STREAMID, "SRTO_STREAMID", &sid, &sid_size, true)) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, [%s:%d], fd=%d, get streamid info failed.",
@@ -843,6 +863,15 @@ int CSLSListener::accept_one()
     //3.is player?
     if (SLS_SID_PLAYER == role) {
         snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
+        // before anything is looked up or pulled for it
+        if (!slot.take(m_admission_limiter, peer_name, false, player_stream_key(key_stream_name),
+                       m_max_players_per_stream, &why)) {
+            log_admission_refusal(peer_name, peer_port, why, key_stream_name);
+            srt->libsrt_close();
+            delete srt;
+            return client_count;
+        }
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
         // Only test pub against NULL / log its value: a publisher found here
         // can be closed and deleted by its worker (or by CSLSRoleList::expire
         // while still queued) as soon as the map lock is dropped.
@@ -954,6 +983,13 @@ int CSLSListener::accept_one()
     //4. is publisher?
     app_uplive = key_app;
 	snprintf(key_stream_name, sizeof(key_stream_name), "%s/%s", app_uplive.c_str(), stream_name);
+	if (!slot.take(m_admission_limiter, peer_name, true, std::string(), 0, &why)) {
+		log_admission_refusal(peer_name, peer_port, why, key_stream_name);
+		srt->libsrt_close();
+		delete srt;
+		return client_count;
+	}
+	sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::handler, new client[%s:%d], fd=%d.", this, peer_name, peer_port, fd_client);
     ca = (sls_conf_app_t *)m_map_publisher->get_ca(app_uplive);
 	if (NULL == ca) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::handler, refused, new role[%s:%d], stream='%s',but no sls_conf_app_t info.",

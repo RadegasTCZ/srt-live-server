@@ -33,6 +33,9 @@ srt {
                                 # over the cap a new connection is closed at accept.
     max_connections_per_ip 16;  # max concurrent accepted connections from one IP
                                 # address (default 16; 0 = unlimited). Relays don't count.
+    #reserved_publisher_connections 16; # slots players may never use, so viewers cannot
+                                # lock publishers out (default: cap/10, at most 16, at
+                                # least 1; 0 = none).
 
     log_file  logs/error.log;   # path is relative to the CWD when sls starts. The directory must
                                 # exist; the file is created 0640 and must be a plain file you own
@@ -84,6 +87,7 @@ srt {
                                     # Default when omitted: 10.
         admission_timeout    5000;  # ms (100-60000, default 5000) an accepted connection may
                                     # wait for a free worker slot before it is closed.
+        max_players_per_stream 100; # concurrent players of one stream (default 0 = unlimited).
 
         # Optional: GET connect/disconnect events to a webhook (see doc/Directives.md).
         #on_event_url http://127.0.0.1:8000/sls/on_event;

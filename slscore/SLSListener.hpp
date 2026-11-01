@@ -59,6 +59,7 @@ int              srt_pbkeylen;
 char             user_file[URL_MAX_LEN];
 int              admission_timeout;//unit ms
 int              on_event_timeout;//unit ms
+int              max_players_per_stream;//0: unlimited
 SLS_CONF_DYNAMIC_DECLARE_END
 
 /**
@@ -77,6 +78,7 @@ SLS_SET_CONF(server, int,    srt_pbkeylen,         "SRT AES key length: 0=libsrt
 SLS_SET_CONF(server, string, user_file,            "path to per-user passphrase file (grant/revoke via edit + reload)", 0, URL_MAX_LEN-1),
 SLS_SET_CONF(server, int,    admission_timeout,    "ms an accepted connection may wait for a worker before it is closed (default 5000)", 100, 60000),
 SLS_SET_CONF(server, int,    on_event_timeout,     "ms the on_event_url hook may take to answer on_connect before the role is refused (default 2000)", 100, 30000),
+SLS_SET_CONF(server, int,    max_players_per_stream, "max concurrent players of one stream (default 0 = unlimited)", 0, 100000),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_ADMISSION_TIMEOUT 5000
@@ -154,6 +156,7 @@ private:
     int                 m_idle_streams_timeout_role;
     int                 m_admission_timeout;   // ms, from the server block
     CSLSConnLimiter   * m_admission_limiter;
+    int                 m_max_players_per_stream;   // 0 = unlimited
     char                m_http_url_role[URL_MAX_LEN];
     int                 m_on_event_timeout;    // ms
     // on_event_url's server, resolved at start and on reload (never on a hot path);
@@ -174,7 +177,9 @@ private:
     // or refused), 0 = the accept failed (more may be queued), -1 = nothing queued.
     int  accept_one();
     // one INFO line per second at most for accept-time refusals
-    void log_admission_refusal(const char *peer_name, int peer_port, int why);
+    void log_admission_refusal(const char *peer_name, int peer_port, int why, const char *stream);
+    // the limiter's per-stream key of a player of key_stream_name
+    std::string player_stream_key(const char *key_stream_name) const;
     // Role of a parsed streamid by host/app (never by app name alone); on
     // PUBLISHER/PLAYER *app_key_out is the publisher-side "host/app" key.
     sls_sid_role_t classify_sid(const sls_sid_t &sid, std::string *app_key_out);

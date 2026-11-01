@@ -38,32 +38,56 @@
  * A slot is taken at accept (try_acquire) and handed to the role that owns the
  * socket (CSLSRole::set_conn_limiter); the role gives it back exactly once, in
  * CSLSRole::uninit (which the destructor also runs).
+ *
+ * Caps, all checked together under one mutex:
+ * - max_total: every accepted connection;
+ * - reserved publishers: players may hold at most max_total - reserved slots,
+ *   so viewers (or one streamer's players) can never lock publishers out;
+ * - max_per_ip: concurrent connections from one address;
+ * - per stream (max_stream, given by the caller): players of one stream.
+ * check() gives try_acquire's verdict without taking anything: the listen
+ * callback uses it to refuse before the handshake completes.
  */
 enum SLS_CONN_REFUSAL {
-    SLS_CONN_OK     = 0,
-    SLS_CONN_TOTAL  = 1,   // max_total reached
-    SLS_CONN_PER_IP = 2,   // max_per_ip reached for this address
+    SLS_CONN_OK      = 0,
+    SLS_CONN_TOTAL   = 1,   // max_total reached
+    SLS_CONN_PER_IP  = 2,   // max_per_ip reached for this address
+    SLS_CONN_PLAYERS = 3,   // the players' share (max_total - reserved) is in use
+    SLS_CONN_STREAM  = 4,   // the stream has max_stream players
 };
 
 class CSLSConnLimiter
 {
 public:
-    CSLSConnLimiter(int max_total, int max_per_ip);   // 0 = unlimited for per-ip
+    // 0 = unlimited for max_total and max_per_ip; reserved_publishers < max_total
+    CSLSConnLimiter(int max_total, int max_per_ip, int reserved_publishers = 0);
     ~CSLSConnLimiter();
 
-    // thread-safe; on refusal *why (if given) says which cap was hit
-    bool try_acquire(const char *ip, int *why = NULL);
-    void release(const char *ip);
+    // Thread-safe; on refusal *why (if given) says which cap was hit. stream
+    // is a player's stream key ("" for a publisher), max_stream its cap (0 =
+    // none). release() must get the same ip, publisher and stream.
+    bool try_acquire(const char *ip, bool publisher, const std::string &stream, int max_stream, int *why = NULL);
+    void release(const char *ip, bool publisher, const std::string &stream);
+    // try_acquire's verdict (an SLS_CONN_REFUSAL), taking nothing
+    int  check(const char *ip, bool publisher, const std::string &stream, int max_stream) const;
     int  total() const;
     int  max_total() const  { return m_max_total; }
     int  max_per_ip() const { return m_max_per_ip; }
+    int  reserved_publishers() const { return m_reserved; }
+    // what players may hold at most; 0 = unlimited
+    int  max_players() const { return m_max_total > 0 ? m_max_total - m_reserved : 0; }
 
 private:
     int                         m_max_total;
     int                         m_max_per_ip;
+    int                         m_reserved;
     int                         m_total;
+    int                         m_players;
     std::map<std::string, int>  m_per_ip;
+    std::map<std::string, int>  m_per_stream;   // players per stream key
     mutable CSLSMutex           m_mutex;
+
+    int  verdict_locked(const std::string &ip, bool publisher, const std::string &stream, int max_stream) const;
 };
 
 #endif

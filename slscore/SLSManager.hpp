@@ -55,6 +55,7 @@ char             user[SHORT_STR_MAX_LEN];
 char             group[SHORT_STR_MAX_LEN];
 char             pid_file[URL_MAX_LEN];
 int              max_connections_per_ip;
+int              reserved_publisher_connections;
 SLS_CONF_DYNAMIC_DECLARE_END
 
 
@@ -72,9 +73,12 @@ SLS_SET_CONF(srt, string, user,                        "drop privileges to this 
 SLS_SET_CONF(srt, string, group,                       "drop privileges to this group after bind (defaults to user's primary group)", 1, SHORT_STR_MAX_LEN-1),
 SLS_SET_CONF(srt, string, pid_file,                    "pid file path (default /run/sls/sls.pid); the directory must exist and be writable", 1, URL_MAX_LEN-1),
 SLS_SET_CONF(srt, int,    max_connections_per_ip,      "max concurrent accepted connections from one IP (default 16); 0 = unlimited", 0, 10000),
+SLS_SET_CONF(srt, int,    reserved_publisher_connections, "accepted-connection slots players may not use (default min(16, cap/10), at least 1)", 0, 102400),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_MAX_CONNECTIONS_PER_IP 16
+// reserved_publisher_connections omitted: min(16, cap / 10), at least 1
+#define SLS_RESERVED_PUBLISHERS_AUTO (-1)
 #define SLS_DEFAULT_STAT_POST_INTERVAL 5   // seconds
 // roles per worker; 0 (an omitted directive, before) let a worker adopt nothing: no listener, no error
 #define SLS_DEFAULT_WORKER_CONNECTIONS 300
@@ -83,6 +87,7 @@ inline void sls_conf_srt_defaults(sls_conf_srt_t *c)
     c->stat_post_interval = SLS_DEFAULT_STAT_POST_INTERVAL;
     c->worker_connections = SLS_DEFAULT_WORKER_CONNECTIONS;
     c->max_connections_per_ip = SLS_DEFAULT_MAX_CONNECTIONS_PER_IP;
+    c->reserved_publisher_connections = SLS_RESERVED_PUBLISHERS_AUTO;
 }
 
 

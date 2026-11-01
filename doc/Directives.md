@@ -78,7 +78,7 @@ Security model:
 - A second instance with the same `pid_file` refuses to start ("another
   instance is running (lock holder pid N)") without touching the file.
 
-## worker_connections, max_connections_per_ip (srt block)
+## worker_connections, max_connections_per_ip, reserved_publisher_connections (srt block), max_players_per_stream (server block)
 
 `worker_connections` is the number of roles one worker thread holds (1-1024,
 default `300` when the directive is omitted; before 1.5.4 an omitted value was
@@ -88,10 +88,26 @@ listener-accepted connections (publishers and players, on all `server` blocks
 together) exist at once. `max_connections_per_ip` (default 16, 0 = unlimited,
 0-10000) caps the concurrent accepted connections from one IP address.
 
-Both are checked at accept: over either cap the new socket is closed at once
-and one INFO line is logged (`refused [ip:port]: per-IP connection limit (N)
-reached` or `... total connection limit (N) reached`; rate-limited like every
-other connection-attempt line, see below). Outbound relay connections
+`reserved_publisher_connections` keeps that many of those slots for publishers:
+players together may hold at most the cap minus the reserve, publishers may use
+every slot. So the viewers of a public stream, or the players of one streamer who
+knows their own `play_pass`, can no longer fill the server and lock every
+publisher out. Default when omitted: a tenth of the cap, at most 16 and at least
+1 (300 x 1 worker: 16). `0` reserves nothing; a value that leaves no slot for
+players (the cap or more) stops sls at startup. The startup line
+`connection limits: ... reserved for publishers=N (players may hold M)` shows
+the values in use.
+
+`max_players_per_stream` (server block, default `0` = unlimited, 0-100000) caps
+the concurrent players of one stream (`<domain>/<app>/<stream>` of that server
+block). The example configuration sets 100.
+
+All are checked at accept: over a cap the new socket is closed at once and one
+INFO line is logged (`refused [ip:port]: per-IP connection limit (N) reached`,
+`... total connection limit (N) reached`, `... player connection limit (M; N of
+T kept for publishers) reached` or `... stream '<app>/<stream>' has
+max_players_per_stream (N) players`; rate-limited like every other
+connection-attempt line, see below). Outbound relay connections
 (pull and push) never count. A slot is given back when the connection closes,
 whichever way it closes.
 

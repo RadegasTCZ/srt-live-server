@@ -110,10 +110,23 @@ int CSLSManager::start_listeners()
     {
         int threads = conf_srt->worker_threads > 1 ? conf_srt->worker_threads : 1;
         int max_total = conf_srt->worker_connections * threads;
-        m_conn_limiter = new CSLSConnLimiter(max_total, conf_srt->max_connections_per_ip);
-        sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, connection limits: total=%d (worker_connections=%d x %d), per_ip=%d%s.",
+        // Slots players may not use, so viewers can never lock publishers out.
+        int reserved = conf_srt->reserved_publisher_connections;
+        if (SLS_RESERVED_PUBLISHERS_AUTO == reserved) {
+            reserved = max_total / 10 < 16 ? max_total / 10 : 16;
+            if (reserved < 1) reserved = 1;
+            if (reserved >= max_total) reserved = max_total - 1;
+        } else if (reserved >= max_total) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSManager::start, reserved_publisher_connections=%d leaves no slot for players: "
+                    "it must be below the connection cap %d (worker_connections=%d x %d).",
+                    this, reserved, max_total, conf_srt->worker_connections, threads);
+            return SLS_ERROR;
+        }
+        m_conn_limiter = new CSLSConnLimiter(max_total, conf_srt->max_connections_per_ip, reserved);
+        sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, connection limits: total=%d (worker_connections=%d x %d), per_ip=%d%s, "
+                "reserved for publishers=%d (players may hold %d).",
                 this, max_total, conf_srt->worker_connections, threads, conf_srt->max_connections_per_ip,
-                conf_srt->max_connections_per_ip == 0 ? " (unlimited)" : "");
+                conf_srt->max_connections_per_ip == 0 ? " (unlimited)" : "", reserved, max_total - reserved);
     }
 
     //create listeners according config, delete by groups
