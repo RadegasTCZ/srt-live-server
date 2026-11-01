@@ -91,6 +91,13 @@ static void sls_libsrt_log_handler(void *opaque, int level, const char *file, in
         n--;
     }
     buf[n] = 0;
+    // The listener is non-blocking, so an accept with nothing queued is
+    // normal (it ends every drain, see CSLSListener::on_added_to_epoll), but
+    // libsrt logs it as an error: DEBUG, outside the peer budget.
+    if (NULL != strstr(buf, "srt_accept: no pending connection available")) {
+        sls_log(SLS_LOG_DEBUG, "libsrt: %s", buf);
+        return;
+    }
     sls_peer_log(sls_level, "libsrt: %s", buf);
 }
 
@@ -341,6 +348,9 @@ int CSLSSrt::libsrt_accept()
     int new_sock = srt_accept(m_sc.fd, (struct sockaddr*)&scl, &sclen);//NULL, NULL);//(sockaddr*)&scl, &sclen);
     if (new_sock == SRT_INVALID_SOCK) {
         int err_no = libsrt_lasterrno();
+        if (SRT_EASYNCRCV == err_no) {
+            return SLS_ERROR;        // non-blocking listener, nothing queued
+        }
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSSrt::libsrt_accept failed, sock=%d, error_no=%d (%s).",
                    this, m_sc.fd, err_no, srt_getlasterror_str());
         return SLS_ERROR;

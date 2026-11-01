@@ -122,7 +122,6 @@ public :
     virtual int  handler();
     // The worker's epoll holds the socket now: accept what queued before (see the .cpp)
     virtual int  on_added_to_epoll();
-    void         release_startup_epoll();
     // SIGHUP: re-resolve the on_event_url host (failure keeps the previous address)
     void reload_hook();
 
@@ -136,7 +135,6 @@ public :
 
 private:
     CSLSRoleList      * m_list_role;
-    int                 m_startup_eid;   // start() .. first worker poll, see on_added_to_epoll()
     CSLSMapPublisher  * m_map_publisher;
     CSLSMapRelay      * m_map_puller;
     CSLSMapRelay      * m_map_pusher;
