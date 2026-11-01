@@ -62,12 +62,13 @@ CSLSSrt::~CSLSSrt()
 }
 
 // libsrt's own log. Its default logger writes every line to stderr, one or
-// more per rejected handshake (9072 for 2500 bad passphrases), outside every
+// more per rejected handshake (1200 for 300 bad passphrases), outside every
 // sls budget and straight into the journal under systemd. Lines at its
 // warning level and above come here instead and go to the sls log, prefixed
-// "libsrt:", at most SLS_LIBSRT_LINES_PER_SEC a second (the rest at DEBUG,
-// counted, see sls_peer_log_flush). Called on libsrt's threads: no libsrt
-// call and no lock but the log's own.
+// "libsrt:", through the peer-line budget: they are mostly caused by peers
+// (a rejected handshake), and with sls's own refusal line they make one
+// line a second, the rest at DEBUG and counted. Called on libsrt's threads:
+// no libsrt call and no lock but the log's own.
 static void sls_libsrt_log_handler(void *opaque, int level, const char *file, int line,
                                    const char *area, const char *message)
 {
@@ -76,9 +77,13 @@ static void sls_libsrt_log_handler(void *opaque, int level, const char *file, in
                     level == LOG_WARNING ? SLS_LOG_WARNING :
                     level == LOG_NOTICE ? SLS_LOG_INFO : SLS_LOG_DEBUG;
     // one line, printable: the text can quote what a peer sent
+    const char *p = message ? message : "";
+    while (*p == ':' || *p == ' ') {
+        p++;                 // what is left of the prefix the flags turned off
+    }
     char buf[1024];
     size_t n = 0;
-    for (const char *p = message ? message : ""; *p && n + 1 < sizeof(buf); p++) {
+    for (; *p && n + 1 < sizeof(buf); p++) {
         unsigned char c = (unsigned char)*p;
         buf[n++] = (c < 0x20 || c == 0x7f) ? ' ' : (char)c;
     }
@@ -86,16 +91,7 @@ static void sls_libsrt_log_handler(void *opaque, int level, const char *file, in
         n--;
     }
     buf[n] = 0;
-    int held = 0;
-    if (CSLSLog::libsrt_line_allowed(sls_level, &held)) {
-        if (held > 0) {
-            sls_log(sls_level, "libsrt: %s [%d more libsrt line(s) suppressed, see log_level debug]", buf, held);
-        } else {
-            sls_log(sls_level, "libsrt: %s", buf);
-        }
-    } else {
-        sls_log(SLS_LOG_DEBUG, "libsrt: %s", buf);
-    }
+    sls_peer_log(sls_level, "libsrt: %s", buf);
 }
 
 int CSLSSrt::libsrt_init()

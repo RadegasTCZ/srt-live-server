@@ -56,7 +56,8 @@ static const char APP_NAME[] __attribute__((unused)) = "SLS";
 
 /*
  * Peer-triggered lines: refusals of a handshake, an admission or a request
- * (including a player request that cannot start a pull). Per-attempt lines
+ * (including a player request that cannot start a pull) and libsrt's own
+ * warnings and errors (CSLSSrt routes them here). Per-attempt lines
  * that are not refusals are DEBUG, and an admitted session's start and end
  * lines have their own budget (sls_session_log), so neither uses up this one.
  * A remote peer can cause any number of them (one per handshake), so
@@ -92,9 +93,6 @@ static const char APP_NAME[] __attribute__((unused)) = "SLS";
  * string literal.
  */
 #define SLS_SESSION_LINES_PER_SEC 20
-// libsrt's own warnings and errors (one or more per rejected handshake),
-// routed into the sls log by CSLSSrt::libsrt_init: same scheme, own budget
-#define SLS_LIBSRT_LINES_PER_SEC 5
 #define sls_session_log(fmt, ...) do {                                   \
         int sls_sess_held_ = 0;                                                    \
         if (CSLSLog::session_line_allowed(SLS_LOG_INFO, &sls_sess_held_)) {        \
@@ -129,11 +127,8 @@ public :
     static bool peer_line_allowed(int level, int *held);
     // sls_session_log's budget: the same, for session start/end lines
     static bool session_line_allowed(int level, int *held);
-    // libsrt's own log lines (CSLSSrt routes them here): the same, with a
-    // budget of SLS_LIBSRT_LINES_PER_SEC per second
-    static bool libsrt_line_allowed(int level, int *held);
-    // a summary line for peer lines held back and session and libsrt lines
-    // suppressed, once their budgets allow one
+    // a summary line for peer lines held back and session lines suppressed,
+    // once their budgets allow one
     static void peer_flush();
 
 private:

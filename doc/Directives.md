@@ -192,9 +192,10 @@ budget at INFO, not at ERROR.
 
 libsrt's own log (its warnings and errors, such as the lines for a rejected
 handshake) is written to the sls log as `libsrt: <text>` lines at the matching
-level, never to stderr. They have their own budget of 5 lines per second,
-process-wide: the rest are logged at DEBUG and counted in a `libsrt lines: N
-suppressed` summary. libsrt's notice and debug levels are not enabled.
+level, never to stderr. They share the refusal budget above (most are caused by
+a peer, such as a rejected handshake): one line a second with sls's own
+refusals, the rest at DEBUG and counted. libsrt's notice and debug levels are
+not enabled.
 
 ## log_file (srt block)
 
