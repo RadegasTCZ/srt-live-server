@@ -57,9 +57,11 @@ Security model:
   runs as root): the file is root-owned 0600, and the daemon, once it has
   dropped privileges, is not dumpable so `/proc/<pid>/exe` of it is only
   readable by root.
-- After the sls binary is replaced on disk (upgrade), `sls -s` refuses with
-  "lock holder pid N is not sls" until the old process has been restarted,
-  because the running process's executable no longer matches the new file.
+- After the sls binary is replaced on disk (an upgrade that installs the new
+  file at the same path), `sls -s` still reaches the old process: its
+  executable shows as `<path> (deleted)`, which is accepted as the same binary.
+  A process running any other executable is refused ("lock holder pid N is not
+  sls").
 - A second instance with the same `pid_file` refuses to start ("another
   instance is running (lock holder pid N)") without touching the file.
 

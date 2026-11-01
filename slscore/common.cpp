@@ -642,7 +642,16 @@ int sls_send_cmd(const char *pid_path, const char *cmd)
     ssize_t nt = readlink(link, exe_target, sizeof(exe_target) - 1);
     if (ns > 0) exe_self[ns] = '\0';
     if (nt > 0) exe_target[nt] = '\0';
-    if (target <= 0 || ns <= 0 || nt <= 0 || strcmp(exe_self, exe_target) != 0) {
+    // After the binary was replaced on disk (an upgrade renames a new file over
+    // it), the running server's exe link reads "<path> (deleted)": that is
+    // still this sls, at this path. Anything else is another program.
+    static const char deleted_suffix[] = " (deleted)";
+    bool same_exe = ns > 0 && nt > 0 &&
+        (strcmp(exe_self, exe_target) == 0 ||
+         ((size_t)nt == (size_t)ns + sizeof(deleted_suffix) - 1 &&
+          strncmp(exe_target, exe_self, (size_t)ns) == 0 &&
+          strcmp(exe_target + ns, deleted_suffix) == 0));
+    if (target <= 0 || !same_exe) {
         printf("lock holder pid %d is not sls; nothing sent.\n", target);
         return SLS_ERROR;
     }
