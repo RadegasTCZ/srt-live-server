@@ -47,34 +47,44 @@ int CSLSMapData::add(char *key)
 {
     int ret = SLS_OK;
     std::string strKey = std::string(key);
+    // players still attached from the previous publisher (or a puller's last
+    // connection): each resyncs to the new ring on its next read
+    int readers = reader_count(key);
 
-    CSLSLock lock(&m_rwclock, true);
+    {
+        CSLSLock lock(&m_rwclock, true);
 
-    std::map<std::string, CSLSRecycleArray *>::iterator item;
-    item = m_map_array.find(strKey);
-    if (item != m_map_array.end()) {
-        CSLSRecycleArray * array_data = item->second;
-        if (array_data) {
-        	sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::add, failed, key=%s, array_data=%p, exist.",
-                    this, key, array_data);
-        	return ret;
+        std::map<std::string, CSLSRecycleArray *>::iterator item;
+        item = m_map_array.find(strKey);
+        if (item != m_map_array.end()) {
+            CSLSRecycleArray * array_data = item->second;
+            if (array_data) {
+                sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::add, failed, key=%s, array_data=%p, exist.",
+                        this, key, array_data);
+                return ret;
+            }
+            //m_map_array.erase(item);
         }
-        //m_map_array.erase(item);
-    }
 
-    CSLSRecycleArray * data_array = new CSLSRecycleArray;
-    //m_map_array.insert(make_pair(strKey, data_array));
-    m_map_array[strKey] = data_array;
+        CSLSRecycleArray * data_array = new CSLSRecycleArray;
+        //m_map_array.insert(make_pair(strKey, data_array));
+        m_map_array[strKey] = data_array;
 
-    // a new ring is a new publisher: its PSI bootstrap starts empty
-    std::map<std::string, CSLSTsParser *>::iterator item_ti = m_map_ts_info.find(strKey);
-    if (item_ti != m_map_ts_info.end() && item_ti->second) {
-        item_ti->second->reset();
-    } else {
-        m_map_ts_info[strKey] = new CSLSTsParser;
+        // a new ring is a new publisher: its PSI bootstrap starts empty
+        std::map<std::string, CSLSTsParser *>::iterator item_ti = m_map_ts_info.find(strKey);
+        if (item_ti != m_map_ts_info.end() && item_ti->second) {
+            item_ti->second->reset();
+        } else {
+            m_map_ts_info[strKey] = new CSLSTsParser;
+        }
     }
     sls_log(SLS_LOG_DEBUG, "[%p]CSLSMapData::add ok, key='%s'.",
             this, key);
+    // one line per republish, not one per player (those are DEBUG)
+    if (readers > 0) {
+        sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::add, key=%s, resync %d player(s) to the new publisher.",
+                this, key, readers);
+    }
     return ret;
 }
 

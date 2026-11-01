@@ -148,9 +148,18 @@ int CSLSRecycleArray::get(char *data, int size, SLSRecycleArrayID *read_id, int 
         why = "bad read position";
     }
     if (NULL != why) {
-        sls_log(read_id->bFirst ? SLS_LOG_TRACE : SLS_LOG_INFO,
-                "[%p]CSLSRecycleArray::get, resync reader to write pos=%d: %s (reader was %lld bytes behind).",
-                this, m_nWritePos, why, read_id->bFirst || read_id->nGeneration != m_generation ? 0LL : (long long)ready);
+        // A new ring resyncs every attached player at once: one line per player
+        // at DEBUG, the INFO summary is CSLSMapData::add's. A lapped reader is a
+        // slow peer, so its line goes through the peer-line budget.
+        if (read_id->bFirst || read_id->nGeneration != m_generation) {
+            sls_log(read_id->bFirst ? SLS_LOG_TRACE : SLS_LOG_DEBUG,
+                    "[%p]CSLSRecycleArray::get, resync reader to write pos=%d: %s.",
+                    this, m_nWritePos, why);
+        } else {
+            sls_peer_log(SLS_LOG_INFO,
+                    "[%p]CSLSRecycleArray::get, resync reader to write pos=%d: %s (reader was %lld bytes behind).",
+                    this, m_nWritePos, why, (long long)ready);
+        }
         read_id->nReadPos    = m_nWritePos;
         read_id->nDataCount  = m_nDataCount;
         read_id->nGeneration = m_generation;
