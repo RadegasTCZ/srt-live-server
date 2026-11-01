@@ -181,34 +181,39 @@ when one is wrong: no accept, no event, and the rejected socket is gone (its
 reject reason reads as unknown). The one trace is libsrt's own log line
 `@<socket>:newConnection: connection rejected due to: ... ERROR:BADSECRET`,
 which reaches sls's log handler (shown as `libsrt: ...`). sls matches that line
-to the address and user the callback saw for that socket. **5 wrong
-passphrases for one user from one address within 60 s** make the callback
-refuse that user from that address for **60 s** (reject reason `1403`, also
-with the right passphrase), logged once as `5 wrong passphrases for user '<name>'
-from <ip> within 60 s: refusing that user from that address for 60 s` and then
-per attempt as `listen_callback, refused [...]: too many wrong passphrases ...`
-(refusal budget). Other addresses and other users are not affected. Without
-`user_file` the same applies to `srt_passphrase`, counted per address alone:
-there is one passphrase for every stream name, so changing the name between
-attempts does not reset the count.
-Addresses are keyed like the per-IP cap (an IPv6 /64 as one address). Nobody's
-failures can block anyone else: only a tracked (address, user) pair is ever
-blocked. Up to 16384 pairs are tracked, at most 8 per address, so a source that
-rotates user names only replaces its own pairs. When the table is full, the
-pair dropped to make room is an unblocked one with the fewest failures (then
-the least recently failed); a block is dropped only when every pair is
-blocked. Failures that go uncounted this way (under a spray from many
-addresses) are still bounded by `max_handshakes_per_ip_per_sec`, which is the
-backstop for guessing.
+to the address the callback saw for that socket. **5 wrong passphrases from
+one address within 60 s** make the callback refuse that address for **60 s**
+(reject reason `1403`), whatever user or stream it names, the right passphrase
+included. The block is logged once as `5 wrong passphrases from <ip> within 60 s:
+refusing that address for 60 s` and then per attempt as `listen_callback,
+refused [...]: too many wrong passphrases from this address` (refusal budget).
+The count is per address only, across all users and streams (with `user_file`
+and with `srt_passphrase` alike), so changing the user or stream name between
+attempts resets nothing. An address is an IPv4 address (an IPv4-mapped IPv6
+address counts as IPv4) or an IPv6 /64, as for the per-IP cap.
+
+Nothing one address does can block another: there is no shared block and no
+per-user block (which would let anyone lock a real streamer out). sls tracks
+up to 16384 addresses and forgets one only when both its 60 s window and its
+block are over. When the table is full of live entries, a new address is
+simply not tracked: never blocked, its failures not counted.
+
+What remains, by design:
+- Guessing spread over many addresses is bounded only by each address's
+  handshake rate (`max_handshakes_per_ip_per_sec`), and by the 5 guesses per
+  minute each tracked address gets.
+- A blocked address blocks everyone behind it for the block time: under
+  carrier-grade NAT (many mobile clients share an address), a neighbour's
+  wrong passphrases can delay a real streamer by up to 60 s.
 
 This depends on that libsrt log text (checked against libsrt 1.5.4) and on a
 libsrt built with logging (the distribution packages are). If a libsrt
 version words the line differently, the throttle silently stops counting;
 what remains is the handshake rate limit, which bounds guessing to
 `max_handshakes_per_ip_per_sec` per address. Either way, a passphrase must
-resist guessing on its own: use 20 or more random characters (for example
-`openssl rand -base64 24`), never a word or a name, and one per user and
-direction.
+resist guessing on its own; it is the real defence. SRT accepts 10 to 79
+characters: use 16 or more random ones (for example `openssl rand -base64 18`,
+24 characters), never a word or a name, and one per user and direction.
 
 ## on_event_url, on_event_timeout (server block)
 
