@@ -30,12 +30,14 @@
 #include <srt/access_control.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/random.h>
 #include <string.h>
 #include <fstream>
 #include <sstream>
 #include <set>
 #include <vector>
 #include <atomic>
+#include <algorithm>
 
 #include "SLSListener.hpp"
 #include "SLSAuthThrottle.hpp"
@@ -635,7 +637,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
 
     if (!streamid || !*streamid) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, empty streamid; rejecting.", self);
-        srt_setrejectreason(ns, SRT_REJX_BAD_REQUEST);
+        srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
         return -1;
     }
 
@@ -644,7 +646,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     if (!sls_sid_parse(streamid, &sid)) {
         sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, refused: streamid must be host/app/stream, sid='%s'.",
                 self, sls_escape_for_log(streamid).c_str());
-        srt_setrejectreason(ns, SRT_REJX_BAD_REQUEST);
+        srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
         return -1;
     }
     const std::string &stream = sid.stream;
@@ -654,7 +656,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     if (SLS_SID_REJECT == role) {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused: '%s/%s' is neither a publisher nor a player app (user '%s').",
                 self, sid.host.c_str(), sid.app.c_str(), stream.c_str());
-        srt_setrejectreason(ns, SRT_REJX_NOTFOUND);
+        srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
         return -1;
     }
     const char *direction = (SLS_SID_PUBLISHER == role) ? "publish" : "play";
@@ -711,12 +713,38 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     sls_inflight_t rec;
     rec.user    = stream;
     rec.publish = (SLS_SID_PUBLISHER == role);
-    if (!self->m_userdb->lookup(stream, rec.publish, &pass_value, &rec.gen, &rec.epoch)) {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s'; rejecting.",
-                self, stream.c_str());
-        // not "not found": the answer is the same whatever the reason access is denied
-        srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
-        return -1;
+    // An unknown user is not refused here (R46): a distinct answer would
+    // tell a caller which user names exist. Its handshake gets a random
+    // passphrase nobody knows instead, so libsrt refuses it exactly like a
+    // wrong passphrase (BADSECRET, or UNSECURE without one), and the
+    // wrong-passphrase throttle counts it. It gets no in-flight record, so
+    // even a handshake that completed would be refused at accept.
+    bool unknown_user = !self->m_userdb->lookup(stream, rec.publish, &pass_value, &rec.gen, &rec.epoch);
+    if (unknown_user) {
+        unsigned char rnd[24];
+        size_t got = 0;
+        while (got < sizeof(rnd)) {
+            ssize_t n = getrandom(rnd + got, sizeof(rnd) - got, 0);
+            if (n <= 0) {
+                if (n < 0 && EINTR == errno) continue;
+                break;
+            }
+            got += (size_t)n;
+        }
+        if (got < sizeof(rnd)) {
+            sls_peer_log(SLS_LOG_ERROR, "[%p]CSLSListener::listen_callback, no random bytes for an unknown user's handshake; rejecting.", self);
+            srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
+            return -1;
+        }
+        static const char hex[] = "0123456789abcdef";
+        pass_value.clear();
+        for (size_t i = 0; i < sizeof(rnd); i++) {      // 48 characters, never logged
+            pass_value += hex[rnd[i] >> 4];
+            pass_value += hex[rnd[i] & 15];
+        }
+        memset(rnd, 0, sizeof(rnd));
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, unknown user '%s' (%s): answered as a wrong passphrase.",
+                self, stream.c_str(), direction);
     }
     bool pass_empty = pass_value.empty();
     rec.verified    = !pass_empty;
@@ -730,14 +758,14 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
             sls_peer_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_PBKEYLEN=%d for user '%s' (%s) failed: %s.",
                     self, pbkeylen, stream.c_str(), direction, srt_getlasterror_str());
-            srt_setrejectreason(ns, SRT_REJX_ISE);
+            srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
             return -1;
         }
         if (srt_setsockflag(ns, SRTO_PASSPHRASE, pass_value.c_str(), (int)pass_value.length()) < 0) {
             sls_peer_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_PASSPHRASE for user '%s' (%s) failed: %s.",
                     self, stream.c_str(), direction, srt_getlasterror_str());
-            srt_setrejectreason(ns, SRT_REJX_ISE);
+            srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
             return -1;
         }
         int enforce = 1;
@@ -745,10 +773,14 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
             sls_peer_log(SLS_LOG_ERROR,
                     "[%p]CSLSListener::listen_callback, SRTO_ENFORCEDENCRYPTION for user '%s' (%s) failed: %s.",
                     self, stream.c_str(), direction, srt_getlasterror_str());
-            srt_setrejectreason(ns, SRT_REJX_ISE);
+            srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
             return -1;
         }
         sls_auth_throttle().note_handshake(ns, peer_ip, sls_monotonic_ms());
+        std::fill(pass_value.begin(), pass_value.end(), '\0');
+        if (unknown_user) {
+            return 0;          // no record: libsrt refuses it as a wrong passphrase
+        }
         // per attempt, so DEBUG: the admitted session logs its start at INFO
         sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::listen_callback, accept user '%s' (%s, encrypted).",
                 self, stream.c_str(), direction);

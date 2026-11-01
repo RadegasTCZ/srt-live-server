@@ -160,12 +160,18 @@ request
   a spray from more active addresses than the table holds, newcomers share
   that bounded budget (and may be refused) until buckets refill; handshakes
   stay bounded rather than unlimited [`1402`, overload];
-- with an empty or malformed streamid [`1400`, bad request], or one that is
-  neither a publisher nor a player app [`1404`, not found];
+- with an empty or malformed streamid, or one that is neither a publisher nor
+  a player app [`1403`, forbidden];
 - over the connection caps above (they are checked again at accept, where the
-  slot is taken) [`1402`];
-- with `user_file`, for an unknown user [`1403`, forbidden], or when the
-  user's passphrase cannot be set on the connection [`1500`, internal error].
+  slot is taken) [`1402`].
+Only capacity refusals say so (`1402`); every other refusal is the same
+`1403` (also a blocked address, see `user_file`), so the answer does not tell
+a caller which apps exist. With `user_file`, an unknown user is not refused
+here at all: its handshake is given a random passphrase nobody knows, so
+libsrt refuses it exactly like a wrong passphrase (a bad secret, or
+"unsecure" without one), and the wrong-passphrase throttle counts it. A caller
+cannot tell an unknown user from a wrong passphrase. (A user whose
+`publish_pass`/`play_pass` is `-` is open to anyone and so visible as such.)
 Refusals are logged as `listen_callback, refused ...` through the refusal budget.
 
 With `user_file`, the callback notes which user and passphrase each request
