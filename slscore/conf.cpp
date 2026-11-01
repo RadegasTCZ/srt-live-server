@@ -313,6 +313,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
     sls_runtime_conf_t * block_runtime = NULL;
     string str_line, str_line_last;
     bool last_secret = false;   // str_line_last came from a srt_passphrase line
+    bool last_url = false;      // str_line_last came from an on_event_url / stat_post_url line
     string n, v, line_end_flag;
     int index ;
 
@@ -382,6 +383,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
 
             n = str_line;
             bool n_secret = secret;
+            bool n_url = url;
             if (n.length() == 0) {
                 if (str_line_last.length() == 0) {
                     sls_log(SLS_LOG_ERROR, "line:%d, no name found.", line);
@@ -390,18 +392,20 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
                 }
                 n = str_line_last;
                 n_secret = last_secret;
+                n_url = last_url;
                 str_line_last = "";
                 last_secret = false;
+                last_url = false;
             }
             if (depth == 0 && n != "srt") {
-                sls_log(SLS_LOG_ERROR, "line:%d, the root block must be 'srt', found '%s'.", line, sls_conf_show(n_secret, n).c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d, the root block must be 'srt', found '%s'.", line, sls_conf_show_line(n_secret, n_url, n).c_str());
                 ret = SLS_ERROR;
                 break;
             }
             // new block
             block = sls_conf_create_block_by_name(n, block_runtime);
             if (!block) {
-                sls_log(SLS_LOG_ERROR, "line:%d, name='%s' not found.", line, sls_conf_show(n_secret, n).c_str());
+                sls_log(SLS_LOG_ERROR, "line:%d, name='%s' not found.", line, sls_conf_show_line(n_secret, n_url, n).c_str());
                 ret = SLS_ERROR;
                 break;
             }
@@ -419,6 +423,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
             // the block is closed: this block continues with the next line
             str_line_last = "";
             last_secret = false;
+            last_url = false;
             continue;
         } else if (line_end_flag == "}" ) {
             if (str_line != line_end_flag) {
@@ -439,6 +444,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
         }
         str_line_last = str_line;
         last_secret = secret;
+        last_url = url;
     }
     if (SLS_OK == ret && depth > 0) {
         sls_log(SLS_LOG_ERROR, "line:%d, end of file reached, '}' missing for the block opened at line %d.", line, open_line);
