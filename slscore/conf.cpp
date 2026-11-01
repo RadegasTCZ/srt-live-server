@@ -411,6 +411,15 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
                 ret = SLS_ERROR;
                 break;
             }
+            // "x;latency 200" has no space after the ';': still a second
+            // directive. Only a secret (a passphrase) may contain a ';', and
+            // a URL (its query), which may contain no space at all.
+            if (!secret && !url && v.find(';') != string::npos) {
+                sls_log(SLS_LOG_ERROR, "line:%d, name='%s': the value contains a ';'; "
+                        "put one directive per line (only a passphrase or a URL may contain ';').", line, n.c_str());
+                ret = SLS_ERROR;
+                break;
+            }
             if (url && v.find(' ') != string::npos) {
                 sls_log(SLS_LOG_ERROR, "line:%d, name='%s': the URL contains a space; a URL cannot contain white space "
                         "(a second directive on the same line?).", line, n.c_str());

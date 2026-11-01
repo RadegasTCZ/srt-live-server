@@ -8,7 +8,9 @@ One directive per line, ended by `;`. A value that contains a `;` followed by a
 space (`on_event_url http://h/hook?t=X; on_event_timeout 1000;`) is refused with
 an error naming the directive, never its value: before 1.5.4 the second directive
 became part of the first one's value, silently. `on_event_url` and
-`stat_post_url` may not contain a space at all. `#` starts a comment.
+`stat_post_url` may not contain a space at all, and no other value may contain a
+`;` at all, except a passphrase (`srt_passphrase abc;def;` is the passphrase
+`abc;def`). `#` starts a comment.
 
 ## Streamid format
 
