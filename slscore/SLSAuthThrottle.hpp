@@ -38,6 +38,9 @@
 #define SLS_AUTH_MAX_KEYS        16384    // (address, user) pairs tracked
 #define SLS_AUTH_MAX_PENDING     4096     // passphrase handshakes between callback and outcome
 #define SLS_AUTH_PENDING_TTL_MS  5000     // as the listener's records (R43)
+// the "user" of a listener-wide srt_passphrase (no user_file): one count per
+// address, whatever stream name each attempt gives (R44); never a valid name
+#define SLS_AUTH_ANY_USER        "*"
 
 /**
  * Wrong-passphrase throttle (S8). libsrt checks the passphrase after the

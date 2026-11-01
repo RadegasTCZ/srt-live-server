@@ -188,7 +188,9 @@ with the right passphrase), logged once as `5 wrong passphrases for user '<name>
 from <ip> within 60 s: refusing that user from that address for 60 s` and then
 per attempt as `listen_callback, refused [...]: too many wrong passphrases ...`
 (refusal budget). Other addresses and other users are not affected. Without
-`user_file` the same applies to `srt_passphrase`, keyed on the stream name.
+`user_file` the same applies to `srt_passphrase`, counted per address alone:
+there is one passphrase for every stream name, so changing the name between
+attempts does not reset the count.
 Addresses are keyed like the per-IP cap (an IPv6 /64 as one address). Up to
 16384 (address, user) pairs are tracked; when the table is full and nothing
 in it can be forgotten, all new pairs share one entry, so a spray from many

@@ -591,8 +591,13 @@ static void sls_on_bad_secret(int ns)
 {
     std::string ip, user;
     if (sls_auth_throttle().bad_secret(ns, sls_gettime_ms(), &ip, &user)) {
-        sls_peer_log(SLS_LOG_INFO, "CSLSListener, %d wrong passphrases for user '%s' from %s within %d s: refusing that user from that address for %d s.",
-                     SLS_AUTH_FAIL_MAX, user.c_str(), ip.c_str(), SLS_AUTH_FAIL_WINDOW_MS / 1000, SLS_AUTH_BLOCK_MS / 1000);
+        if (user == SLS_AUTH_ANY_USER) {
+            sls_peer_log(SLS_LOG_INFO, "CSLSListener, %d wrong passphrases (srt_passphrase) from %s within %d s: refusing that address for %d s.",
+                         SLS_AUTH_FAIL_MAX, ip.c_str(), SLS_AUTH_FAIL_WINDOW_MS / 1000, SLS_AUTH_BLOCK_MS / 1000);
+        } else {
+            sls_peer_log(SLS_LOG_INFO, "CSLSListener, %d wrong passphrases for user '%s' from %s within %d s: refusing that user from that address for %d s.",
+                         SLS_AUTH_FAIL_MAX, user.c_str(), ip.c_str(), SLS_AUTH_FAIL_WINDOW_MS / 1000, SLS_AUTH_BLOCK_MS / 1000);
+        }
     }
 }
 
@@ -637,11 +642,17 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     const char *direction = (SLS_SID_PUBLISHER == role) ? "publish" : "play";
 
     // Too many wrong passphrases for this user from this address (S8):
-    // refused before any key exchange, the right passphrase included.
+    // refused before any key exchange, the right passphrase included. With
+    // a listener-wide srt_passphrase there is one passphrase whatever the
+    // stream name, so the address alone counts (R44): renaming the stream
+    // must not reset the count.
+    const char *user_file = ((sls_conf_server_t*)self->m_conf)->user_file;
+    bool        has_users = (user_file && *user_file);
+    const std::string throttle_user = has_users ? stream : std::string(SLS_AUTH_ANY_USER);
     int blocked_ms = 0;
-    if (sls_auth_throttle().blocked(peer_ip, stream, sls_gettime_ms(), &blocked_ms)) {
+    if (sls_auth_throttle().blocked(peer_ip, throttle_user, sls_gettime_ms(), &blocked_ms)) {
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: too many wrong passphrases for user '%s' from this address, %d s left.",
-                self, peer_ip, peer_port, stream.c_str(), (blocked_ms + 999) / 1000);
+                self, peer_ip, peer_port, has_users ? stream.c_str() : "(srt_passphrase)", (blocked_ms + 999) / 1000);
         srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
         return -1;
     }
@@ -671,10 +682,9 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     // Without user_file there is no passphrase to set per connection; the
     // listener-wide srt_passphrase (if any) is checked by libsrt, so note
     // the handshake for the wrong-passphrase throttle.
-    const char *user_file = ((sls_conf_server_t*)self->m_conf)->user_file;
-    if (!(user_file && *user_file)) {
+    if (!has_users) {
         if (((sls_conf_server_t*)self->m_conf)->srt_passphrase[0] != 0) {
-            sls_auth_throttle().note_handshake(ns, peer_ip, stream, sls_gettime_ms());
+            sls_auth_throttle().note_handshake(ns, peer_ip, throttle_user, sls_gettime_ms());
         }
         return 0;
     }
