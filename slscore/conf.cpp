@@ -430,7 +430,7 @@ static int sls_conf_parse_block(ifstream& ifs, int& line, sls_conf_base_t * b, s
             if (r != SLS_CONF_OK) {
                 // a number out of range: say which values are allowed
                 char range[64] = "";
-                if (r == SLS_CONF_OUT_RANGE && it->set == sls_conf_set_int) {
+                if (0 == strcmp(r, SLS_CONF_OUT_RANGE) && it->set == sls_conf_set_int) {
                     snprintf(range, sizeof(range), " (allowed: %.0f to %.0f)", it->min, it->max);
                 }
                 sls_log(SLS_LOG_ERROR, "line:%d, set failed, %s%s, name='%s', value='%s'.", line, r, range, n.c_str(), (secret ? string("***") : sls_url_for_log(v.c_str())).c_str());
