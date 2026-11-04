@@ -436,7 +436,7 @@ Each block counts its own; the directive in a pull block (and
 `max_pull_streams` in a push block) has no effect. While the publisher is there
 a broken push reconnects every `reconnect_interval` seconds. Once it is gone
 the push is dropped, with no reconnect (`CSLSRelayManager::retire, publisher
-gone`): when its pusher ends (it gets no more data, so at the latest after the
+gone`, logged at debug level): when its pusher ends (it gets no more data, so at the latest after the
 relay block's `idle_streams_timeout`) or when a reconnect falls due. A
 publisher of the same name that arrives before that keeps the running (or
 reconnecting) push, which then carries its stream; no second push is opened.
