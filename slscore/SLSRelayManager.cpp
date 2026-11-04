@@ -270,7 +270,7 @@ bool CSLSRelayManager::retire_locked(const char *why)
 		return false;
 	}
 	m_retired = true;
-	sls_log(SLS_LOG_INFO, "[%p]CSLSRelayManager::retire, %s, app_uplive=%s, stream_name=%s.",
+	sls_log(SLS_LOG_DEBUG, "[%p]CSLSRelayManager::retire, %s, app_uplive=%s, stream_name=%s.",
 			this, why, m_app_uplive, m_stream_name);
 	// Lock order is always manager -> map (the map never takes a manager's
 	// mutex). The caller holds a reference, so the map's release cannot free

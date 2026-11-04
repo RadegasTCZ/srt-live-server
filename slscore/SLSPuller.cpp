@@ -52,12 +52,12 @@ int CSLSPuller::uninit()
 	// publisher entry): a puller and a publisher leave a stream the same way
 	if (m_map_data) {
         ret = m_map_data->remove(m_map_data_key);
-		sls_log(SLS_LOG_INFO, "[%p]CSLSPuller::uninit, removed relay from m_map_data, ret=%d.",
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSPuller::uninit, removed relay from m_map_data, ret=%d.",
 				this, ret);
 	}
 	if (NULL != m_map_publisher) {
 		ret = m_map_publisher->remove(this);
-		sls_log(SLS_LOG_INFO, "[%p]CSLSPuller::uninit, removed relay from m_map_publisher, ret=%d.",
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSPuller::uninit, removed relay from m_map_publisher, ret=%d.",
 				this, ret);
 	}
 	return CSLSRelay::uninit();

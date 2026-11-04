@@ -94,7 +94,7 @@ int CSLSPusherManager::do_start()
 	// one), or is waiting to reconnect: no second push, which the upstream
 	// would refuse and which would then retry for this publisher's life.
 	if (m_live_relays > 0 || m_reconnect_pending) {
-		sls_log(SLS_LOG_INFO, "[%p]CSLSPusherManager::start, already pushing (or waiting to reconnect), carries on for the new publisher, key_stream_name=%s.",
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSPusherManager::start, already pushing (or waiting to reconnect), carries on for the new publisher, key_stream_name=%s.",
 				this, key_stream_name);
 		return SLS_OK;
 	}
