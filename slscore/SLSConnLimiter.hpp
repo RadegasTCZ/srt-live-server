@@ -62,7 +62,9 @@ enum SLS_CONN_REFUSAL {
 
 // What a slot is for. Only a VERIFIED publisher may use the reserve: one
 // whose passphrase libsrt checked (user_file, srt_passphrase) or one the
-// on_event_url hook admitted, or any publisher on a server without auth.
+// on_event_url hook admitted. Any other publisher, also every publisher on
+// a server with no passphrase and no hook, takes a shared (PENDING) slot
+// (publisher_slot_kind, R40).
 enum SLS_SLOT_KIND {
     SLS_SLOT_PLAYER    = 0,
     SLS_SLOT_PUBLISHER = 1,   // verified: may use the reserve
