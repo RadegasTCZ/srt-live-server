@@ -16,13 +16,20 @@
 /**
  * Late-join PSI bootstrap for one published stream.
  *
- * Fed the publisher's packets until complete(): keeps the PAT, the PMT it
+ * Fed every packet of the publisher's stream: keeps the PAT, the PMT it
  * points to, picks the video PID from the PMT (first ES with stream_type
  * 0x1B H.264 or 0x24 HEVC) and collects that codec's parameter sets (H.264
  * SPS+PPS, HEVC VPS+SPS+PPS) from the start of one video PES. Then it builds
  * the bootstrap once: PAT packet, PMT packet, and one PES on the video PID
  * holding the parameter sets (Annex-B), each PID starting at CC 0 with the
  * discontinuity_indicator set on its first packet.
+ *
+ * The parameter-set PES carries a PTS: a PTS-less one makes GStreamer's
+ * tsdemux abort when the next PES comes before any PCR. The parser keeps
+ * reading the timestamp of every video PES start, also once the bootstrap
+ * is built, and build_bootstrap() writes the latest one into each copy, so
+ * the bootstrap sits just before the first frame a joining player gets.
+ * Without a video timestamp seen yet there is no bootstrap.
  *
  * Every read is bounded by the 188-byte packet or the stored section;
  * anything malformed, truncated, scrambled or spanning packets where we
@@ -36,8 +43,8 @@ public:
 
     void reset();
     void feed(const uint8_t *pkt);               // exactly 188 bytes; never reads outside them
-    bool complete() const;                       // PAT && PMT && video PID known && all param sets for its codec
-    int  build_bootstrap(uint8_t *out, int cap) const; // multiple of 188; 0 if !complete()
+    bool complete() const;                       // PAT && PMT && video PID && all param sets for its codec && a video timestamp
+    int  build_bootstrap(uint8_t *out, int cap) const; // multiple of 188, PES PTS = latest video timestamp; 0 if !complete()
     int  video_pid() const;
     int  video_stream_type() const;              // 0x1B H.264, 0x24 HEVC, -1 unknown
 
@@ -45,6 +52,7 @@ private:
     void on_pat(const uint8_t *sec, int len);
     void on_pmt(const uint8_t *sec, int len);
     void on_video(const uint8_t *payload, int len, bool pusi, int cc);
+    void note_timestamp(const uint8_t *p, int len);
     void pes_start(const uint8_t *p, int len);
     void es_feed(const uint8_t *p, int len);
     void es_byte(uint8_t b);
@@ -62,6 +70,7 @@ private:
     int      m_video_pid;
     int      m_video_type;
     int      m_video_cc;          // last CC seen on the video PID, -1 none
+    int64_t  m_video_ts;          // latest video PES DTS (PTS if none), 33 bits; -1 none
 
     // the video PES being searched for parameter sets
     bool     m_pes_active;
@@ -77,7 +86,8 @@ private:
     int      m_ps_len;
     uint8_t  m_ps[SLS_TS_PARAMSETS_MAX];
 
-    int      m_boot_len;          // > 0 once complete
+    int      m_boot_len;          // > 0 once built (complete() also needs m_video_ts)
+    int      m_boot_pts;          // offset of the PES PTS field in m_boot
     uint8_t  m_boot[SLS_TS_BOOTSTRAP_MAX];
 };
 

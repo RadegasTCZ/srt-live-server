@@ -177,7 +177,8 @@ int CSLSMapData::put(char *key, char *data, int len, int64_t *last_read_time)
         *last_read_time = array_data->get_last_read_time();
     }
 
-    // PSI bootstrap: parse only until it is complete, then no per-packet work
+    // PSI bootstrap: parsed until it is built; after that the parser only
+    // reads the timestamp of each video PES start (the bootstrap's PTS)
     CSLSTsParser *parser = NULL;
     std::map<std::string, CSLSTsParser *>::iterator item_ti;
     item_ti = m_map_ts_info.find(strKey);
@@ -188,7 +189,8 @@ int CSLSMapData::put(char *key, char *data, int len, int64_t *last_read_time)
         parser = item_ti->second;
     }
 
-    if (!parser->complete() && SLS_OK == check_ts_info(data, len, parser)) {
+    bool was_complete = parser->complete();
+    if (SLS_OK == check_ts_info(data, len, parser) && !was_complete) {
         sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::put, PSI bootstrap ready, key=%s, video pid=%d, stream_type=0x%02x.",
                 this, key, parser->video_pid(), parser->video_stream_type());
     }
@@ -297,10 +299,11 @@ void CSLSMapData::clear()
 }
 
 // data holds whole 188-byte packets (the publisher role only puts those);
-// a trailing partial packet would be skipped. SLS_OK once complete.
+// a trailing partial packet would be skipped. Every packet is fed, also once
+// complete, so the bootstrap's PTS follows the stream. SLS_OK once complete.
 int CSLSMapData::check_ts_info(char *data, int len, CSLSTsParser *parser)
 {
-    for (int i = 0; i + TS_PACK_LEN <= len && !parser->complete(); i += TS_PACK_LEN) {
+    for (int i = 0; i + TS_PACK_LEN <= len; i += TS_PACK_LEN) {
         parser->feed((const uint8_t *)data + i);
     }
     return parser->complete() ? SLS_OK : SLS_ERROR;

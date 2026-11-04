@@ -62,12 +62,13 @@ void CSLSTsParser::reset()
     m_zeros       = 0;
     m_nal_type    = 0;
     m_nal_begin   = 0;
+    m_boot_pts    = 0;
     clear_video();
 }
 
 bool CSLSTsParser::complete() const
 {
-    return m_boot_len > 0;
+    return m_boot_len > 0 && m_video_ts >= 0;
 }
 
 int CSLSTsParser::video_pid() const
@@ -80,24 +81,48 @@ int CSLSTsParser::video_stream_type() const
     return m_video_type;
 }
 
+// 33-bit timestamp in the PES 5-byte layout: 4-bit prefix, marker bits set
+static void put_timestamp(uint8_t *b, uint8_t prefix, int64_t ts)
+{
+    b[0] = (uint8_t)((prefix << 4) | ((ts >> 29) & 0x0E) | 0x01);
+    b[1] = (uint8_t)((ts >> 22) & 0xFF);
+    b[2] = (uint8_t)(((ts >> 14) & 0xFE) | 0x01);
+    b[3] = (uint8_t)((ts >> 7) & 0xFF);
+    b[4] = (uint8_t)(((ts << 1) & 0xFE) | 0x01);
+}
+
+// -1 unless all three marker bits are set (the prefix nibble isn't checked)
+static int64_t get_timestamp(const uint8_t *b)
+{
+    if (!(b[0] & 0x01) || !(b[2] & 0x01) || !(b[4] & 0x01))
+        return -1;
+    return ((int64_t)((b[0] >> 1) & 0x07) << 30) | ((int64_t)b[1] << 22)
+         | ((int64_t)(b[2] >> 1) << 15) | ((int64_t)b[3] << 7) | (b[4] >> 1);
+}
+
+// The per-join copy gets the latest video timestamp, so its PES is never
+// timed after the frames that follow it.
 int CSLSTsParser::build_bootstrap(uint8_t *out, int cap) const
 {
-    if (m_boot_len <= 0 || out == NULL || cap < m_boot_len)
+    if (!complete() || out == NULL || cap < m_boot_len)
         return 0;
     memcpy(out, m_boot, m_boot_len);
+    put_timestamp(out + m_boot_pts, 0x2, m_video_ts);
     return m_boot_len;
 }
 
 void CSLSTsParser::feed(const uint8_t *pkt)
 {
-    if (pkt == NULL || m_boot_len > 0)
+    if (pkt == NULL)
         return;
     if (pkt[0] != TS_SYNC_BYTE || (pkt[1] & 0x80))  // sync, transport_error_indicator
         return;
-    if (pkt[3] & 0xC0)                              // scrambled
-        return;
     int  pid  = ((pkt[1] & 0x1F) << 8) | pkt[2];
     bool pusi = (pkt[1] & 0x40) != 0;
+    if (m_boot_len > 0 && (pid != m_video_pid || !pusi)) // built: only video PES starts matter
+        return;
+    if (pkt[3] & 0xC0)                              // scrambled
+        return;
     int  afc  = (pkt[3] >> 4) & 0x03;
     if (!(afc & 0x01))                              // reserved or adaptation field only
         return;
@@ -109,6 +134,10 @@ void CSLSTsParser::feed(const uint8_t *pkt)
     }
     // payload: pkt[off .. 187], at least one byte
 
+    if (pusi && pid == m_video_pid)
+        note_timestamp(pkt + off, TS_PACK_LEN - off);
+    if (m_boot_len > 0)
+        return;
     if (pid == PAT_PID || pid == m_pmt_pid) {
         if (!pusi)                                  // sections spanning packets aren't used
             return;
@@ -191,6 +220,32 @@ void CSLSTsParser::clear_video()
 {
     pes_drop();
     m_video_cc = -1;
+    m_video_ts = -1;
+}
+
+// The DTS (decode order, so it never runs ahead of a later frame) or, when
+// the PES has none, the PTS of a video PES start; anything else is ignored.
+void CSLSTsParser::note_timestamp(const uint8_t *p, int len)
+{
+    if (len < 14 || p[0] != 0x00 || p[1] != 0x00 || p[2] != 0x01)
+        return;
+    if ((p[3] & 0xF0) != 0xE0 || (p[6] & 0xC0) != 0x80) // video stream_id, '10' marker
+        return;
+    int flags = p[7] >> 6;                          // PTS_DTS_flags
+    int64_t ts;
+    if (flags == 3) {
+        if (p[8] < 10 || len < 19)
+            return;
+        ts = get_timestamp(p + 14);
+    } else if (flags == 2) {
+        if (p[8] < 5)
+            return;
+        ts = get_timestamp(p + 9);
+    } else {
+        return;
+    }
+    if (ts >= 0)
+        m_video_ts = ts;
 }
 
 void CSLSTsParser::on_video(const uint8_t *payload, int len, bool pusi, int cc)
@@ -379,17 +434,19 @@ void CSLSTsParser::make_bootstrap()
     int pos = psi_packet(o, PAT_PID, m_pat, m_pat_len);
     pos += psi_packet(o + pos, m_pmt_pid, m_pmt, m_pmt_len);
 
-    // PES with exact length, data_alignment_indicator, no timestamps
-    uint8_t hdr[9];
-    int body = 3 + m_ps_len;                        // flags(2) + header_data_length + ES
+    // PES with exact length, data_alignment_indicator and a PTS, which
+    // build_bootstrap() fills in for each copy
+    uint8_t hdr[14];
+    int body = 8 + m_ps_len;                        // flags(2) + header_data_length + PTS(5) + ES
     hdr[0] = 0x00; hdr[1] = 0x00; hdr[2] = 0x01;
     hdr[3] = m_stream_id;
     hdr[4] = (body >> 8) & 0xFF;
     hdr[5] = body & 0xFF;
     hdr[6] = 0x84;
-    hdr[7] = 0x00;
-    hdr[8] = 0x00;
-    int total = 9 + m_ps_len;
+    hdr[7] = 0x80;                                  // PTS_DTS_flags '10'
+    hdr[8] = 0x05;
+    put_timestamp(hdr + 9, 0x2, 0);
+    int total = 14 + m_ps_len;
 
     int done = 0, cc = 0;
     while (done < total) {
@@ -415,8 +472,10 @@ void CSLSTsParser::make_bootstrap()
                 q += af - 2;
             }
         }
+        if (first)                                  // take >= 14: the header is in this packet
+            m_boot_pts = pos + q + 9;
         for (int k = 0; k < take; k++, done++)
-            p[q + k] = done < 9 ? hdr[done] : m_ps[done - 9];
+            p[q + k] = done < 14 ? hdr[done] : m_ps[done - 14];
         pos += TS_PACK_LEN;
         cc++;
     }
