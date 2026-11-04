@@ -417,12 +417,30 @@ int CSLSListener::load_users(const char *path, std::string *err)
         ::close(rfd);
         return SLS_ERROR;
     }
+    // The whole file or nothing: a file cut short (by the size cap or a read
+    // error) would drop the users after the cut, or load a cut passphrase as
+    // a shorter valid one.
+    const size_t max_size = (size_t)1 << 20;
     std::string content;
     {
         char buf[4096];
-        ssize_t n;
-        while ((n = ::read(rfd, buf, sizeof(buf))) > 0 && content.size() < (1u << 20)) {
+        for (;;) {
+            ssize_t n = ::read(rfd, buf, sizeof(buf));
+            if (n < 0) {
+                if (EINTR == errno) continue;
+                snprintf(msg, sizeof(msg), "cannot read '%s': %s", path, strerror(errno));
+                if (err) *err = msg;
+                ::close(rfd);
+                return SLS_ERROR;
+            }
+            if (0 == n) break;
             content.append(buf, (size_t)n);
+            if (content.size() > max_size) {
+                snprintf(msg, sizeof(msg), "'%s': users file larger than 1 MiB", path);
+                if (err) *err = msg;
+                ::close(rfd);
+                return SLS_ERROR;
+            }
         }
     }
     ::close(rfd);

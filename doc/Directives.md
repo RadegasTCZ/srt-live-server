@@ -29,7 +29,8 @@ When set, every connection must name a listed user in its streamid and use
 that user's publish or play passphrase (`-` = plaintext allowed for that
 direction); `srt_pbkeylen` applies and encryption is enforced.
 
-`user_file` fails closed. A file that cannot be opened, holds no users, has
+`user_file` fails closed. A file that cannot be opened or read, is larger
+than 1 MiB (`users file larger than 1 MiB`), holds no users, has
 a malformed line (wrong column count, passphrase outside 10-79 bytes, invalid
 or duplicate name, a `#` inside a column) or is accessible to group or others
 (`mode & 077`: run `chmod 600`) makes sls refuse to start (non-zero exit, error
