@@ -178,6 +178,13 @@ bad secret) or the reserve is full too (both get `1402`). It takes no slot and
 never completes the handshake, so it cannot hold the reserve. (A user whose
 `publish_pass`/`play_pass` is `-` is open to anyone and so visible as such: a
 plaintext publisher is checked against the shared slots only.)
+One answer does depend on the stream: a stream that has
+`max_players_per_stream` players answers `1402` to every further player, with
+or without the right passphrase, because the cap is checked here, before
+libsrt checks the passphrase. So a caller can tell that a name is live and
+full (not its passphrase); a name that is not live never has players and gets
+the passphrase answer instead. Without that cap (the default) this does not
+arise.
 Refusals are logged as `listen_callback, refused ...` through the refusal budget.
 
 With `user_file`, the callback notes which user and passphrase each request
