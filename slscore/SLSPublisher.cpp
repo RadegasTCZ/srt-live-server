@@ -113,29 +113,47 @@ int CSLSPublisher::admit()
 
 // The stream's push relays, if its app has a push relay block. A failure is
 // logged; the publisher is admitted all the same.
+//
+// The manager for the name may be retiring while this runs: its worker found
+// no publisher (just before this one claimed the entry) and retires it under
+// the manager's lock, which start() then waits for. Such a manager refuses
+// to start, and retiring took it out of the map, so a second lookup creates
+// a fresh one for this publisher. One retry only: a fresh manager cannot be
+// retired before its start (only its own relays and reconnect entries retire
+// it, and it has none yet).
 void CSLSPublisher::start_pushers()
 {
 	if (NULL == m_admit.map_pusher) {
 		return;
 	}
-	bool created = false;
-	CSLSRelayManager *mgr = m_admit.map_pusher->add_relay_manager(m_admit_app.c_str(), m_admit_stream.c_str(), &created);
-	if (NULL == mgr) {
-		sls_log(SLS_LOG_DEBUG, "[%p]CSLSPublisher::start_pushers, no push relay manager, stream=%s.",
-				this, m_map_data_key);
-		return;
-	}
-	mgr->configure(m_map_data, m_map_publisher, m_admit.role_list, m_admit.port);
-	if (SLS_OK != mgr->start()) {
-		sls_log(SLS_LOG_INFO, "[%p]CSLSPublisher::start_pushers, pusher_manager->start failed, publisher[%s:%d], stream=%s.",
-				this, m_stat_remote_ip.c_str(), m_stat_remote_port, m_map_data_key);
-		// one this publisher created and could not start has no pusher and
-		// no reconnect entry: nothing else would ever retire it (S3)
-		if (created) {
-			mgr->start_failed(true, "first push failed");
+	for (int attempt = 0; attempt < 2; attempt++) {
+		bool created = false;
+		CSLSRelayManager *mgr = m_admit.map_pusher->add_relay_manager(m_admit_app.c_str(), m_admit_stream.c_str(), &created);
+		if (NULL == mgr) {
+			sls_log(SLS_LOG_DEBUG, "[%p]CSLSPublisher::start_pushers, no push relay manager, stream=%s.",
+					this, m_map_data_key);
+			return;
+		}
+		mgr->configure(m_map_data, m_map_publisher, m_admit.role_list, m_admit.port);
+		bool retry = false;
+		if (SLS_OK != mgr->start()) {
+			// a manager found in the map (not created here) that retired
+			// between the lookup and start(): look up again, once
+			retry = (0 == attempt && !created && mgr->is_retired());
+			sls_log(SLS_LOG_INFO, "[%p]CSLSPublisher::start_pushers, pusher_manager->start failed%s, publisher[%s:%d], stream=%s.",
+					this, retry ? " (it retired meanwhile, starting a new one)" : "",
+					m_stat_remote_ip.c_str(), m_stat_remote_port, m_map_data_key);
+			// one this publisher created and could not start has no pusher and
+			// no reconnect entry: nothing else would ever retire it (S3)
+			if (created) {
+				mgr->start_failed(true, "first push failed");
+			}
+		}
+		mgr->release();   // add_relay_manager's reference
+		if (!retry) {
+			return;
 		}
 	}
-	mgr->release();   // add_relay_manager's reference
 }
 
 void CSLSPublisher::set_map_publisher(CSLSMapPublisher * publisher)
