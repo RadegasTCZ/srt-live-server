@@ -57,7 +57,8 @@ SLS_CONF_DYNAMIC_IMPLEMENT_DEFAULTS(server, sls_conf_server_defaults)
  */
 
 CSLSListener::CSLSListener()
-    : m_inflight(SLS_INFLIGHT_MAX, SLS_INFLIGHT_TTL_MS)
+    : m_inflight(SLS_INFLIGHT_MAX, SLS_INFLIGHT_TTL_MS),
+      m_fd_identity(SLS_INFLIGHT_MAX, SLS_INFLIGHT_TTL_MS)
 {
     m_conf      = NULL;
     m_back_log  = 1024;
@@ -100,9 +101,14 @@ CSLSListener::~CSLSListener()
         CSLSLock lock(&s_listeners_mutex);
         s_listeners.erase(this);
     }
-    // after the erase: a listen callback can no longer reach this listener
-    // (and through it the front door's map). Joins the thread if it still runs.
+    // The listen callback reaches the front door's map through this listener
+    // (opaq): close the libsrt listener first. srt_close waits for a callback
+    // in flight, and none starts after it. Every delete path calls uninit()
+    // first, which already closed it; this covers one that would not.
     if (m_front_door) {
+        if (m_srt) {
+            m_srt->libsrt_close();
+        }
         delete m_front_door;
         m_front_door = NULL;
     }
@@ -636,7 +642,8 @@ static void sls_peer_of(const struct sockaddr *sa, char *ip, size_t ip_len, int 
     }
 }
 
-bool CSLSListener::real_peer(const struct sockaddr *sa, char *ip, size_t ip_len, int *port) const
+bool CSLSListener::real_peer(const struct sockaddr *sa, char *ip, size_t ip_len, int *port,
+                             struct sockaddr_in *remote_out) const
 {
     sls_peer_of(sa, ip, ip_len, port);
     if (!m_front_door_enabled) {
@@ -656,6 +663,35 @@ bool CSLSListener::real_peer(const struct sockaddr *sa, char *ip, size_t ip_len,
     }
     inet_ntop(AF_INET, &remote.sin_addr, ip, ip_len);
     *port = ntohs(remote.sin_port);
+    if (remote_out) {
+        *remote_out = remote;
+    }
+    return true;
+}
+
+bool CSLSListener::pinned_peer(int fd, const char *libsrt_ip, int libsrt_port, char *ip, size_t ip_len, int *port)
+{
+    sls_fd_identity_t id;
+    if (!m_fd_identity.take(fd, &id, sls_monotonic_ms())) {
+        return false;   // no handshake record (dropped, or too old): fail closed
+    }
+    struct sockaddr_in in;
+    memset(&in, 0, sizeof(in));
+    in.sin_family = AF_INET;
+    in.sin_port = htons(libsrt_port);
+    struct sockaddr_in now;
+    char tmp[IP_MAX_LEN];
+    int  tmp_port = 0;
+    if (1 != inet_pton(AF_INET, libsrt_ip, &in.sin_addr)
+            || id.local_port != libsrt_port
+            || !real_peer((const struct sockaddr *)&in, tmp, sizeof(tmp), &tmp_port, &now)
+            || now.sin_addr.s_addr != id.ip_be || ntohs(now.sin_port) != id.port) {
+        return false;   // the mapping changed hands since the handshake
+    }
+    struct in_addr a;
+    a.s_addr = id.ip_be;
+    inet_ntop(AF_INET, &a, ip, ip_len);
+    *port = id.port;
     return true;
 }
 
@@ -707,11 +743,29 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     // With the front door, every limit below sees the real remote. A peer it
     // did not map reached the loopback port directly: refused before it is
     // counted against anyone.
-    if (!self->real_peer(peeraddr, peer_ip, sizeof(peer_ip), &peer_port)) {
-        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: not through the front door.",
-                self, peer_ip, peer_port);
+    struct sockaddr_in fd_remote;
+    if (!self->real_peer(peeraddr, peer_ip, sizeof(peer_ip), &peer_port, &fd_remote)) {
+        // a local process on the internal port: its own budget, so a flood of
+        // it cannot use up the lines that explain real refusals
+        static std::atomic<int64_t> s_last_direct_log(0);
+        int64_t now_ms = sls_monotonic_ms();
+        int64_t last = s_last_direct_log.load();
+        if (now_ms - last >= 1000 && s_last_direct_log.compare_exchange_strong(last, now_ms)) {
+            sls_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: not through the front door.",
+                    self, peer_ip, peer_port);
+        } else {
+            sls_log(SLS_LOG_DEBUG, "[%p]CSLSListener::listen_callback, refused [%s:%d]: not through the front door.",
+                    self, peer_ip, peer_port);
+        }
         srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
         return -1;
+    }
+    if (self->m_front_door_enabled) {
+        sls_fd_identity_t id;
+        id.ip_be = fd_remote.sin_addr.s_addr;
+        id.port = ntohs(fd_remote.sin_port);
+        id.local_port = ntohs(((const struct sockaddr_in *)peeraddr)->sin_port);
+        self->m_fd_identity.put(ns, id, sls_monotonic_ms());
     }
 
     // Every connection request counts, first: also the ones refused below.
@@ -1151,19 +1205,19 @@ int CSLSListener::accept_one()
     }
     if (m_front_door_enabled) {
         // the role, its logs, stats, webhook and slot all use the real remote
-        struct sockaddr_in in;
-        memset(&in, 0, sizeof(in));
-        in.sin_family = AF_INET;
-        in.sin_port = htons(peer_port);
-        if (1 != inet_pton(AF_INET, peer_name, &in.sin_addr)
-                || !real_peer((const struct sockaddr *)&in, peer_name, sizeof(peer_name), &peer_port)) {
-            // its mapping expired between the handshake and this accept
-            sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d], fd=%d: not through the front door.",
+        // the callback checked this handshake as (pinned, not looked up again)
+        char real_ip[IP_MAX_LEN] = {0};
+        int  real_port = 0;
+        if (!pinned_peer(fd_client, peer_name, peer_port, real_ip, sizeof(real_ip), &real_port)) {
+            // its mapping expired or changed hands between the handshake and this accept
+            sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d], fd=%d: its front door mapping changed since the handshake.",
                     this, peer_name, peer_port, srt->libsrt_get_fd());
             srt->libsrt_close();
             delete srt;
             return client_count;
         }
+        snprintf(peer_name, sizeof(peer_name), "%s", real_ip);
+        peer_port = real_port;
         srt->libsrt_set_peeraddr(peer_name, peer_port);
     }
 

@@ -160,7 +160,7 @@ int CSLSFrontDoor::open_mapping(const struct sockaddr_in &remote, int64_t now_ms
         return -1;
     }
     if (evicted >= 0) {
-        close(evicted);
+        quarantine(evicted, now_ms);
         m_mappings_evicted++;
     }
     m_mappings_created++;
@@ -231,8 +231,29 @@ void CSLSFrontDoor::on_mapping_readable(int fd, int64_t now_ms)
     }
 }
 
+void CSLSFrontDoor::quarantine(int fd, int64_t now_ms)
+{
+    if ((int)m_quarantine.size() >= m_peers.max_total()) {
+        close(m_quarantine.front().second);   // bounded: the oldest goes early
+        m_quarantine.pop_front();
+    }
+    m_quarantine.push_back(std::make_pair(now_ms + SLS_FD_QUARANTINE_MS, fd));
+}
+
+void CSLSFrontDoor::release_quarantine(int64_t now_ms, bool all)
+{
+    while (!m_quarantine.empty() && (all || m_quarantine.front().first <= now_ms)) {
+        close(m_quarantine.front().second);
+        m_quarantine.pop_front();
+    }
+}
+
 void CSLSFrontDoor::expire(int64_t now_ms)
 {
+    // Expired mappings are closed at once: idle past libsrt's own peer
+    // timeout, or past an SRT shutdown, or a handshake libsrt never took
+    // further, so libsrt holds no connection from their ports.
+    release_quarantine(now_ms, false);
     std::vector<int> fds;
     m_peers.expire(now_ms, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
     for (size_t i = 0; i < fds.size(); i++) {
@@ -330,6 +351,7 @@ void CSLSFrontDoor::close_all()
         m_peers.remove_fd(fds[i]);
         close(fds[i]);
     }
+    release_quarantine(0, true);
     if (m_public_fd >= 0) {
         close(m_public_fd);
         m_public_fd = -1;

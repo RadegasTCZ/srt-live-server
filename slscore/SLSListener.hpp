@@ -110,6 +110,20 @@ inline void sls_conf_server_defaults(sls_conf_server_t *c)
  * session is admitted with are the ones its handshake was checked against,
  * even if a reload lands between the two.
  */
+/**
+ * With the front door: the real remote the listen callback checked a
+ * handshake as, kept by socket id until its accept, which admits it only if
+ * the front door still maps the connection's internal port to that same
+ * remote (a port freed and reused in between must not hand the session,
+ * its slot and its logs to another address).
+ */
+struct sls_fd_identity_t {
+    uint32_t ip_be;
+    uint16_t port;          // the remote's, host order
+    uint16_t local_port;    // the internal socket's, host order
+    sls_fd_identity_t() : ip_be(0), port(0), local_port(0) {}
+};
+
 struct sls_inflight_t {
     std::string user;
     bool        publish;
@@ -173,7 +187,8 @@ public :
     // the front door the real remote behind its internal socket. false: the
     // front door has no such mapping (a local process connected to the
     // internal port directly); ip/port are then the address libsrt reported.
-    bool real_peer(const struct sockaddr *sa, char *ip, size_t ip_len, int *port) const;
+    bool real_peer(const struct sockaddr *sa, char *ip, size_t ip_len, int *port,
+                   struct sockaddr_in *remote_out = NULL) const;
     // the front door's mapping caps (from the srt block), set before start()
     void set_front_door_caps(int max_total, int max_per_ip) { m_fd_max_total = max_total; m_fd_max_per_ip = max_per_ip; }
 
@@ -212,6 +227,11 @@ private:
     std::shared_ptr<CSLSUserDb>            m_userdb;
     // listen callback -> accept, keyed by the new socket (see sls_inflight_t)
     CSLSSockTable<sls_inflight_t>          m_inflight;
+    // listen callback -> accept, srtla on only (see sls_fd_identity_t)
+    CSLSSockTable<sls_fd_identity_t>       m_fd_identity;
+    // the real remote of an accepted front-door connection, as the callback
+    // checked it; false: refuse it
+    bool pinned_peer(int fd, const char *libsrt_ip, int libsrt_port, char *ip, size_t ip_len, int *port);
 
     int  init_conf_app();
     // One accept and its admission: 1 = a socket came off the queue (admitted

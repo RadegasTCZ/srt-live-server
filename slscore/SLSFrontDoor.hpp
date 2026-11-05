@@ -26,6 +26,8 @@
 #define _SLSFrontDoor_INCLUDE_
 
 #include <atomic>
+#include <deque>
+#include <utility>
 #include <vector>
 #include <stdint.h>
 #include <poll.h>
@@ -38,6 +40,10 @@
 #define SLS_FD_EXPIRE_EVERY_MS 1000
 #define SLS_FD_SUMMARY_MS      10000    // DEBUG summary interval (only when something moved)
 #define SLS_FD_SOCKBUF         (4 * 1024 * 1024)
+// An evicted mapping's socket stays open (unpolled) this long before it is
+// closed, so the kernel cannot give its port to a new peer while libsrt may
+// still hold a connection from it (libsrt drops a silent peer after 5 s).
+#define SLS_FD_QUARANTINE_MS   6000
 
 /**
  * The front door of one srtla-enabled server block (stage 1: plain SRT).
@@ -96,6 +102,11 @@ private:
     int  m_public_fd;
     CSLSPeerMap m_peers;
     std::vector<struct pollfd> m_pollfds;   // [0] = the public socket
+    // evicted sockets waiting to be closed: (closable at ms, fd), oldest first;
+    // at most max_total of them (past that the oldest is closed early)
+    std::deque<std::pair<int64_t, int> > m_quarantine;
+    void quarantine(int fd, int64_t now_ms);
+    void release_quarantine(int64_t now_ms, bool all);
     bool m_pollfds_dirty;
     int64_t m_last_expire_ms;
     int64_t m_last_summary_ms;
