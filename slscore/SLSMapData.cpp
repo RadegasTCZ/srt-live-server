@@ -194,6 +194,11 @@ int CSLSMapData::put(char *key, char *data, int len, int64_t *last_read_time)
         sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::put, PSI bootstrap ready, key=%s, video pid=%d, stream_type=0x%02x.",
                 this, key, parser->video_pid(), parser->video_stream_type());
     }
+    int oversize = parser->take_oversize();
+    if (oversize > 0) {
+        sls_log(SLS_LOG_WARNING, "[%p]CSLSMapData::put, no PSI bootstrap: PAT, PMT and %d bytes of parameter sets exceed %d bytes, late joiners wait for the next keyframe, key=%s, stream_type=0x%02x.",
+                this, oversize, SLS_TS_BOOTSTRAP_MAX, key, parser->video_stream_type());
+    }
 
     return ret;
 }

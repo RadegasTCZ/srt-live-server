@@ -47,6 +47,10 @@ public:
     int  build_bootstrap(uint8_t *out, int cap) const; // multiple of 188, PES PTS = latest video timestamp; 0 if !complete()
     int  video_pid() const;
     int  video_stream_type() const;              // 0x1B H.264, 0x24 HEVC, -1 unknown
+    // > 0 once, the first time the parameter sets were collected but the
+    // bootstrap did not fit SLS_TS_BOOTSTRAP_MAX: their size in bytes. The
+    // caller logs it; later failures (every GOP) return 0.
+    int  take_oversize();
 
 private:
     void on_pat(const uint8_t *sec, int len);
@@ -88,6 +92,8 @@ private:
 
     int      m_boot_len;          // > 0 once built (complete() also needs m_video_ts)
     int      m_boot_pts;          // offset of the PES PTS field in m_boot
+    int      m_oversize;          // parameter-set bytes of a failed build, until taken
+    bool     m_oversize_seen;     // a failed build was already reported
     uint8_t  m_boot[SLS_TS_BOOTSTRAP_MAX];
 };
 

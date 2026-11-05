@@ -63,6 +63,8 @@ void CSLSTsParser::reset()
     m_nal_type    = 0;
     m_nal_begin   = 0;
     m_boot_pts    = 0;
+    m_oversize      = 0;
+    m_oversize_seen = false;
     clear_video();
 }
 
@@ -428,6 +430,13 @@ static int psi_packet(uint8_t *p, int pid, const uint8_t *sec, int len)
     return TS_PACK_LEN;
 }
 
+int CSLSTsParser::take_oversize()
+{
+    int n = m_oversize;
+    m_oversize = 0;
+    return n;
+}
+
 void CSLSTsParser::make_bootstrap()
 {
     uint8_t *o = m_boot;
@@ -452,6 +461,10 @@ void CSLSTsParser::make_bootstrap()
     while (done < total) {
         if (pos + TS_PACK_LEN > SLS_TS_BOOTSTRAP_MAX) { // doesn't fit 7 packets
             m_boot_len = 0;
+            if (!m_oversize_seen) {
+                m_oversize_seen = true;
+                m_oversize      = m_ps_len;
+            }
             return;
         }
         uint8_t *p = o + pos;
