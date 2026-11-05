@@ -177,8 +177,15 @@ bool CSLSPusherManager::has_reconnect_work()
 bool CSLSPusherManager::do_on_relay_closed(CSLSRelay *relay)
 {
 	if (!has_publisher()) {
-		retire_locked("publisher gone");   // refused while another pusher is live
-		return false;
+		if (retire_locked("publisher gone")) {
+			return false;
+		}
+		// Refused: another pusher is still live, and the publisher may come
+		// back before it ends (a re-publish carries on the live push, so
+		// nothing else would retry this upstream). Keep its url and make
+		// sure an entry waits for it.
+		add_reconnect_stream(relay->get_url());
+		return !m_reconnect_pending;
 	}
 	return CSLSRelayManager::do_on_relay_closed(relay);
 }
@@ -186,11 +193,13 @@ bool CSLSPusherManager::do_on_relay_closed(CSLSRelay *relay)
 int CSLSPusherManager::do_reconnect(int64_t cur_tm_ms)
 {
 	int ret = SLS_ERROR;
-	// the publisher left while this entry waited: drop the entry and retire
-	// (a pusher still live retires the manager when it ends)
+	// The publisher left while this entry waited: retire and drop the entry.
+	// While a pusher is still live the retire is refused and the entry stays:
+	// the publisher may come back before that pusher ends, and a re-publish
+	// carries on the live push without a new entry. When the last pusher ends
+	// without a publisher the manager retires, and reconnect() drops the entry.
 	if (!has_publisher()) {
-		retire_locked("publisher gone");
-		return SLS_OK;
+		return retire_locked("publisher gone") ? SLS_OK : SLS_ERROR;
 	}
 
     if (SLS_OK != check_relay_param()) {
