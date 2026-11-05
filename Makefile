@@ -50,7 +50,8 @@ OBJS = $(OUTPUT_PATH)/SLSLog.o \
 	$(OUTPUT_PATH)/SLSArray.o\
 	$(OUTPUT_PATH)/HttpClient.o\
 	$(OUTPUT_PATH)/SLSSyncClock.o\
-	$(OUTPUT_PATH)/TSFileTimeReader.o
+	$(OUTPUT_PATH)/TSFileTimeReader.o\
+	$(OUTPUT_PATH)/SLSFrontDoorProto.o
 	
 CORE_PATH = slscore
 COMMON_FILES = common.hpp
@@ -73,11 +74,22 @@ $(OUTPUT_PATH):
 
 -include $(OBJS:.o=.d)
 
+# Unit tests: tests/*.cpp plus only the pure objects they exercise (no libsrt,
+# no threads). `make test` builds $(BIN_PATH)/sls-tests and runs it.
+TEST_PATH = tests
+TEST_SRCS = $(wildcard $(TEST_PATH)/*.cpp)
+TEST_OBJS = $(OUTPUT_PATH)/SLSFrontDoorProto.o
+
+test: $(TEST_OBJS)
+	mkdir -p ${BIN_PATH}
+	${CXX} -o ${BIN_PATH}/sls-tests $(TEST_SRCS) $(TEST_OBJS) $(CFLAGS) $(INC_PATH) -I./$(TEST_PATH) $(LDFLAGS) -lpthread
+	./${BIN_PATH}/sls-tests
+
 # Sanitizer build: separate object/binary dirs, no FORTIFY.
 asan:
 	$(MAKE) all OUTPUT_PATH=obj-asan BIN_PATH=bin-asan OPT='-O1 -g -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fsanitize=address,undefined -fno-omit-frame-pointer -fPIE' LDOPT='-pie -fsanitize=address,undefined'
 
-.PHONY: all asan clean
+.PHONY: all asan clean test
 
 clean:
 	rm -f $(OUTPUT_PATH)/*.o $(OUTPUT_PATH)/*.d
