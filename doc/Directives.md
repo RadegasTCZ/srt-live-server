@@ -425,6 +425,60 @@ in-order links a gap is a real loss and should be reported at once. A value
 above 0 only helps a sender whose packets arrive out of order (bonded links
 without a reordering receiver in front); it delays the NAK of a real loss.
 
+## Front door (srtla on)
+
+What changes with `srtla on;` in a server block:
+
+- **Who owns the port.** sls binds the block's `listen` port itself (UDP,
+  `0.0.0.0`), at startup like before: a taken port stops sls. libsrt's listener
+  binds `127.0.0.1:<ephemeral>` and is not reachable from outside. Startup logs
+  `front door: public port <listen>, internal 127.0.0.1:<port>` and
+  `CSLSFrontDoor, started: ... caps <total> in total, <per IP> per IP, socket buffers ...`.
+  The buffers ask for 4 MB; if the line says they are below that, raise
+  `net.core.rmem_max` / `net.core.wmem_max`.
+- **Relay.** Each plain SRT peer gets its own UDP socket connected to the
+  internal port, so libsrt still sees one peer per remote. Packets are copied
+  both ways; when links are in order nothing is held back.
+- **Real addresses.** The listen callback and the accept translate the internal
+  socket back to the real remote. `remote=` in session lines, the webhook's
+  `remote_ip`, the stats' `remote_ip`, `max_connections_per_ip`,
+  `max_handshakes_per_ip_per_sec` and the wrong-passphrase lockout all see real
+  addresses, as without the front door. The remote is pinned at the handshake: a
+  connection whose mapping changed hands before its accept is refused. A local
+  process that connects straight to the internal port is refused
+  (`not through the front door`, at most one INFO line per second).
+- **Mappings.** A mapping is created only for an SRT handshake from a new
+  source. It counts as established once libsrt sends the peer more than a
+  handshake (the peer echoed the handshake cookie, so it can receive). Caps: the
+  connection cap (`worker_connections` x max(1, `worker_threads`)) in total and
+  `max_connections_per_ip` per address, for each srtla block. At a cap, a new
+  handshake replaces, in this order: a mapping whose session libsrt ended, the
+  oldest half-open one, or one silent for 5 s. Only when every mapping is in
+  active use is it refused (`mapping cap reached`). A replaced mapping's socket
+  stays open, unused, for 6 s (at most as many as the cap), so its port is not
+  reused while libsrt may still hold a connection from it.
+- **Timeouts** (checked once a second): half-open 5 s; established with
+  nothing from the peer 10 s (libsrt itself drops a silent peer after 5 s);
+  2 s after libsrt sent a shutdown; 2 s after the peer sent one, unless the peer
+  keeps sending (a forged shutdown does not end a session).
+- **Dropped packets.** Anything else from an unknown source is dropped and
+  counted, never logged per packet: SRTLA packets (`dropped_srtla`; SRTLA support
+  itself comes later) and the rest (`dropped_unknown`, e.g. data from a peer
+  whose NAT changed its port: SRT reconnects with a new handshake).
+- **Counters.** A DEBUG summary every 10 s when something moved, and at stop
+  one INFO line: `front door stopped: port= mappings= created= expired=
+  evicted= relayed_in= relayed_out= dropped_srtla= dropped_unknown= refused_cap=
+  send_errors= local_errors=`. `local_errors` counts relay sockets that could not
+  be opened (fd limit); they also log an ERROR at most every 10 s.
+
+Limits: IPv4 only. Replies leave from the address the kernel picks for the
+peer, so on a host with several addresses on one interface a peer may see
+replies from another address than the one it sent to. Each srtla block has its
+own caps, so N blocks may hold N times the cap in sockets. When sls stops, the
+front door stops first: peers notice by their idle timeout (about 5 s), as after
+a network loss. libsrt's own log lines (and the DEBUG accept line) show the
+internal `127.0.0.1` peer.
+
 ## max_pull_streams (relay block), pull relay lifetime
 
 A pull relay is started by the first player asking for a stream that has no

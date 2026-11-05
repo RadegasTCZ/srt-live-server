@@ -69,6 +69,22 @@ TS file (`-l 1` loops it), `-c` forks extra players (0-256). Every flag takes a
 value; a missing or over-long value, an unknown flag or a bad number prints an
 error and exits with status 1.
 
+Changes in 1.6.0 (in development)
+=================================
+
+- **Front door (`srtla on;`).** A server block can let sls own its public UDP
+  port and relay plain SRT to a libsrt listener on `127.0.0.1`, so that one port
+  can later also take SRTLA (bonded links, e.g. IRL Pro or BELABOX) next to
+  plain SRT. Clients keep the same URL; logs, limits, lockouts, the webhook and
+  stats keep showing each peer's real address. Off by default, and with it off
+  nothing changes. See "Front door (srtla on)" in `doc/Directives.md`. Stage 1:
+  SRTLA packets are recognised and dropped; receiving them comes next.
+- **`srt_lossmaxttl N;`** sets `SRTO_LOSSMAXTTL` on a server block's listener
+  (default 0 = off).
+- **On/off directives** also accept `on` and `off`.
+- **`make test`** builds and runs unit tests; `tests/e2e/frontdoor.sh` and
+  `tests/e2e/parity.sh` are loopback e2e harnesses (ASAN build by default).
+
 Upgrading from 1.5.3
 ====================
 
