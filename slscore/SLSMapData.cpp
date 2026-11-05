@@ -59,9 +59,11 @@ int CSLSMapData::add(char *key)
         if (item != m_map_array.end()) {
             CSLSRecycleArray * array_data = item->second;
             if (array_data) {
-                sls_log(SLS_LOG_INFO, "[%p]CSLSMapData::add, failed, key=%s, array_data=%p, exist.",
+                // the previous publisher's ring is still here: the caller
+                // must not take it over (its bootstrap and data are not ours)
+                sls_log(SLS_LOG_WARNING, "[%p]CSLSMapData::add, failed, key=%s, array_data=%p, exist.",
                         this, key, array_data);
-                return ret;
+                return SLS_ERROR;
             }
             //m_map_array.erase(item);
         }
