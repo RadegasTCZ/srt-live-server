@@ -373,6 +373,7 @@ int64_t CTSFileTimeReader::generate_rts_file(const char  *ts_file_name)
 		    udp_data[i] = 0x47;
 		    udp_data[i+1] = 0x1F;
 		    udp_data[i+2] = 0xFF;
+		    udp_data[i+3] = 0x10;          // payload only, not scrambled, CC 0
 			i += TS_PACK_LEN;
 		}
 		if (write_ok && !write_rts_record(m_rts_fd, rts, udp_data)) {
