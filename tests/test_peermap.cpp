@@ -38,6 +38,14 @@ static struct sockaddr_in addr(const char *ip, int port)
     inet_pton(AF_INET, ip, &a.sin_addr);
     return a;
 }
+static uint32_t ip_of(const char *ip) { return addr(ip, 0).sin_addr.s_addr; }
+
+static size_t expire_n(CSLSPeerMap &m, int64_t now, std::vector<int> *fds = NULL)
+{
+    std::vector<int> local;
+    m.expire(now, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, fds ? fds : &local);
+    return fds ? fds->size() : local.size();
+}
 
 SLS_TEST(peermap_add_lookup)
 {
@@ -64,12 +72,14 @@ SLS_TEST(peermap_add_lookup)
 SLS_TEST(peermap_duplicate)
 {
     CSLSPeerMap m(16, 0);
+    int ev;
     SLS_CHECK_EQ(m.add(addr("1.2.3.4", 5000), 7, 40001, 0), SLS_OK);
-    SLS_CHECK_EQ(m.add(addr("1.2.3.4", 5000), 8, 40002, 0), SLS_ERROR);   // same remote
-    SLS_CHECK_EQ(m.add(addr("1.2.3.4", 5001), 7, 40002, 0), SLS_ERROR);   // same fd
-    SLS_CHECK_EQ(m.add(addr("1.2.3.4", 5001), 8, 40001, 0), SLS_ERROR);   // same local port
+    SLS_CHECK_EQ(m.add(addr("1.2.3.4", 5000), 8, 40002, 0, &ev), SLS_ERROR);   // same remote
+    SLS_CHECK_EQ(m.add(addr("1.2.3.4", 5001), 7, 40002, 0, &ev), SLS_ERROR);   // same fd
+    SLS_CHECK_EQ(m.add(addr("1.2.3.4", 5001), 8, 40001, 0, &ev), SLS_ERROR);   // same local port
+    SLS_CHECK_EQ(ev, -1);
     SLS_CHECK_EQ(m.size(), 1);
-    SLS_CHECK_EQ(m.count_for_ip(addr("1.2.3.4", 0).sin_addr.s_addr), 1);
+    SLS_CHECK_EQ(m.count_for_ip(ip_of("1.2.3.4")), 1);
 }
 
 SLS_TEST(peermap_global_cap)
@@ -78,7 +88,7 @@ SLS_TEST(peermap_global_cap)
     SLS_CHECK_EQ(m.add(addr("1.1.1.1", 1), 10, 40010, 0), SLS_OK);
     SLS_CHECK_EQ(m.add(addr("1.1.1.2", 1), 11, 40011, 0), SLS_OK);
     SLS_CHECK_EQ(m.add(addr("1.1.1.3", 1), 12, 40012, 0), SLS_OK);
-    SLS_CHECK_EQ(m.add(addr("1.1.1.4", 1), 13, 40013, 0), SLS_ERROR);
+    SLS_CHECK_EQ(m.add(addr("1.1.1.4", 1), 13, 40013, 0), SLS_ERROR);   // no eviction asked for
     SLS_CHECK_EQ(m.size(), 3);
     m.remove_fd(11);
     SLS_CHECK_EQ(m.add(addr("1.1.1.4", 1), 13, 40013, 0), SLS_OK);   // a slot freed
@@ -91,9 +101,9 @@ SLS_TEST(peermap_per_ip_cap)
     SLS_CHECK_EQ(m.add(addr("2.2.2.2", 2), 11, 40011, 0), SLS_OK);
     SLS_CHECK_EQ(m.add(addr("2.2.2.2", 3), 12, 40012, 0), SLS_ERROR);
     SLS_CHECK_EQ(m.add(addr("3.3.3.3", 1), 12, 40012, 0), SLS_OK);
-    SLS_CHECK_EQ(m.count_for_ip(addr("2.2.2.2", 0).sin_addr.s_addr), 2);
-    SLS_CHECK_EQ(m.count_for_ip(addr("3.3.3.3", 0).sin_addr.s_addr), 1);
-    SLS_CHECK_EQ(m.count_for_ip(addr("4.4.4.4", 0).sin_addr.s_addr), 0);
+    SLS_CHECK_EQ(m.count_for_ip(ip_of("2.2.2.2")), 2);
+    SLS_CHECK_EQ(m.count_for_ip(ip_of("3.3.3.3")), 1);
+    SLS_CHECK_EQ(m.count_for_ip(ip_of("4.4.4.4")), 0);
 }
 
 SLS_TEST(peermap_halfopen_expiry)
@@ -101,28 +111,25 @@ SLS_TEST(peermap_halfopen_expiry)
     CSLSPeerMap m(16, 0);
     SLS_CHECK_EQ(m.add(addr("1.2.3.4", 5000), 7, 40001, 0), SLS_OK);
     std::vector<int> fds;
-    m.expire(4999, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
-    SLS_CHECK_EQ(fds.size(), 0);
-    m.expire(5001, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
-    SLS_CHECK_EQ(fds.size(), 1);
+    SLS_CHECK_EQ(expire_n(m, 4999, &fds), 0);
+    SLS_CHECK_EQ(expire_n(m, 5001, &fds), 1);
     if (fds.size() == 1) SLS_CHECK_EQ(fds[0], 7);
     SLS_CHECK_EQ(m.size(), 0);
-    SLS_CHECK_EQ(m.count_for_ip(addr("1.2.3.4", 0).sin_addr.s_addr), 0);
+    SLS_CHECK_EQ(m.count_for_ip(ip_of("1.2.3.4")), 0);
     struct sockaddr_in got;
     SLS_CHECK(!m.remote_for_local_port(40001, &got));
 }
 
-SLS_TEST(peermap_halfopen_reply_is_not_enough)
+SLS_TEST(peermap_remote_packets_do_not_establish)
 {
-    // replies from the listener do not establish: only a second packet from the remote does
+    // a spoofed source can send any number of packets: only libsrt's answer counts
     CSLSPeerMap m(16, 0);
     struct sockaddr_in r = addr("1.2.3.4", 5000);
     SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
+    for (int t = 100; t < 5000; t += 100) m.fd_for_remote(r, t);
     struct sockaddr_in got;
-    SLS_CHECK(m.remote_for_fd(7, &got, 1000));
-    std::vector<int> fds;
-    m.expire(5001, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
-    SLS_CHECK_EQ(fds.size(), 1);
+    SLS_CHECK(m.remote_for_fd(7, &got, 1000));   // handshake replies: not confirming
+    SLS_CHECK_EQ(expire_n(m, 5001), 1);
 }
 
 SLS_TEST(peermap_established_survives)
@@ -130,32 +137,103 @@ SLS_TEST(peermap_established_survives)
     CSLSPeerMap m(16, 0);
     struct sockaddr_in r = addr("1.2.3.4", 5000);
     SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
-    SLS_CHECK_EQ(m.fd_for_remote(r, 100), 7);   // the handshake that created it is not counted here
+    SLS_CHECK(m.remote_for_fd(7, NULL, 100, true));   // libsrt sent data/ACK: routable
     SLS_CHECK_EQ(m.fd_for_remote(r, 200), 7);
-    std::vector<int> fds;
-    m.expire(6000, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
-    SLS_CHECK_EQ(fds.size(), 0);
+    SLS_CHECK_EQ(expire_n(m, 6000), 0);
     SLS_CHECK_EQ(m.size(), 1);
-    m.expire(30300, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
-    SLS_CHECK_EQ(fds.size(), 1);
+    SLS_CHECK_EQ(expire_n(m, 200 + SLS_FD_IDLE_MS - 1), 0);
+    SLS_CHECK_EQ(expire_n(m, 200 + SLS_FD_IDLE_MS + 1), 1);
     SLS_CHECK_EQ(m.size(), 0);
 }
 
-SLS_TEST(peermap_outbound_keeps_alive)
+SLS_TEST(peermap_outbound_does_not_keep_alive)
 {
-    // traffic in either direction counts as activity
+    // libsrt retransmitting to a vanished peer keeps nothing alive
     CSLSPeerMap m(16, 0);
     struct sockaddr_in r = addr("1.2.3.4", 5000);
     SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
-    m.fd_for_remote(r, 100);
+    m.remote_for_fd(7, NULL, 100, true);
     m.fd_for_remote(r, 200);
-    struct sockaddr_in got;
-    m.remote_for_fd(7, &got, 25000);
-    std::vector<int> fds;
-    m.expire(30300, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
-    SLS_CHECK_EQ(fds.size(), 0);
-    m.expire(55001, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
-    SLS_CHECK_EQ(fds.size(), 1);
+    for (int t = 1000; t < 20000; t += 1000) m.remote_for_fd(7, NULL, t, true);
+    SLS_CHECK_EQ(expire_n(m, 200 + SLS_FD_IDLE_MS + 1), 1);
+}
+
+SLS_TEST(peermap_evicts_oldest_halfopen)
+{
+    CSLSPeerMap m(3, 0);
+    int ev = 0;
+    SLS_CHECK_EQ(m.add(addr("1.1.1.1", 1), 10, 40010, 0), SLS_OK);
+    m.remote_for_fd(10, NULL, 50, true);                              // established, active
+    m.fd_for_remote(addr("1.1.1.1", 1), 900);
+    SLS_CHECK_EQ(m.add(addr("6.6.6.1", 1), 11, 40011, 100), SLS_OK);   // half-open (older)
+    SLS_CHECK_EQ(m.add(addr("6.6.6.2", 1), 12, 40012, 200), SLS_OK);   // half-open
+    SLS_CHECK_EQ(m.add(addr("1.1.1.9", 1), 13, 40013, 1000, &ev), SLS_OK);
+    SLS_CHECK_EQ(ev, 11);
+    SLS_CHECK_EQ(m.size(), 3);
+    SLS_CHECK_EQ(m.fd_for_remote(addr("6.6.6.1", 1), 1000), -1);
+    SLS_CHECK_EQ(m.fd_for_remote(addr("1.1.1.1", 1), 1000), 10);       // the live peer stays
+    SLS_CHECK_EQ(m.evictions(), 1);
+}
+
+SLS_TEST(peermap_evicts_quiet_established_never_active)
+{
+    CSLSPeerMap m(2, 0);
+    int ev = 0;
+    SLS_CHECK_EQ(m.add(addr("1.1.1.1", 1), 10, 40010, 0), SLS_OK);
+    SLS_CHECK_EQ(m.add(addr("1.1.1.2", 1), 11, 40011, 0), SLS_OK);
+    m.remote_for_fd(10, NULL, 10, true);
+    m.remote_for_fd(11, NULL, 10, true);
+    m.fd_for_remote(addr("1.1.1.1", 1), 1000);   // quiet since 1000
+    m.fd_for_remote(addr("1.1.1.2", 1), 5500);   // active
+    // at 5600 neither is quiet for SLS_FD_QUIET_MS: nothing to evict
+    SLS_CHECK_EQ(m.add(addr("1.1.1.3", 1), 12, 40012, 5600, &ev), SLS_ERROR);
+    SLS_CHECK_EQ(ev, -1);
+    // at 6100, 1.1.1.1 has been silent for 5100 ms
+    SLS_CHECK_EQ(m.add(addr("1.1.1.3", 1), 12, 40012, 6100, &ev), SLS_OK);
+    SLS_CHECK_EQ(ev, 10);
+}
+
+SLS_TEST(peermap_per_ip_eviction_stays_in_ip)
+{
+    // a flood spoofing one victim IP can only evict that IP's own half-open entries
+    CSLSPeerMap m(16, 2);
+    int ev = 0;
+    SLS_CHECK_EQ(m.add(addr("6.6.6.6", 1), 10, 40010, 0), SLS_OK);   // other IP, half-open
+    SLS_CHECK_EQ(m.add(addr("2.2.2.2", 1), 11, 40011, 10), SLS_OK);
+    SLS_CHECK_EQ(m.add(addr("2.2.2.2", 2), 12, 40012, 20), SLS_OK);
+    SLS_CHECK_EQ(m.add(addr("2.2.2.2", 3), 13, 40013, 30, &ev), SLS_OK);
+    SLS_CHECK_EQ(ev, 11);
+    SLS_CHECK_EQ(m.count_for_ip(ip_of("2.2.2.2")), 2);
+    SLS_CHECK_EQ(m.fd_for_remote(addr("6.6.6.6", 1), 40), 10);
+}
+
+SLS_TEST(peermap_peer_shutdown_undone_by_traffic)
+{
+    // a forged shutdown "from" a live peer: its next real packet cancels it
+    CSLSPeerMap m(16, 0);
+    struct sockaddr_in r = addr("1.2.3.4", 5000);
+    SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
+    m.remote_for_fd(7, NULL, 50, true);
+    m.fd_for_remote(r, 1000, true);
+    m.fd_for_remote(r, 1500);
+    SLS_CHECK_EQ(expire_n(m, 4000), 0);
+    // a real one: nothing follows it
+    m.fd_for_remote(r, 5000, true);
+    SLS_CHECK_EQ(expire_n(m, 5000 + SLS_FD_CLOSING_MS - 1), 0);
+    SLS_CHECK_EQ(expire_n(m, 5000 + SLS_FD_CLOSING_MS + 1), 1);
+}
+
+SLS_TEST(peermap_libsrt_shutdown_final)
+{
+    CSLSPeerMap m(16, 0);
+    struct sockaddr_in r = addr("1.2.3.4", 5000);
+    SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
+    m.remote_for_fd(7, NULL, 50, true);
+    m.remote_for_fd(7, NULL, 1000, false, true);   // libsrt closed the session
+    m.fd_for_remote(r, 1500);                     // the peer still sends: changes nothing
+    m.remote_for_fd(7, NULL, 1800, false, true);  // the first mark counts
+    SLS_CHECK_EQ(expire_n(m, 1000 + SLS_FD_CLOSING_MS - 1), 0);
+    SLS_CHECK_EQ(expire_n(m, 1000 + SLS_FD_CLOSING_MS + 1), 1);
 }
 
 SLS_TEST(peermap_remove_fd)
@@ -172,21 +250,4 @@ SLS_TEST(peermap_remove_fd)
     SLS_CHECK_EQ(m.count_for_ip(r.sin_addr.s_addr), 0);
     m.remove_fd(7);   // twice is harmless
     SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
-}
-
-SLS_TEST(peermap_closing_expires_soon)
-{
-    CSLSPeerMap m(16, 0);
-    struct sockaddr_in r = addr("1.2.3.4", 5000);
-    SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
-    m.fd_for_remote(r, 100);
-    m.mark_closing(7, 1000);
-    m.fd_for_remote(r, 1500);           // a retransmitted shutdown does not revive it
-    m.mark_closing(7, 1800);            // the first mark counts
-    std::vector<int> fds;
-    m.expire(2900, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
-    SLS_CHECK_EQ(fds.size(), 0);
-    m.expire(3001, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
-    SLS_CHECK_EQ(fds.size(), 1);
-    m.mark_closing(99, 1000);           // unknown fd: harmless
 }

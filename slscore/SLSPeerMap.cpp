@@ -29,7 +29,8 @@
 
 CSLSPeerMap::CSLSPeerMap(int max_total, int max_per_ip)
     : m_max_total(max_total > 0 ? max_total : 1),
-      m_max_per_ip(max_per_ip > 0 ? max_per_ip : 0)
+      m_max_per_ip(max_per_ip > 0 ? max_per_ip : 0),
+      m_evictions(0)
 {
 }
 
@@ -42,21 +43,53 @@ uint64_t CSLSPeerMap::key_of(const struct sockaddr_in &remote)
     return ((uint64_t)ntohl(remote.sin_addr.s_addr) << 16) | ntohs(remote.sin_port);
 }
 
-int CSLSPeerMap::add(const struct sockaddr_in &remote, int fd, uint16_t local_port, int64_t now_ms)
+CSLSPeerMap::by_remote_t::iterator CSLSPeerMap::victim_locked(bool ip_only, uint32_t ip, int64_t now_ms)
 {
+    by_remote_t::iterator half = m_by_remote.end(), quiet = m_by_remote.end();
+    for (by_remote_t::iterator it = m_by_remote.begin(); it != m_by_remote.end(); ++it) {
+        const entry &e = it->second;
+        if (ip_only && e.remote.sin_addr.s_addr != ip) {
+            continue;
+        }
+        if (!e.established) {
+            if (half == m_by_remote.end() || e.created_ms < half->second.created_ms) {
+                half = it;
+            }
+        } else if (now_ms - e.last_in_ms >= SLS_FD_QUIET_MS) {
+            if (quiet == m_by_remote.end() || e.last_in_ms < quiet->second.last_in_ms) {
+                quiet = it;
+            }
+        }
+    }
+    return half != m_by_remote.end() ? half : quiet;
+}
+
+int CSLSPeerMap::add(const struct sockaddr_in &remote, int fd, uint16_t local_port, int64_t now_ms,
+                     int *evicted_fd)
+{
+    if (evicted_fd) {
+        *evicted_fd = -1;
+    }
     CSLSLock lock(&m_mutex);
     uint64_t key = key_of(remote);
-    if ((int)m_by_remote.size() >= m_max_total) {
-        return SLS_ERROR;
-    }
     if (m_by_remote.count(key) || m_by_fd.count(fd) || m_by_local_port.count(local_port)) {
         return SLS_ERROR;
     }
     uint32_t ip = remote.sin_addr.s_addr;
     std::map<uint32_t, int>::iterator ip_it = m_per_ip.find(ip);
     int on_ip = ip_it == m_per_ip.end() ? 0 : ip_it->second;
-    if (m_max_per_ip > 0 && on_ip >= m_max_per_ip) {
-        return SLS_ERROR;
+    bool ip_full  = m_max_per_ip > 0 && on_ip >= m_max_per_ip;
+    bool all_full = (int)m_by_remote.size() >= m_max_total;
+    if (ip_full || all_full) {
+        // over the per-IP cap only that IP's entries may make room
+        by_remote_t::iterator v = victim_locked(ip_full, ip, now_ms);
+        if (v == m_by_remote.end() || NULL == evicted_fd) {
+            return SLS_ERROR;
+        }
+        *evicted_fd = v->second.fd;
+        erase_locked(v);
+        m_evictions++;
+        on_ip = m_per_ip.count(ip) ? m_per_ip[ip] : 0;
     }
     entry e;
     memset(&e, 0, sizeof(e));
@@ -65,7 +98,6 @@ int CSLSPeerMap::add(const struct sockaddr_in &remote, int fd, uint16_t local_po
     e.local_port  = local_port;
     e.created_ms  = now_ms;
     e.last_in_ms  = now_ms;
-    e.last_out_ms = now_ms;
     e.established = false;
     m_by_remote[key] = e;
     m_by_fd[fd] = key;
@@ -74,32 +106,47 @@ int CSLSPeerMap::add(const struct sockaddr_in &remote, int fd, uint16_t local_po
     return SLS_OK;
 }
 
-int CSLSPeerMap::fd_for_remote(const struct sockaddr_in &remote, int64_t now_ms)
+int CSLSPeerMap::fd_for_remote(const struct sockaddr_in &remote, int64_t now_ms, bool shutdown)
 {
     CSLSLock lock(&m_mutex);
-    std::map<uint64_t, entry>::iterator it = m_by_remote.find(key_of(remote));
+    by_remote_t::iterator it = m_by_remote.find(key_of(remote));
     if (it == m_by_remote.end()) {
         return -1;
     }
-    it->second.last_in_ms = now_ms;
-    it->second.established = true;   // add() counted the first packet: this is a later one
-    return it->second.fd;
+    entry &e = it->second;
+    e.last_in_ms = now_ms;
+    if (shutdown) {
+        if (0 == e.peer_shutdown_ms) {
+            e.peer_shutdown_ms = now_ms > 0 ? now_ms : 1;
+        }
+    } else {
+        e.peer_shutdown_ms = 0;   // still talking: a shutdown "from" it was forged or stale
+    }
+    return e.fd;
 }
 
-bool CSLSPeerMap::remote_for_fd(int fd, struct sockaddr_in *remote, int64_t now_ms)
+bool CSLSPeerMap::remote_for_fd(int fd, struct sockaddr_in *remote, int64_t now_ms,
+                                bool confirms, bool shutdown)
 {
     CSLSLock lock(&m_mutex);
     std::map<int, uint64_t>::iterator f = m_by_fd.find(fd);
     if (f == m_by_fd.end()) {
         return false;
     }
-    std::map<uint64_t, entry>::iterator it = m_by_remote.find(f->second);
+    by_remote_t::iterator it = m_by_remote.find(f->second);
     if (it == m_by_remote.end()) {
         return false;
     }
-    it->second.last_out_ms = now_ms;
+    entry &e = it->second;
+    if (confirms && !e.established) {
+        e.established = true;
+        e.last_in_ms = now_ms;   // idle counts from the handshake's end
+    }
+    if (shutdown && 0 == e.closing_ms) {
+        e.closing_ms = now_ms > 0 ? now_ms : 1;
+    }
     if (remote) {
-        *remote = it->second.remote;
+        *remote = e.remote;
     }
     return true;
 }
@@ -111,7 +158,7 @@ bool CSLSPeerMap::remote_for_local_port(uint16_t local_port, struct sockaddr_in 
     if (p == m_by_local_port.end()) {
         return false;
     }
-    std::map<uint64_t, entry>::const_iterator it = m_by_remote.find(p->second);
+    by_remote_t::const_iterator it = m_by_remote.find(p->second);
     if (it == m_by_remote.end()) {
         return false;
     }
@@ -121,7 +168,7 @@ bool CSLSPeerMap::remote_for_local_port(uint16_t local_port, struct sockaddr_in 
     return true;
 }
 
-void CSLSPeerMap::erase_locked(std::map<uint64_t, entry>::iterator it)
+void CSLSPeerMap::erase_locked(by_remote_t::iterator it)
 {
     uint32_t ip = it->second.remote.sin_addr.s_addr;
     std::map<uint32_t, int>::iterator ip_it = m_per_ip.find(ip);
@@ -138,17 +185,18 @@ void CSLSPeerMap::erase_locked(std::map<uint64_t, entry>::iterator it)
 void CSLSPeerMap::expire(int64_t now_ms, int halfopen_ms, int idle_ms, std::vector<int> *expired_fds)
 {
     CSLSLock lock(&m_mutex);
-    std::map<uint64_t, entry>::iterator it = m_by_remote.begin();
+    by_remote_t::iterator it = m_by_remote.begin();
     while (it != m_by_remote.end()) {
         const entry &e = it->second;
         bool dead;
         if (e.closing_ms > 0 && now_ms - e.closing_ms > SLS_FD_CLOSING_MS) {
             dead = true;
+        } else if (e.peer_shutdown_ms > 0 && now_ms - e.peer_shutdown_ms > SLS_FD_CLOSING_MS) {
+            dead = true;
         } else if (!e.established) {
             dead = now_ms - e.created_ms > halfopen_ms;
         } else {
-            int64_t last = e.last_in_ms > e.last_out_ms ? e.last_in_ms : e.last_out_ms;
-            dead = now_ms - last > idle_ms;
+            dead = now_ms - e.last_in_ms > idle_ms;
         }
         if (!dead) {
             ++it;
@@ -157,7 +205,7 @@ void CSLSPeerMap::expire(int64_t now_ms, int halfopen_ms, int idle_ms, std::vect
         if (expired_fds) {
             expired_fds->push_back(e.fd);
         }
-        std::map<uint64_t, entry>::iterator victim = it++;
+        by_remote_t::iterator victim = it++;
         erase_locked(victim);
     }
 }
@@ -169,25 +217,12 @@ void CSLSPeerMap::remove_fd(int fd)
     if (f == m_by_fd.end()) {
         return;
     }
-    std::map<uint64_t, entry>::iterator it = m_by_remote.find(f->second);
+    by_remote_t::iterator it = m_by_remote.find(f->second);
     if (it == m_by_remote.end()) {
         m_by_fd.erase(f);
         return;
     }
     erase_locked(it);
-}
-
-void CSLSPeerMap::mark_closing(int fd, int64_t now_ms)
-{
-    CSLSLock lock(&m_mutex);
-    std::map<int, uint64_t>::iterator f = m_by_fd.find(fd);
-    if (f == m_by_fd.end()) {
-        return;
-    }
-    std::map<uint64_t, entry>::iterator it = m_by_remote.find(f->second);
-    if (it != m_by_remote.end() && 0 == it->second.closing_ms) {
-        it->second.closing_ms = now_ms > 0 ? now_ms : 1;
-    }
 }
 
 void CSLSPeerMap::all_fds(std::vector<int> *fds) const
@@ -209,4 +244,10 @@ int CSLSPeerMap::count_for_ip(uint32_t ip_be) const
     CSLSLock lock(&m_mutex);
     std::map<uint32_t, int>::const_iterator it = m_per_ip.find(ip_be);
     return it == m_per_ip.end() ? 0 : it->second;
+}
+
+uint64_t CSLSPeerMap::evictions() const
+{
+    CSLSLock lock(&m_mutex);
+    return m_evictions;
 }

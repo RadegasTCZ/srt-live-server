@@ -33,9 +33,10 @@
 
 #include "SLSLock.hpp"
 
-#define SLS_FD_HALFOPEN_MS   5000    // a mapping whose peer never sent a second packet
-#define SLS_FD_IDLE_MS       30000   // an established mapping with no traffic either way
-#define SLS_FD_CLOSING_MS    2000    // after an SRT shutdown passed: the session is over
+#define SLS_FD_HALFOPEN_MS   5000    // created, libsrt never answered past the handshake
+#define SLS_FD_IDLE_MS       10000   // established, nothing from the remote (libsrt drops a peer after 5 s)
+#define SLS_FD_CLOSING_MS    2000    // after an SRT shutdown: the session is over
+#define SLS_FD_QUIET_MS      5000    // established but silent this long: may be evicted at a cap
 
 /**
  * The front door's map of plain SRT peers: a remote address <-> the internal
@@ -47,9 +48,15 @@
  * libsrt's thread only reads remote_for_local_port(). Times are monotonic ms
  * passed in by the caller.
  *
- * A new entry is half-open until its remote sends a second packet (add()
- * counts the first one), so a spoofed source that cannot receive replies
- * holds a slot for at most the half-open time.
+ * Spoofing: a remote's source address proves nothing, so an entry is
+ * half-open until libsrt sends it a non-handshake packet (it only does so
+ * after the handshake cookie came back, i.e. the remote can receive). At a
+ * cap, add() evicts the oldest half-open entry (or one established but
+ * silent for SLS_FD_QUIET_MS) of that scope instead of refusing, so a
+ * handshake flood cannot keep a real peer out. A shutdown from the remote
+ * side is undone by any later packet from it (a forged one cannot end a
+ * live session); one from libsrt's side is final. Idle time counts packets
+ * from the remote only: libsrt's own retries to a vanished peer keep nothing.
  */
 class CSLSPeerMap
 {
@@ -57,25 +64,29 @@ public:
     CSLSPeerMap(int max_total, int max_per_ip);   // max_per_ip 0 = unlimited
     ~CSLSPeerMap();
 
-    // SLS_ERROR when a cap is reached or the remote, fd or local port is already mapped
-    int  add(const struct sockaddr_in &remote, int fd, uint16_t local_port, int64_t now_ms);
-    // the fd for a packet from remote, or -1; counts the packet
-    int  fd_for_remote(const struct sockaddr_in &remote, int64_t now_ms);
-    // the remote a reply read from fd goes to; counts it as outbound traffic
-    bool remote_for_fd(int fd, struct sockaddr_in *remote, int64_t now_ms);
+    // SLS_ERROR when the remote, fd or local port is already mapped, or a cap is
+    // reached and nothing can be evicted. An evicted entry's fd goes to
+    // *evicted_fd (else -1); the caller closes it.
+    int  add(const struct sockaddr_in &remote, int fd, uint16_t local_port, int64_t now_ms,
+             int *evicted_fd = NULL);
+    // the fd for a packet from remote, or -1; shutdown: the packet is an SRT shutdown
+    int  fd_for_remote(const struct sockaddr_in &remote, int64_t now_ms, bool shutdown = false);
+    // the remote a packet from libsrt read on fd goes to. confirms: libsrt sent a
+    // non-handshake packet (the entry is established); shutdown: an SRT shutdown
+    bool remote_for_fd(int fd, struct sockaddr_in *remote, int64_t now_ms,
+                       bool confirms = false, bool shutdown = false);
     // identity: the real peer behind an internal socket's local port
     bool remote_for_local_port(uint16_t local_port, struct sockaddr_in *remote) const;
     // removes expired entries and appends their fds (the caller closes them)
     void expire(int64_t now_ms, int halfopen_ms, int idle_ms, std::vector<int> *expired_fds);
     void remove_fd(int fd);
-    // an SRT shutdown passed through fd: expire() drops it SLS_FD_CLOSING_MS later
-    void mark_closing(int fd, int64_t now_ms);
     void all_fds(std::vector<int> *fds) const;
 
     size_t size() const;
     int    count_for_ip(uint32_t ip_be) const;
     int    max_total() const { return m_max_total; }
     int    max_per_ip() const { return m_max_per_ip; }
+    uint64_t evictions() const;
 
 private:
     struct entry {
@@ -84,17 +95,21 @@ private:
         uint16_t local_port;
         int64_t  created_ms;
         int64_t  last_in_ms;
-        int64_t  last_out_ms;
         bool     established;
-        int64_t  closing_ms;    // 0, or when an SRT shutdown passed
+        int64_t  closing_ms;        // 0, or when libsrt sent a shutdown (final)
+        int64_t  peer_shutdown_ms;  // 0, or when the remote sent one (undone by later packets)
     };
+    typedef std::map<uint64_t, entry> by_remote_t;
     static uint64_t key_of(const struct sockaddr_in &remote);
-    void erase_locked(std::map<uint64_t, entry>::iterator it);
+    void erase_locked(by_remote_t::iterator it);
+    // the entry to evict among those of ip (or all, when ip_only is false), or end()
+    by_remote_t::iterator victim_locked(bool ip_only, uint32_t ip, int64_t now_ms);
 
     int  m_max_total;
     int  m_max_per_ip;
+    uint64_t m_evictions;
     mutable CSLSMutex m_mutex;
-    std::map<uint64_t, entry>    m_by_remote;
+    by_remote_t                  m_by_remote;
     std::map<int, uint64_t>      m_by_fd;
     std::map<uint16_t, uint64_t> m_by_local_port;
     std::map<uint32_t, int>      m_per_ip;
