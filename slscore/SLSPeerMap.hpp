@@ -52,10 +52,13 @@
  * half-open until libsrt sends it a non-handshake packet (it only does so
  * after the handshake cookie came back, i.e. the remote can receive). At a
  * cap, add() evicts, in this order, an entry whose session libsrt ended,
- * the oldest half-open one, or one established but silent for
+ * a half-open one picked at random, or one established but silent for
  * SLS_FD_QUIET_MS, of that scope instead of refusing (a client retrying in
- * a loop leaves ended sessions that must not hold its slots), so a
- * handshake flood cannot keep a real peer out. A shutdown from the remote
+ * a loop leaves ended sessions that must not hold its slots). A random
+ * half-open victim gives a real peer's handshake, which is half-open for
+ * about one round trip, a fair chance against a flood of spoofed ones; a
+ * flood of cap / RTT handshakes per second still makes connecting slow
+ * (retries), never breaks an established session. A shutdown from the remote
  * side is undone by any later packet from it (a forged one cannot end a
  * live session); one from libsrt's side is final. Idle time counts packets
  * from the remote only: libsrt's own retries to a vanished peer keep nothing.
@@ -71,8 +74,10 @@ public:
     // *evicted_fd (else -1); the caller closes it.
     int  add(const struct sockaddr_in &remote, int fd, uint16_t local_port, int64_t now_ms,
              int *evicted_fd = NULL);
-    // the fd for a packet from remote, or -1; shutdown: the packet is an SRT shutdown
-    int  fd_for_remote(const struct sockaddr_in &remote, int64_t now_ms, bool shutdown = false);
+    // the fd for a packet from remote, or -1; shutdown: the packet is an SRT
+    // shutdown; handshake: an SRT handshake (one after the session ended starts a new one)
+    int  fd_for_remote(const struct sockaddr_in &remote, int64_t now_ms, bool shutdown = false,
+                       bool handshake = false);
     // the remote a packet from libsrt read on fd goes to. confirms: libsrt sent a
     // non-handshake packet (the entry is established); shutdown: an SRT shutdown
     bool remote_for_fd(int fd, struct sockaddr_in *remote, int64_t now_ms,
@@ -88,7 +93,6 @@ public:
     int    count_for_ip(uint32_t ip_be) const;
     int    max_total() const { return m_max_total; }
     int    max_per_ip() const { return m_max_per_ip; }
-    uint64_t evictions() const;
 
 private:
     struct entry {
@@ -109,7 +113,7 @@ private:
 
     int  m_max_total;
     int  m_max_per_ip;
-    uint64_t m_evictions;
+    uint64_t m_rand;   // xorshift state for the random half-open victim
     mutable CSLSMutex m_mutex;
     by_remote_t                  m_by_remote;
     std::map<int, uint64_t>      m_by_fd;

@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include "common.hpp"
+#include <sys/resource.h>
 #include "SLSManager.hpp"
 #include "SLSFrontDoor.hpp"
 #include "SLSLog.hpp"
@@ -158,6 +159,32 @@ int CSLSManager::start_listeners()
     	conf = (sls_conf_server_t *)conf->sibling;
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, init listeners, count=%d.", this, m_server_count);
+
+    // A front door holds up to its cap in relay sockets plus as many
+    // quarantined ones under a flood: lift the soft fd limit to the hard one
+    // (no privilege needed), so a flood exhausts the front door's caps
+    // before it exhausts the process's fds.
+    bool any_front_door = false;
+    for (std::list<CSLSListener *>::iterator it = m_servers.begin(); it != m_servers.end(); it++) {
+        if (*it && (*it)->front_door()) any_front_door = true;
+    }
+    if (any_front_door) {
+        struct rlimit rl;
+        if (0 == getrlimit(RLIMIT_NOFILE, &rl) && rl.rlim_cur < rl.rlim_max) {
+            rlim_t was = rl.rlim_cur;
+            rl.rlim_cur = rl.rlim_max;
+            if (0 == setrlimit(RLIMIT_NOFILE, &rl)) {
+                sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, front door: open file limit raised from %llu to %llu.",
+                        this, (unsigned long long)was, (unsigned long long)rl.rlim_cur);
+            }
+        }
+        if (0 == getrlimit(RLIMIT_NOFILE, &rl) && rl.rlim_cur != RLIM_INFINITY
+                && (unsigned long long)rl.rlim_cur < (unsigned long long)(2 * conn_max_total + 256)) {
+            sls_log(SLS_LOG_WARNING, "[%p]CSLSManager::start, front door: the open file limit %llu is below %d "
+                    "(2 x the connection cap %d + 256); a handshake flood may exhaust it. Raise it (LimitNOFILE= under systemd).",
+                    this, (unsigned long long)rl.rlim_cur, 2 * conn_max_total + 256, conn_max_total);
+        }
+    }
     return SLS_OK;
 }
 

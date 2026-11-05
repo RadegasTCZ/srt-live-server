@@ -105,12 +105,6 @@ inline void sls_conf_server_defaults(sls_conf_server_t *c)
 }
 
 /**
- * What the listen callback looked up for a connection it let through, kept
- * until the accept that dequeues the same socket (S4): the credentials the
- * session is admitted with are the ones its handshake was checked against,
- * even if a reload lands between the two.
- */
-/**
  * With the front door: the real remote the listen callback checked a
  * handshake as, kept by socket id until its accept, which admits it only if
  * the front door still maps the connection's internal port to that same
@@ -124,6 +118,12 @@ struct sls_fd_identity_t {
     sls_fd_identity_t() : ip_be(0), port(0), local_port(0) {}
 };
 
+/**
+ * What the listen callback looked up for a connection it let through, kept
+ * until the accept that dequeues the same socket (S4): the credentials the
+ * session is admitted with are the ones its handshake was checked against,
+ * even if a reload lands between the two.
+ */
 struct sls_inflight_t {
     std::string user;
     bool        publish;
@@ -232,6 +232,7 @@ private:
     // the real remote of an accepted front-door connection, as the callback
     // checked it; false: refuse it
     bool pinned_peer(int fd, const char *libsrt_ip, int libsrt_port, char *ip, size_t ip_len, int *port);
+    void pin_identity(int ns, const struct sockaddr_in &remote, const struct sockaddr *peeraddr);
 
     int  init_conf_app();
     // One accept and its admission: 1 = a socket came off the queue (admitted

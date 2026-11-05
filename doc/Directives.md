@@ -452,11 +452,17 @@ What changes with `srtla on;` in a server block:
   handshake (the peer echoed the handshake cookie, so it can receive). Caps: the
   connection cap (`worker_connections` x max(1, `worker_threads`)) in total and
   `max_connections_per_ip` per address, for each srtla block. At a cap, a new
-  handshake replaces, in this order: a mapping whose session libsrt ended, the
-  oldest half-open one, or one silent for 5 s. Only when every mapping is in
-  active use is it refused (`mapping cap reached`). A replaced mapping's socket
-  stays open, unused, for 6 s (at most as many as the cap), so its port is not
-  reused while libsrt may still hold a connection from it.
+  handshake replaces, in this order: a mapping whose session libsrt ended, a
+  half-open one picked at random, or one silent for 5 s. Only when every
+  mapping is in active use is it refused (`mapping cap reached`). A replaced
+  mapping's socket stays open, unused, for 6 s (at most as many as the cap), so
+  its port is not reused while libsrt may still hold a connection from it. A
+  peer's handshake is half-open for about one round trip: under a sustained
+  flood of spoofed handshakes (in the order of cap / RTT per second, e.g. 300
+  over 80 ms = some 4000 per second) a new connection may need several tries,
+  where libsrt alone answers such a flood statelessly. Established sessions are
+  never affected. A peer that reconnects from the same address and port after
+  its session ended reuses its mapping.
 - **Timeouts** (checked once a second): half-open 5 s; established with
   nothing from the peer 10 s (libsrt itself drops a silent peer after 5 s);
   2 s after libsrt sent a shutdown; 2 s after the peer sent one, unless the peer
@@ -464,12 +470,18 @@ What changes with `srtla on;` in a server block:
 - **Dropped packets.** Anything else from an unknown source is dropped and
   counted, never logged per packet: SRTLA packets (`dropped_srtla`; SRTLA support
   itself comes later) and the rest (`dropped_unknown`, e.g. data from a peer
-  whose NAT changed its port: SRT reconnects with a new handshake).
+  whose NAT changed its port: its session ends, and the encoder's reconnect
+  arrives as a new handshake; oversized datagrams count here too).
 - **Counters.** A DEBUG summary every 10 s when something moved, and at stop
   one INFO line: `front door stopped: port= mappings= created= expired=
   evicted= relayed_in= relayed_out= dropped_srtla= dropped_unknown= refused_cap=
   send_errors= local_errors=`. `local_errors` counts relay sockets that could not
   be opened (fd limit); they also log an ERROR at most every 10 s.
+
+File descriptors: each srtla block may use up to 2 x the connection cap (relay
+sockets plus quarantined ones) under a flood. With a front door sls raises its
+soft open file limit to the hard one at startup and logs a WARNING if it stays
+below 2 x the cap + 256; under systemd set `LimitNOFILE=` accordingly.
 
 Limits: IPv4 only. Replies leave from the address the kernel picks for the
 peer, so on a host with several addresses on one interface a peer may see

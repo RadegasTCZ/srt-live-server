@@ -158,7 +158,7 @@ SLS_TEST(peermap_outbound_does_not_keep_alive)
     SLS_CHECK_EQ(expire_n(m, 200 + SLS_FD_IDLE_MS + 1), 1);
 }
 
-SLS_TEST(peermap_evicts_oldest_halfopen)
+SLS_TEST(peermap_evicts_a_halfopen_one)
 {
     CSLSPeerMap m(3, 0);
     int ev = 0;
@@ -168,11 +168,9 @@ SLS_TEST(peermap_evicts_oldest_halfopen)
     SLS_CHECK_EQ(m.add(addr("6.6.6.1", 1), 11, 40011, 100), SLS_OK);   // half-open (older)
     SLS_CHECK_EQ(m.add(addr("6.6.6.2", 1), 12, 40012, 200), SLS_OK);   // half-open
     SLS_CHECK_EQ(m.add(addr("1.1.1.9", 1), 13, 40013, 1000, &ev), SLS_OK);
-    SLS_CHECK_EQ(ev, 11);
+    SLS_CHECK(ev == 11 || ev == 12);                                   // one of the half-open ones
     SLS_CHECK_EQ(m.size(), 3);
-    SLS_CHECK_EQ(m.fd_for_remote(addr("6.6.6.1", 1), 1000), -1);
     SLS_CHECK_EQ(m.fd_for_remote(addr("1.1.1.1", 1), 1000), 10);       // the live peer stays
-    SLS_CHECK_EQ(m.evictions(), 1);
 }
 
 SLS_TEST(peermap_evicts_quiet_established_never_active)
@@ -202,7 +200,7 @@ SLS_TEST(peermap_per_ip_eviction_stays_in_ip)
     SLS_CHECK_EQ(m.add(addr("2.2.2.2", 1), 11, 40011, 10), SLS_OK);
     SLS_CHECK_EQ(m.add(addr("2.2.2.2", 2), 12, 40012, 20), SLS_OK);
     SLS_CHECK_EQ(m.add(addr("2.2.2.2", 3), 13, 40013, 30, &ev), SLS_OK);
-    SLS_CHECK_EQ(ev, 11);
+    SLS_CHECK(ev == 11 || ev == 12);
     SLS_CHECK_EQ(m.count_for_ip(ip_of("2.2.2.2")), 2);
     SLS_CHECK_EQ(m.fd_for_remote(addr("6.6.6.6", 1), 40), 10);
 }
@@ -265,4 +263,41 @@ SLS_TEST(peermap_evicts_ended_sessions_first)
     SLS_CHECK_EQ(m.add(addr("2.2.2.2", 3), 12, 40012, 400, &ev), SLS_OK);
     SLS_CHECK_EQ(ev, 10);                                              // not the half-open one
     SLS_CHECK_EQ(m.fd_for_remote(addr("2.2.2.2", 2), 500), 11);
+}
+
+SLS_TEST(peermap_random_victim_spreads)
+{
+    // a flood keeps evicting: a given half-open entry is not always the one hit
+    CSLSPeerMap m(4, 0);
+    int hits[4] = {0, 0, 0, 0};
+    for (int round = 0; round < 400; round++) {
+        CSLSPeerMap mm(4, 0);
+        for (int i = 0; i < 4; i++) mm.add(addr("9.9.9.9", 100 + i), 10 + i, 40000 + i, i);
+        int ev = -1;
+        // a different instance each round still seeds the same way: vary the history
+        for (int k = 0; k < round % 7; k++) {
+            int e2 = -1;
+            mm.add(addr("8.8.8.8", 1000 + k), 100 + k, 41000 + k, 10 + k, &e2);
+        }
+        if (SLS_OK == mm.add(addr("7.7.7.7", 1), 99, 42000, 50, &ev) && ev >= 10 && ev < 14) hits[ev - 10]++;
+    }
+    int spread = 0;
+    for (int i = 0; i < 4; i++) if (hits[i] > 0) spread++;
+    SLS_CHECK(spread >= 3);
+    (void)m;
+}
+
+SLS_TEST(peermap_reconnect_after_shutdown)
+{
+    // a client on a fixed local port reconnects right after libsrt ended its session
+    CSLSPeerMap m(16, 0);
+    struct sockaddr_in r = addr("1.2.3.4", 5000);
+    SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
+    m.remote_for_fd(7, NULL, 50, true);
+    m.remote_for_fd(7, NULL, 1000, false, true);   // libsrt shut the old session down
+    SLS_CHECK_EQ(m.fd_for_remote(r, 1500, false, true), 7);   // a new handshake
+    m.remote_for_fd(7, NULL, 1600, true);          // the new session runs
+    m.fd_for_remote(r, 2500);
+    SLS_CHECK_EQ(expire_n(m, 3500), 0);           // the old shutdown no longer ends it
+    SLS_CHECK_EQ(m.size(), 1);
 }

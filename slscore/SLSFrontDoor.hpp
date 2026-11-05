@@ -54,8 +54,8 @@
  * listener maps a connection back to the real remote (peers()). Packets are
  * copied both ways. A mapping is created only for an SRT handshake; it is
  * half-open until libsrt answers it with more than a handshake (the peer can
- * receive), and at a cap a half-open or long-silent mapping makes room (see
- * CSLSPeerMap). SRTLA packets are recognised and dropped (stage 2), and
+ * receive), and at a cap an ended, a random half-open or a long-silent
+ * mapping makes room (see CSLSPeerMap). SRTLA packets are recognised and dropped (stage 2), and
  * anything else from an unknown source is dropped. Nothing is logged per
  * packet: there are counters, a DEBUG summary and an INFO line at stop.
  *
@@ -93,7 +93,7 @@ public:
     std::atomic<uint64_t> m_local_errors;    // no relay socket for a new peer (fd limit, ...)
     std::atomic<uint64_t> m_mappings_created;
     std::atomic<uint64_t> m_mappings_expired;
-    std::atomic<uint64_t> m_mappings_evicted;  // half-open or long-silent, to make room at a cap
+    std::atomic<uint64_t> m_mappings_evicted;  // ended, half-open or long-silent, to make room at a cap
 
 private:
     std::atomic<bool> m_failed;

@@ -744,6 +744,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     // did not map reached the loopback port directly: refused before it is
     // counted against anyone.
     struct sockaddr_in fd_remote;
+    memset(&fd_remote, 0, sizeof(fd_remote));
     if (!self->real_peer(peeraddr, peer_ip, sizeof(peer_ip), &peer_port, &fd_remote)) {
         // a local process on the internal port: its own budget, so a flood of
         // it cannot use up the lines that explain real refusals
@@ -759,13 +760,6 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         }
         srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
         return -1;
-    }
-    if (self->m_front_door_enabled) {
-        sls_fd_identity_t id;
-        id.ip_be = fd_remote.sin_addr.s_addr;
-        id.port = ntohs(fd_remote.sin_port);
-        id.local_port = ntohs(((const struct sockaddr_in *)peeraddr)->sin_port);
-        self->m_fd_identity.put(ns, id, sls_monotonic_ms());
     }
 
     // Every connection request counts, first: also the ones refused below.
@@ -867,6 +861,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         if (((sls_conf_server_t*)self->m_conf)->srt_passphrase[0] != 0) {
             sls_auth_throttle().note_handshake(ns, peer_ip, sls_monotonic_ms());
         }
+        self->pin_identity(ns, fd_remote, peeraddr);
         return 0;
     }
 
@@ -952,7 +947,22 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, %d handshakes in progress: dropped the oldest one's record.",
                 self, SLS_INFLIGHT_MAX);
     }
+    self->pin_identity(ns, fd_remote, peeraddr);
     return 0;
+}
+
+// srtla on: the remote this handshake was checked as, for accept_one (on
+// the success paths only, like m_inflight, so refusals take no room)
+void CSLSListener::pin_identity(int ns, const struct sockaddr_in &remote, const struct sockaddr *peeraddr)
+{
+    if (!m_front_door_enabled || NULL == peeraddr || AF_INET != peeraddr->sa_family) {
+        return;
+    }
+    sls_fd_identity_t id;
+    id.ip_be = remote.sin_addr.s_addr;
+    id.port = ntohs(remote.sin_port);
+    id.local_port = ntohs(((const struct sockaddr_in *)peeraddr)->sin_port);
+    m_fd_identity.put(ns, id, sls_monotonic_ms());
 }
 
 int CSLSListener::start()

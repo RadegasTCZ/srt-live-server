@@ -143,8 +143,8 @@ int CSLSFrontDoor::open_mapping(const struct sockaddr_in &remote, int64_t now_ms
         close(fd);
         return -1;
     }
-    // at a cap the map evicts a half-open (or long-silent) entry rather than
-    // refusing, so a flood of spoofed handshakes cannot keep real peers out
+    // at a cap the map evicts an ended, a random half-open or a long-silent
+    // entry rather than refusing (see CSLSPeerMap)
     int evicted = -1;
     if (SLS_OK != m_peers.add(remote, fd, ntohs(local.sin_port), now_ms, &evicted)) {
         close(fd);
@@ -183,9 +183,9 @@ void CSLSFrontDoor::on_public_readable(int64_t now_ms)
             continue;
         }
         bool shutdown = sls_fd_is_shutdown(buf, (int)len);
-        int fd = m_peers.fd_for_remote(from, now_ms, shutdown);
+        sls_fd_kind_t kind = sls_fd_classify(buf, (int)len);
+        int fd = m_peers.fd_for_remote(from, now_ms, shutdown, SLS_FD_SRT_HANDSHAKE == kind);
         if (fd < 0) {
-            sls_fd_kind_t kind = sls_fd_classify(buf, (int)len);
             if (SLS_FD_SRT_HANDSHAKE == kind) {
                 fd = open_mapping(from, now_ms);
                 if (fd < 0) {
@@ -252,7 +252,8 @@ void CSLSFrontDoor::expire(int64_t now_ms)
 {
     // Expired mappings are closed at once: idle past libsrt's own peer
     // timeout, or past an SRT shutdown, or a handshake libsrt never took
-    // further, so libsrt holds no connection from their ports.
+    // further, so libsrt holds no connection from their ports. (Evicted ones
+    // are quarantined whatever their state: an eviction does not wait for that.)
     release_quarantine(now_ms, false);
     std::vector<int> fds;
     m_peers.expire(now_ms, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
@@ -287,9 +288,15 @@ int CSLSFrontDoor::work()
         m_failed = true;
         return SLS_ERROR;
     }
-    sls_log(SLS_LOG_INFO, "[%p]CSLSFrontDoor, started: public port %d -> 127.0.0.1:%d, caps %d in total, %d per IP, "
+    char per_ip[32];
+    if (m_peers.max_per_ip() > 0) {
+        snprintf(per_ip, sizeof(per_ip), "%d", m_peers.max_per_ip());
+    } else {
+        snprintf(per_ip, sizeof(per_ip), "unlimited");
+    }
+    sls_log(SLS_LOG_INFO, "[%p]CSLSFrontDoor, started: public port %d -> 127.0.0.1:%d, caps %d in total, %s per IP, "
             "socket buffers rcv=%d snd=%d%s.",
-            this, m_public_port, m_internal_port, m_peers.max_total(), m_peers.max_per_ip(),
+            this, m_public_port, m_internal_port, m_peers.max_total(), per_ip,
             m_rcvbuf, m_sndbuf,
             (m_rcvbuf < SLS_FD_SOCKBUF || m_sndbuf < SLS_FD_SOCKBUF)
                 ? " (below the 4 MB asked for: raise net.core.rmem_max/wmem_max)" : "");
