@@ -1,0 +1,99 @@
+/**
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2019-2020 Edward.Wu
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of
+ * this software and associated documentation files (the "Software"), to deal in
+ * the Software without restriction, including without limitation the rights to
+ * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+ * the Software, and to permit persons to whom the Software is furnished to do so,
+ * subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+ * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+ * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+ * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+
+#ifndef _SLSPeerMap_INCLUDE_
+#define _SLSPeerMap_INCLUDE_
+
+#include <map>
+#include <vector>
+#include <stddef.h>
+#include <stdint.h>
+#include <netinet/in.h>
+
+#include "SLSLock.hpp"
+
+#define SLS_FD_HALFOPEN_MS   5000    // a mapping whose peer never sent a second packet
+#define SLS_FD_IDLE_MS       30000   // an established mapping with no traffic either way
+
+/**
+ * The front door's map of plain SRT peers: a remote address <-> the internal
+ * UDP socket (fd) that relays it to the loopback listener <-> that socket's
+ * local port (which is what libsrt reports as the peer).
+ *
+ * Thread-safe with one mutex, never held across a system call: the front
+ * door thread owns the fds and does all socket work outside the map;
+ * libsrt's thread only reads remote_for_local_port(). Times are monotonic ms
+ * passed in by the caller.
+ *
+ * A new entry is half-open until its remote sends a second packet (add()
+ * counts the first one), so a spoofed source that cannot receive replies
+ * holds a slot for at most the half-open time.
+ */
+class CSLSPeerMap
+{
+public:
+    CSLSPeerMap(int max_total, int max_per_ip);   // max_per_ip 0 = unlimited
+    ~CSLSPeerMap();
+
+    // SLS_ERROR when a cap is reached or the remote, fd or local port is already mapped
+    int  add(const struct sockaddr_in &remote, int fd, uint16_t local_port, int64_t now_ms);
+    // the fd for a packet from remote, or -1; counts the packet
+    int  fd_for_remote(const struct sockaddr_in &remote, int64_t now_ms);
+    // the remote a reply read from fd goes to; counts it as outbound traffic
+    bool remote_for_fd(int fd, struct sockaddr_in *remote, int64_t now_ms);
+    // identity: the real peer behind an internal socket's local port
+    bool remote_for_local_port(uint16_t local_port, struct sockaddr_in *remote) const;
+    // removes expired entries and appends their fds (the caller closes them)
+    void expire(int64_t now_ms, int halfopen_ms, int idle_ms, std::vector<int> *expired_fds);
+    void remove_fd(int fd);
+    void all_fds(std::vector<int> *fds) const;
+
+    size_t size() const;
+    int    count_for_ip(uint32_t ip_be) const;
+    int    max_total() const { return m_max_total; }
+    int    max_per_ip() const { return m_max_per_ip; }
+
+private:
+    struct entry {
+        struct sockaddr_in remote;
+        int      fd;
+        uint16_t local_port;
+        int64_t  created_ms;
+        int64_t  last_in_ms;
+        int64_t  last_out_ms;
+        bool     established;
+    };
+    static uint64_t key_of(const struct sockaddr_in &remote);
+    void erase_locked(std::map<uint64_t, entry>::iterator it);
+
+    int  m_max_total;
+    int  m_max_per_ip;
+    mutable CSLSMutex m_mutex;
+    std::map<uint64_t, entry>    m_by_remote;
+    std::map<int, uint64_t>      m_by_fd;
+    std::map<uint16_t, uint64_t> m_by_local_port;
+    std::map<uint32_t, int>      m_per_ip;
+};
+
+#endif
