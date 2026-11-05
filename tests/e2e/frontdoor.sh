@@ -219,6 +219,28 @@ case_internal_port_direct(){
     fi
 }
 
+# --- publishers sending the largest SRT live payload (1456 bytes) -----------
+case_large_payload_1456(){
+    write_conf; start_sls
+    # srt-live-transmit's default chunk is 1456: TS packets straddle SRT messages
+    ( nice ffmpeg -nostdin -loglevel error -re -f lavfi -i testsrc=size=320x180:rate=15 -t 20 \
+        -c:v libx264 -preset ultrafast -g 15 -f mpegts - 2>/dev/null \
+      | srt-live-transmit -q -chunk 1456 file://con \
+        "srt://127.0.0.1:$PORT?streamid=uplive.x/live/s1&passphrase=$(key s1 2)" > /dev/null 2>&1 ) &
+    PUBPID=$!
+    nap 4
+    local b=$(play big.ts "srt://127.0.0.1:$PORT?streamid=live.x/live/s1&passphrase=$(key s1 3)" 5)
+    unpublish_tree; nap 1; stop_sls
+    local trunc=$(awk '/small dst buffer/' out.log | wc -l)
+    local errs=$(ffprobe -v error -i big.ts -f null - 2>&1 | wc -l)
+    local codecs=$(ffprobe -v error -show_entries stream=codec_name -of csv=p=0 big.ts 2>/dev/null | sort -u | tr '\n' ' ')
+    if [ "$b" -ge 50000 ] && [ "$trunc" = 0 ] && [ -n "$codecs" ] && [ "$(asan_reports)" = 0 ]; then
+        pass large_payload_1456 "$b bytes, $codecs, truncation warnings 0, ffprobe error lines $errs"
+    else
+        fail large_payload_1456 "$b bytes, codecs='$codecs', truncation warnings $trunc, ffprobe error lines $errs, asan=$(asan_reports)"
+    fi
+}
+
 CASES=${*:-$(declare -F | awk '{print $3}' | awk '/^case_/' | sed 's/^case_//')}
 for c in $CASES; do
     "case_$c"
