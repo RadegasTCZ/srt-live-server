@@ -198,8 +198,14 @@ int CSLSPusherManager::do_reconnect(int64_t cur_tm_ms)
 	// the publisher may come back before that pusher ends, and a re-publish
 	// carries on the live push without a new entry. When the last pusher ends
 	// without a publisher the manager retires, and reconnect() drops the entry.
+	// This runs every worker tick: wait without trying (and logging) a retire
+	// that would be refused.
 	if (!has_publisher()) {
-		return retire_locked("publisher gone") ? SLS_OK : SLS_ERROR;
+		if (m_live_relays > 0) {
+			return SLS_ERROR;
+		}
+		retire_locked("publisher gone");
+		return SLS_OK;
 	}
 
     if (SLS_OK != check_relay_param()) {
