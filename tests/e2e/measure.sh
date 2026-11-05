@@ -65,6 +65,14 @@ R1=$(run off); echo "$R1"
 R2=$(run on);  echo "$R2"
 c1=$(echo "$R1" | sed 's/.*cpu=\([0-9.]*\).*/\1/'); c2=$(echo "$R2" | sed 's/.*cpu=\([0-9.]*\).*/\1/')
 t1=$(echo "$R1" | sed 's/.*samples=\([0-9.]*\).*/\1/'); t2=$(echo "$R2" | sed 's/.*samples=\([0-9.]*\).*/\1/')
+# no verdict from a run that did not measure: every player connected, RTT samples in both
+for R in "$R1" "$R2"; do
+    np=$(echo "$R" | sed 's/.*players=\([0-9]*\).*/\1/'); ns=$(echo "$R" | awk '{print $NF}')
+    case "$R" in *samples=nan*) ns=0;; esac
+    if [ "$np" != 10 ] || ! [ "${ns:-0}" -gt 0 ] 2>/dev/null; then
+        echo "INVALID RUN ($R): need 10 players and RTT samples in both modes"; exit 2
+    fi
+done
 awk -v c1="$c1" -v c2="$c2" -v t1="$t1" -v t2="$t2" 'BEGIN{
     ratio = (c1 > 0) ? c2 / c1 : 0; d = t2 - t1; if (d < 0) d = -d;
     ok = (c2 <= 2 * c1 && d < 1.0);

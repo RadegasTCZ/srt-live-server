@@ -181,7 +181,10 @@ if [ "$MODE" = on ]; then
   say "=== spoof_flood: 10k handshakes from 1000 spoofed 127.0.x.y sources at X"
   # RSS is measured on the release build (ASAN's allocator quarantine keeps
   # freed memory resident); the ASAN build runs the same flood for errors
-  for FLOOD_BIN in ${SLS_REL_BIN:-$REPO/bin/sls} $SLS_BIN; do
+  REL=${SLS_REL_BIN:-$REPO/bin/sls}
+  stale=$(find "$REPO/slscore" "$REPO/srt-live-server.cpp" -newer "$REL" -name '*.[ch]pp' 2>/dev/null | head -1)
+  check release_binary_fresh $([ -x "$REL" ] && [ -z "$stale" ]; echo $?) "$REL${stale:+ is older than $stale}"
+  for FLOOD_BIN in $REL $SLS_BIN; do
   SLS_BIN_SAVED=$SLS_BIN; SLS_BIN=$FLOOD_BIN
   start X; XP=$(cat $T/X/sls.pid)
   SLS_BIN=$SLS_BIN_SAVED
@@ -211,8 +214,10 @@ EOF
   unpublish; nap 1
   STOPPED_ASAN=0; stop X
   sl=$(awk '/front door stopped/' $T/X/out.log | sed 's/.*front door stopped: //')
-  # the cap is 300 mappings plus at most 300 quarantined (evicted) sockets
-  check spoof_flood_capped $([ $((fd1 - fd0)) -le 610 ]; echo $?) "relay sockets $fd0 -> $fd1 (cap 300 + quarantine 300)"
+  # the cap is 300 mappings plus at most 300 quarantined (evicted) sockets;
+  # and the flood must really have hit it (evictions)
+  ev=$(echo "$sl" | sed -n 's/.* evicted=\([0-9]*\).*/\1/p')
+  check spoof_flood_capped $([ $((fd1 - fd0)) -le 610 ] && [ $((fd1 - fd0)) -ge 300 ] && [ "${ev:-0}" -gt 0 ]; echo $?) "relay sockets $fd0 -> $fd1 (cap 300 + quarantine 300), evicted=$ev"
   check spoof_flood_drained $([ $((fd2 - fd0)) -le 4 ]; echo $?) "relay sockets 8.5 s after the flood: $fd2"
   check spoof_flood_still_serves $(ge $b 50000) "play after the flood $b bytes; $sl"
   if [ "$FLOOD_BIN" = "$SLS_BIN" ]; then
@@ -221,6 +226,37 @@ EOF
     check spoof_flood_rss $([ $((rss1 - rss0)) -lt 5120 ] && [ $((rss2 - rss0)) -lt 5120 ]; echo $?) "release RSS kB $rss0 -> $rss1 -> $rss2"
   fi
   done
+
+  say "=== connect_during_flood: ~4000 spoofed handshakes/s for 12 s while a player connects"
+  start X
+  publish s1 40; nap 4
+  python3 -I - > $R/flood2.txt <<'PYEOF' &
+import socket, os, time
+socks = []
+for i in range(1000):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.%d.%d" % (20 + i // 250, 1 + i % 250), 0))
+    socks.append(s)
+hs = bytes.fromhex("8000") + os.urandom(62)
+end = time.time() + 12
+sent = 0
+i = 0
+while time.time() < end:
+    t0 = time.time()
+    for _ in range(400):
+        socks[i % 1000].sendto(hs, ("127.0.0.1", 8090))
+        i += 1
+        sent += 1
+    time.sleep(max(0, 0.1 - (time.time() - t0)))
+print("sent", sent)
+PYEOF
+  FL=$!
+  nap 2
+  b=$(play during-flood "srt://127.0.0.1:8090?streamid=live.x/live/s1&passphrase=$(key s1 3)" 8)
+  wait $FL; unpublish; nap 1
+  STOPPED_ASAN=0; stop X
+  sl=$(awk '/front door stopped/' $T/X/out.log | sed 's/.*front door stopped: //')
+  check connect_during_flood $([ "$b" -ge 30000 ] && [ "$STOPPED_ASAN" = 0 ]; echo $?) "player got $b bytes during the flood ($(cat $R/flood2.txt)); $sl"
 
   say "=== two_blocks: 8090 srtla on + 8091 off in one sls"
   mkdir -p TB/logs TB/asan
