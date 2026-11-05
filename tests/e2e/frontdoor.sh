@@ -139,6 +139,86 @@ case_frontdoor_srtla_dropped(){
     fi
 }
 
+# --- Task 5: real identity ---------------------------------------------------
+publish_from(){ # stream secs src_ip   (ffmpeg -> srt-live-transmit bound to src_ip)
+    ( nice ffmpeg -nostdin -loglevel error -re -f lavfi -i testsrc=size=320x180:rate=15 -t "$2" \
+        -c:v libx264 -preset ultrafast -g 15 -f mpegts - 2>/dev/null \
+      | srt-live-transmit -q file://con \
+        "srt://127.0.0.1:$PORT?streamid=uplive.x/live/$1&passphrase=$(key $1 2)&mode=caller&adapter=$3" > /dev/null 2>&1 ) &
+    PUBPID=$!
+}
+unpublish_tree(){ [ -n "$PUBPID" ] && { pkill -P "$PUBPID" 2>/dev/null; kill "$PUBPID" 2>/dev/null; wait "$PUBPID" 2>/dev/null; }; PUBPID=; }
+SINK_PID=
+start_sink(){ # port -> POST bodies appended to stats.jsonl
+    rm -f stats.jsonl
+    python3 -I - "$1" "$WORK/stats.jsonl" > sink.log 2>&1 <<'EOF2' &
+import http.server, sys
+port, out = int(sys.argv[1]), sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(n)
+        with open(out, 'ab') as f:
+            f.write(body.replace(b'\n', b' ') + b'\n')
+        self.send_response(200); self.send_header('Content-Length', '0'); self.end_headers()
+    def log_message(self, *a): pass
+http.server.HTTPServer(('127.0.0.1', port), H).serve_forever()
+EOF2
+    SINK_PID=$!
+    nap 0.5
+}
+stop_sink(){ [ -n "$SINK_PID" ] && { kill "$SINK_PID" 2>/dev/null; wait "$SINK_PID" 2>/dev/null; }; SINK_PID=; }
+
+case_frontdoor_real_ip_logged(){
+    start_sink 18601
+    STAT_URL=http://127.0.0.1:18601/sls/stat write_conf; start_sls
+    publish_from s1 20 127.0.0.2; nap 4
+    local b=$(play play3.ts "srt://127.0.0.1:$PORT?streamid=live.x/live/s1&passphrase=$(key s1 3)&mode=caller&adapter=127.0.0.4" 3)
+    nap 1.5
+    unpublish_tree; nap 1; stop_sls; stop_sink
+    local pub=$(awk '/session start, publisher/{match($0,/remote=[^,]*/); print substr($0,RSTART+7,RLENGTH-7); exit}' out.log)
+    local ply=$(awk '/session start, player/{match($0,/remote=[^,]*/); print substr($0,RSTART+7,RLENGTH-7); exit}' out.log)
+    local stat_pub=$(awk '/"role":"publisher"|"role": "publisher"|publisher/' stats.jsonl 2>/dev/null | awk '/127\.0\.0\.2/' | wc -l)
+    local stat_lo=$(awk '/remote_ip"[: ]*"127\.0\.0\.1"/' stats.jsonl 2>/dev/null | wc -l)
+    if [ "${pub%%:*}" = 127.0.0.2 ] && [ "${ply%%:*}" = 127.0.0.4 ] && [ "$b" -ge 30000 ] \
+       && [ "$stat_pub" -ge 1 ] && [ "$stat_lo" = 0 ] && [ "$(asan_reports)" = 0 ]; then
+        pass frontdoor_real_ip_logged "publisher remote=$pub, player remote=$ply, stats lines with 127.0.0.2: $stat_pub, with 127.0.0.1: 0"
+    else
+        fail frontdoor_real_ip_logged "pub=$pub ply=$ply play=$b stats(127.0.0.2)=$stat_pub stats(127.0.0.1)=$stat_lo asan=$(asan_reports)"
+    fi
+}
+
+case_frontdoor_lockout_real_ip(){
+    write_conf; start_sls
+    publish_from s1 30 127.0.0.2; nap 3
+    # srt-live-transmit retries a refused connection in a loop: 4 s of a wrong key is well over 5 tries
+    play bad.ts "srt://127.0.0.1:$PORT?streamid=live.x/live/s1&passphrase=wrongwrongwrong&mode=caller&adapter=127.0.0.5" 4 > /dev/null
+    nap 0.5
+    local again=$(play bad2.ts "srt://127.0.0.1:$PORT?streamid=live.x/live/s1&passphrase=$(key s1 3)&mode=caller&adapter=127.0.0.5" 3)
+    local other=$(play ok.ts "srt://127.0.0.1:$PORT?streamid=live.x/live/s1&passphrase=$(key s1 3)&mode=caller&adapter=127.0.0.3" 4)
+    unpublish_tree; nap 1; stop_sls
+    local locked=$(awk '/too many wrong passphrases/ && /\[127\.0\.0\.5:/' out.log | wc -l)
+    local locked_lo=$(awk '/too many wrong passphrases/ && /\[127\.0\.0\.1:/' out.log | wc -l)
+    if [ "$locked" -ge 1 ] && [ "$locked_lo" = 0 ] && [ "$again" = 0 ] && [ "$other" -ge 30000 ] && [ "$(asan_reports)" = 0 ]; then
+        pass frontdoor_lockout_real_ip "127.0.0.5 locked out ($locked lines; right key then refused), 127.0.0.3 played $other bytes"
+    else
+        fail frontdoor_lockout_real_ip "locked(.5)=$locked locked(.1)=$locked_lo right-key-after=$again other=$other asan=$(asan_reports)"
+    fi
+}
+
+case_internal_port_direct(){
+    write_conf; start_sls
+    publish_from s1 20 127.0.0.2; nap 3
+    local b=$(play direct.ts "srt://127.0.0.1:$INTERNAL?streamid=live.x/live/s1&passphrase=$(key s1 3)" 3)
+    unpublish_tree; nap 1; stop_sls
+    local refused=$(awk '/not through the front door/' out.log | wc -l)
+    if [ -n "$INTERNAL" ] && [ "$b" = 0 ] && [ "$refused" -ge 1 ] && [ "$(asan_reports)" = 0 ]; then
+        pass internal_port_direct "127.0.0.1:$INTERNAL refused ($refused lines)"
+    else
+        fail internal_port_direct "internal=$INTERNAL bytes=$b refused_lines=$refused asan=$(asan_reports)"
+    fi
+}
+
 CASES=${*:-$(declare -F | awk '{print $3}' | awk '/^case_/' | sed 's/^case_//')}
 for c in $CASES; do
     "case_$c"

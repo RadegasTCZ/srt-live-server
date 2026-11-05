@@ -131,6 +131,9 @@ public :
 
     int  libsrt_getsockstate();
     int  libsrt_getpeeraddr(char * peer_name, int& port);
+    // overrides the cached peer address (the front door's real remote for a
+    // connection libsrt sees as coming from 127.0.0.1)
+    void libsrt_set_peeraddr(const char *peer_name, int port);
 
     void libsrt_set_latency(int latency);
     // bind address for libsrt_setup (empty = any); the front door uses 127.0.0.1

@@ -636,6 +636,29 @@ static void sls_peer_of(const struct sockaddr *sa, char *ip, size_t ip_len, int 
     }
 }
 
+bool CSLSListener::real_peer(const struct sockaddr *sa, char *ip, size_t ip_len, int *port) const
+{
+    sls_peer_of(sa, ip, ip_len, port);
+    if (!m_front_door_enabled) {
+        return true;
+    }
+    // libsrt's peer is the front door's internal socket: 127.0.0.1:<its local port>
+    if (NULL == m_front_door || NULL == sa || AF_INET != sa->sa_family) {
+        return false;
+    }
+    const struct sockaddr_in *a = (const struct sockaddr_in *)sa;
+    if (htonl(INADDR_LOOPBACK) != a->sin_addr.s_addr) {
+        return false;
+    }
+    struct sockaddr_in remote;
+    if (!m_front_door->peers().remote_for_local_port(ntohs(a->sin_port), &remote)) {
+        return false;   // the map lookup only takes its mutex: no system call under it
+    }
+    inet_ntop(AF_INET, &remote.sin_addr, ip, ip_len);
+    *port = ntohs(remote.sin_port);
+    return true;
+}
+
 namespace {
 // Room for any SRT passphrase (at most 79 characters) and the dummy one, so
 // filling pass_value never reallocates (a freed buffer is not wiped).
@@ -681,7 +704,15 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     CSLSListener *self = static_cast<CSLSListener*>(opaq);
     char peer_ip[IP_MAX_LEN];
     int  peer_port = 0;
-    sls_peer_of(peeraddr, peer_ip, sizeof(peer_ip), &peer_port);
+    // With the front door, every limit below sees the real remote. A peer it
+    // did not map reached the loopback port directly: refused before it is
+    // counted against anyone.
+    if (!self->real_peer(peeraddr, peer_ip, sizeof(peer_ip), &peer_port)) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: not through the front door.",
+                self, peer_ip, peer_port);
+        srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
+        return -1;
+    }
 
     // Every connection request counts, first: also the ones refused below.
     if (NULL != self->m_admission_limiter &&
@@ -1117,6 +1148,23 @@ int CSLSListener::accept_one()
         srt->libsrt_close();
         delete srt;
         return client_count;
+    }
+    if (m_front_door_enabled) {
+        // the role, its logs, stats, webhook and slot all use the real remote
+        struct sockaddr_in in;
+        memset(&in, 0, sizeof(in));
+        in.sin_family = AF_INET;
+        in.sin_port = htons(peer_port);
+        if (1 != inet_pton(AF_INET, peer_name, &in.sin_addr)
+                || !real_peer((const struct sockaddr *)&in, peer_name, sizeof(peer_name), &peer_port)) {
+            // its mapping expired between the handshake and this accept
+            sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d], fd=%d: not through the front door.",
+                    this, peer_name, peer_port, srt->libsrt_get_fd());
+            srt->libsrt_close();
+            delete srt;
+            return client_count;
+        }
+        srt->libsrt_set_peeraddr(peer_name, peer_port);
     }
 
     // The admission slot is taken once the role is known (players may not

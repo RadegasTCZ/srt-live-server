@@ -574,6 +574,12 @@ int  CSLSSrt::libsrt_getsockstate()
 }
 
 
+void CSLSSrt::libsrt_set_peeraddr(const char *peer_name, int port)
+{
+    snprintf(m_peer_name, sizeof(m_peer_name), "%s", peer_name ? peer_name : "");
+    m_peer_port = port;
+}
+
 int CSLSSrt::libsrt_getpeeraddr(char * peer_name, int& port)
 {
     int ret = SLS_ERROR;

@@ -169,6 +169,11 @@ public :
     // srtla on: this block's front door (owned here; the manager starts its
     // thread and stops it before any listener is torn down). NULL when off.
     CSLSFrontDoor *front_door() const { return m_front_door; }
+    // The peer as SLS logs and limits it: the address libsrt reports, or with
+    // the front door the real remote behind its internal socket. false: the
+    // front door has no such mapping (a local process connected to the
+    // internal port directly); ip/port are then the address libsrt reported.
+    bool real_peer(const struct sockaddr *sa, char *ip, size_t ip_len, int *port) const;
     // the front door's mapping caps (from the srt block), set before start()
     void set_front_door_caps(int max_total, int max_per_ip) { m_fd_max_total = max_total; m_fd_max_per_ip = max_per_ip; }
 
