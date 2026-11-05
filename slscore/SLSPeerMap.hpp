@@ -51,8 +51,10 @@
  * Spoofing: a remote's source address proves nothing, so an entry is
  * half-open until libsrt sends it a non-handshake packet (it only does so
  * after the handshake cookie came back, i.e. the remote can receive). At a
- * cap, add() evicts the oldest half-open entry (or one established but
- * silent for SLS_FD_QUIET_MS) of that scope instead of refusing, so a
+ * cap, add() evicts, in this order, an entry whose session libsrt ended,
+ * the oldest half-open one, or one established but silent for
+ * SLS_FD_QUIET_MS, of that scope instead of refusing (a client retrying in
+ * a loop leaves ended sessions that must not hold its slots), so a
  * handshake flood cannot keep a real peer out. A shutdown from the remote
  * side is undone by any later packet from it (a forged one cannot end a
  * live session); one from libsrt's side is final. Idle time counts packets

@@ -45,13 +45,18 @@ uint64_t CSLSPeerMap::key_of(const struct sockaddr_in &remote)
 
 CSLSPeerMap::by_remote_t::iterator CSLSPeerMap::victim_locked(bool ip_only, uint32_t ip, int64_t now_ms)
 {
-    by_remote_t::iterator half = m_by_remote.end(), quiet = m_by_remote.end();
+    by_remote_t::iterator ended = m_by_remote.end(), half = m_by_remote.end(), quiet = m_by_remote.end();
     for (by_remote_t::iterator it = m_by_remote.begin(); it != m_by_remote.end(); ++it) {
         const entry &e = it->second;
         if (ip_only && e.remote.sin_addr.s_addr != ip) {
             continue;
         }
-        if (!e.established) {
+        if (e.closing_ms > 0) {
+            // libsrt ended its session: only its last packets are left to relay
+            if (ended == m_by_remote.end() || e.closing_ms < ended->second.closing_ms) {
+                ended = it;
+            }
+        } else if (!e.established) {
             if (half == m_by_remote.end() || e.created_ms < half->second.created_ms) {
                 half = it;
             }
@@ -60,6 +65,9 @@ CSLSPeerMap::by_remote_t::iterator CSLSPeerMap::victim_locked(bool ip_only, uint
                 quiet = it;
             }
         }
+    }
+    if (ended != m_by_remote.end()) {
+        return ended;
     }
     return half != m_by_remote.end() ? half : quiet;
 }

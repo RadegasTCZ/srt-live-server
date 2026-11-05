@@ -251,3 +251,18 @@ SLS_TEST(peermap_remove_fd)
     m.remove_fd(7);   // twice is harmless
     SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
 }
+
+SLS_TEST(peermap_evicts_ended_sessions_first)
+{
+    // a client retrying in a loop: each try is established, then refused and shut down by libsrt
+    CSLSPeerMap m(16, 2);
+    int ev = 0;
+    SLS_CHECK_EQ(m.add(addr("2.2.2.2", 1), 10, 40010, 0), SLS_OK);
+    SLS_CHECK_EQ(m.add(addr("2.2.2.2", 2), 11, 40011, 100), SLS_OK);   // half-open, newer
+    m.remote_for_fd(10, NULL, 50, true);
+    m.fd_for_remote(addr("2.2.2.2", 1), 200);
+    m.remote_for_fd(10, NULL, 300, false, true);                       // libsrt shut it down
+    SLS_CHECK_EQ(m.add(addr("2.2.2.2", 3), 12, 40012, 400, &ev), SLS_OK);
+    SLS_CHECK_EQ(ev, 10);                                              // not the half-open one
+    SLS_CHECK_EQ(m.fd_for_remote(addr("2.2.2.2", 2), 500), 11);
+}
