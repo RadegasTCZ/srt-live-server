@@ -86,6 +86,7 @@ private:
     void  adopt_close_client(CSLSRole *role);
     // a role leaves this worker: let a relay's manager decide on reconnect
     void  relay_ended(CSLSRole *role);
+    void  relay_adopted(CSLSRole *role);
 
     int           m_worker_connections;
     int           m_worker_number;

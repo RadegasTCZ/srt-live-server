@@ -165,6 +165,15 @@ bool CSLSPusherManager::has_publisher()
 	return NULL != m_map_publisher->get_publisher(key_stream_name);
 }
 
+bool CSLSPusherManager::has_reconnect_work()
+{
+	if (NULL == m_sri || SLS_PM_ALL != m_sri->m_mode) {
+		return false;   // hash: one upstream, retried by the entry its end hands out
+	}
+	CSLSLock lock(&m_rwclock, false);
+	return !m_map_reconnect_relay.empty();
+}
+
 bool CSLSPusherManager::do_on_relay_closed(CSLSRelay *relay)
 {
 	if (!has_publisher()) {

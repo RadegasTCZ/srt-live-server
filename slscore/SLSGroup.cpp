@@ -128,6 +128,7 @@ void CSLSGroup::check_new_role() {
         // answer every tick, and a failure closes it. No-op for roles without
         // on_event_url (listener, pullers, pushers).
         role->on_connect();
+        relay_adopted(role);
         if (!role->hook_pending()) {
             role->session_start();     // no hook: admitted once a worker owns it
         }
@@ -309,6 +310,24 @@ void CSLSGroup::check_reconnect_relay()
 		m_list_reconnect_relay_manager.erase(it_erase);
 		relay_manager->release();   // this entry's reference
     }
+}
+
+// A push whose start reached only some upstreams gets its reconnect entry
+// here, from the worker that owns its first pusher (the publisher's thread
+// has no reconnect list).
+void CSLSGroup::relay_adopted(CSLSRole *role)
+{
+	if (!role->is_reconnect()) {
+		return;
+	}
+	CSLSRelay * relay = (CSLSRelay *)role;
+	CSLSRelayManager * relay_manager = (CSLSRelayManager *)relay->get_relay_manager();
+	if (NULL != relay_manager && relay_manager->relay_adopted()) {
+		relay_manager->add_ref();   // held by the reconnect-list entry
+		m_list_reconnect_relay_manager.push_back(relay_manager);
+		sls_log(SLS_LOG_DEBUG, "[%p]CSLSGroup::relay_adopted, worker_number=%d, %s=%p, upstreams to retry.",
+			  this, m_worker_number, role->get_role_name(), role);
+	}
 }
 
 void CSLSGroup::relay_ended(CSLSRole *role)

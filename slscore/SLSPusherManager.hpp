@@ -49,6 +49,8 @@ protected:
     // under m_mutex: a pusher ended; with the publisher gone the manager
     // retires instead of waiting to reconnect (S3)
     virtual bool do_on_relay_closed(CSLSRelay *relay);
+    // mode all: some upstreams wait in m_map_reconnect_relay
+    virtual bool has_reconnect_work();
 
 private:
     int connect_all();

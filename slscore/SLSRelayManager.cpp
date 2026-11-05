@@ -188,6 +188,16 @@ bool CSLSRelayManager::relay_ended(CSLSRelay *relay, bool may_reconnect)
 	return false;
 }
 
+bool CSLSRelayManager::relay_adopted()
+{
+	CSLSLock lock(&m_mutex);
+	if (m_retired || m_reconnect_pending || !has_reconnect_work()) {
+		return false;
+	}
+	m_reconnect_pending = true;   // the caller's reconnect entry
+	return true;
+}
+
 bool CSLSRelayManager::is_retired()
 {
 	CSLSLock lock(&m_mutex);

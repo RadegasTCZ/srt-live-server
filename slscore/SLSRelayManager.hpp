@@ -143,6 +143,13 @@ public :
     // one (relay torn down outside a worker) a pull manager left with no
     // live relay retires on the spot.
     bool relay_ended(CSLSRelay *relay, bool may_reconnect);
+    // A worker adopted one of this manager's relays. true (once) when the
+    // manager has upstreams waiting to be retried that no reconnect entry
+    // covers: the worker must put the manager on its list (with its own
+    // reference). That is a push in mode all whose start reached some
+    // upstreams but not all; without an entry the others would be retried
+    // only once a live pusher ended.
+    bool relay_adopted();
     // A request's start() failed (a player's pull, a publisher's push).
     // created: that same request made this manager. A manager someone else
     // made may be WAITING with players attached that depend on its reconnect
@@ -170,6 +177,8 @@ protected:
     virtual bool retires_when_idle() { return false; }
     // under m_mutex: a player is attached to this manager's stream (pull)
     virtual bool has_readers() { return false; }
+    // under m_mutex: upstreams wait to be retried (push, mode all)
+    virtual bool has_reconnect_work() { return false; }
 
     virtual int  do_start() = 0;
     virtual int  do_reconnect(int64_t cur_tm_ms) = 0;
@@ -186,7 +195,8 @@ protected:
     bool                 m_retired;
     std::atomic<int>     m_refs;
     int                  m_live_relays;      // guarded by m_mutex
-    // guarded by m_mutex: a reconnect entry holds it (WAITING). A bool is enough:
+    // guarded by m_mutex: a reconnect entry holds it (WAITING; for a push, also
+    // set by relay_adopted() while pushers are live). A bool is enough for a pull:
     // relay_ended() sets it only when do_on_relay_closed() hands out an entry, and
     // a pull manager has at most one live puller (a second start fails on the
     // existing publisher entry of the stream, CSLSPullerManager::do_start), so it
