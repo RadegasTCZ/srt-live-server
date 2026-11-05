@@ -352,6 +352,7 @@ connection; with it, when the hook answers 200. A refused connection (hook
 answer other than 200, no answer, refused at accept) logs neither line. The
 reason is `peer disconnected` (the peer closed the connection or stopped
 answering: libsrt reports both the same way), `idle timeout (no data)`,
+`idle timeout (no players)` (a pull closed because no player was left),
 `shutdown`, `error` or `closed`. The per-session bookkeeping lines
 (map add/remove, epoll, socket close, reader resync, pull manager and relay
 open/close) are DEBUG. An unexpected libsrt error caused by a peer (a failed

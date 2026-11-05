@@ -87,7 +87,7 @@ int CSLSPuller::handler()
 	        sls_log(SLS_LOG_INFO, "[%p]CSLSPuller::handler, no reader for m_idle_streams_timeout=%ds, close puller (no reconnect).",
 	        		this, m_idle_streams_timeout);
 			m_closed_for_idle = true;
-			set_end_reason("idle timeout (no data)");     // a clean end: the upstream answered
+			set_end_reason("idle timeout (no players)");  // a clean end: the upstream answered
 			m_state = SLS_RS_INVALID;
 			invalid_srt();
 	        return SLS_ERROR;

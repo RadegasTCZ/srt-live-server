@@ -140,7 +140,8 @@ check your config and tooling before you restart.
   same line) and a URL containing a space are config errors; they used to be
   swallowed into the first directive's value.
 - **Session end reason.** `reason=` is `peer disconnected`, `idle timeout (no
-  data)`, `shutdown`, `error` or `closed`, taken from the socket state;
+  data)`, `idle timeout (no players)` (a pull with no player left, since 1.5.5),
+  `shutdown`, `error` or `closed`, taken from the socket state;
   `clean disconnect` and `idle timeout (peer silent)` are gone (libsrt reports both
   as one broken state, and the old lines read a stale error code).
 - **Idle timeout default.** An omitted `idle_streams_timeout` is `10` seconds, in a
