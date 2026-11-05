@@ -405,6 +405,26 @@ accepted connection can be queued while the workers are full; past this
 timeout it is closed and `CSLSRoleList::expire, expired queued <role>` is
 logged.
 
+## srtla (server block)
+
+`srtla on;` or `srtla off;` (default off; `true`/`false` work too, as for every
+on/off directive). With it on, sls itself owns the block's public UDP port
+(the front door) and relays plain SRT to the block's libsrt listener, which
+binds an ephemeral port on `127.0.0.1` only. Startup logs
+`front door: public port <listen>, internal 127.0.0.1:<port>`. Players and
+publishers keep using `<host>:<listen>` unchanged. Off (or absent), libsrt binds
+the public port exactly as before and none of the front door code runs. The
+front door is the basis for receiving SRTLA (bonded links) on the same port;
+see "Front door (srtla on)" below.
+
+## srt_lossmaxttl (server block)
+
+Packets of reordering (0-1000, default 0 = off) libsrt tolerates on the
+listener before it reports a loss (`SRTO_LOSSMAXTTL`). Off by default: with
+in-order links a gap is a real loss and should be reported at once. A value
+above 0 only helps a sender whose packets arrive out of order (bonded links
+without a reordering receiver in front); it delays the NAK of a real loss.
+
 ## max_pull_streams (relay block), pull relay lifetime
 
 A pull relay is started by the first player asking for a stream that has no

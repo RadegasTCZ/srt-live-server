@@ -63,6 +63,8 @@ char             user_file[URL_MAX_LEN];
 int              admission_timeout;//unit ms
 int              on_event_timeout;//unit ms
 int              max_players_per_stream;//0: unlimited
+bool             srtla;//on: the front door owns the public port, libsrt listens on loopback
+int              srt_lossmaxttl;//SRTO_LOSSMAXTTL on the listener; 0: off
 SLS_CONF_DYNAMIC_DECLARE_END
 
 /**
@@ -82,6 +84,8 @@ SLS_SET_CONF(server, string, user_file,            "path to per-user passphrase 
 SLS_SET_CONF(server, int,    admission_timeout,    "ms an accepted connection may wait for a worker before it is closed (default 5000)", 100, 60000),
 SLS_SET_CONF(server, int,    on_event_timeout,     "ms the on_event_url hook may take to answer on_connect before the role is refused (default 2000)", 100, 30000),
 SLS_SET_CONF(server, int,    max_players_per_stream, "max concurrent players of one stream (default 0 = unlimited)", 0, 100000),
+SLS_SET_CONF(server, bool,   srtla,                "on: sls owns the public port (front door) and relays SRT to a loopback listener (default off)", 0, 1),
+SLS_SET_CONF(server, int,    srt_lossmaxttl,       "SRTO_LOSSMAXTTL on the listener: packets of reordering tolerated before a loss is reported (default 0 = off)", 0, 1000),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_ADMISSION_TIMEOUT 5000
@@ -96,6 +100,8 @@ inline void sls_conf_server_defaults(sls_conf_server_t *c)
     c->backlog = SLS_DEFAULT_BACKLOG;
     c->admission_timeout = SLS_DEFAULT_ADMISSION_TIMEOUT;
     c->on_event_timeout  = SLS_DEFAULT_ON_EVENT_TIMEOUT;
+    c->srtla = false;
+    c->srt_lossmaxttl = 0;
 }
 
 /**
@@ -153,6 +159,11 @@ public :
     // shared admission limiter (owned by CSLSManager); NULL = no caps
     void set_admission_limiter(CSLSConnLimiter *limiter);
 
+    // srtla on: libsrt listens on 127.0.0.1:internal_port() and the front door
+    // owns the public port m_port. Off: internal_port() is 0.
+    bool front_door_enabled() const { return m_front_door_enabled; }
+    int  internal_port() const { return m_internal_port; }
+
 
 private:
     CSLSRoleList      * m_list_role;
@@ -166,6 +177,8 @@ private:
     int                 m_idle_streams_timeout_role;
     int                 m_admission_timeout;   // ms, from the server block
     CSLSConnLimiter   * m_admission_limiter;
+    bool                m_front_door_enabled;
+    int                 m_internal_port;   // libsrt's loopback port in srtla mode, else 0
     int                 m_max_players_per_stream;   // 0 = unlimited
     char                m_http_url_role[URL_MAX_LEN];
     int                 m_on_event_timeout;    // ms

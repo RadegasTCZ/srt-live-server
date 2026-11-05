@@ -57,6 +57,7 @@ CSLSSrt::CSLSSrt()
 
     m_passphrase[0] = '\0';
     m_pbkeylen = 0;
+    m_lossmaxttl = 0;
 
 }
 CSLSSrt::~CSLSSrt()
@@ -273,6 +274,27 @@ void CSLSSrt::libsrt_set_latency(int latency)
     m_sc.latency = latency;
 }
 
+void CSLSSrt::libsrt_set_bind_host(const char *host)
+{
+    snprintf(m_sc.hostname, sizeof(m_sc.hostname), "%s", host ? host : "");
+}
+
+int CSLSSrt::libsrt_get_local_port()
+{
+    struct sockaddr_storage ss;
+    int len = sizeof(ss);
+    memset(&ss, 0, sizeof(ss));
+    if (srt_getsockname(m_sc.fd, (struct sockaddr *)&ss, &len) < 0 || ss.ss_family != AF_INET) {
+        return 0;
+    }
+    return ntohs(((struct sockaddr_in *)&ss)->sin_port);
+}
+
+void CSLSSrt::libsrt_set_lossmaxttl(int lossmaxttl)
+{
+    m_lossmaxttl = lossmaxttl;
+}
+
 void CSLSSrt::libsrt_set_passphrase(const char *passphrase, int pbkeylen)
 {
     if (passphrase && *passphrase) {
@@ -332,6 +354,15 @@ int CSLSSrt::libsrt_setup(int port)
     }
     if (s->send_buffer_size > 0) {
         srt_setsockopt(fd, SOL_SOCKET, SRTO_UDP_SNDBUF, &s->send_buffer_size, sizeof (s->send_buffer_size));
+    }
+    if (m_lossmaxttl > 0) {
+        if (srt_setsockopt(fd, 0, SRTO_LOSSMAXTTL, &m_lossmaxttl, sizeof(m_lossmaxttl)) < 0) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSSrt::libsrt_setup, setsockopt(SRTO_LOSSMAXTTL=%d) failed: %s.",
+                    this, m_lossmaxttl, srt_getlasterror_str());
+            srt_close(fd);
+            freeaddrinfo(ai);
+            return libsrt_neterrno();
+        }
     }
     if (s->reuse) {
         if (srt_setsockopt(fd, SOL_SOCKET, SRTO_REUSEADDR, &s->reuse, sizeof(s->reuse)))

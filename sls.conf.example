@@ -94,6 +94,13 @@ srt {
                                     # wait for a free worker slot before it is closed.
         max_players_per_stream 100; # concurrent players of one stream (default 0 = unlimited).
 
+        # Front door (default off): sls owns this port itself and relays SRT to a
+        # libsrt listener on 127.0.0.1, the basis for SRTLA (bonded links) on
+        # the same port. Clients use the same URL either way. See doc/Directives.md.
+        #srtla on;
+        #srt_lossmaxttl 0;          # SRTO_LOSSMAXTTL (0-1000, default 0 = off): reordering
+                                    # tolerated before a loss is reported.
+
         # Optional: GET connect/disconnect events to a webhook (see doc/Directives.md).
         #on_event_url http://127.0.0.1:8000/sls/on_event;
         #   query string: ?on_event=on_connect|on_close&role_name=...&srt_url=...&remote_ip=...&remote_port=...

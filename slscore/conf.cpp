@@ -141,10 +141,10 @@ const char * sls_conf_set_bool(const char *v, sls_conf_cmd_t *cmd, void *conf)
 
     np = (bool *) (p + cmd->offset);
 
-    if (0 == strcmp(v, "true")) {
+    if (0 == strcmp(v, "true") || 0 == strcmp(v, "on")) {
         *np = true;
         return SLS_CONF_OK;
-    } else if (0 == strcmp(v, "false")) {
+    } else if (0 == strcmp(v, "false") || 0 == strcmp(v, "off")) {
         *np = false;
         return SLS_CONF_OK;
     } else {

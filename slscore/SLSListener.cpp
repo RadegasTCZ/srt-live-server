@@ -62,6 +62,8 @@ CSLSListener::CSLSListener()
     m_back_log  = 1024;
     m_is_write  = 0;
     m_port      = 0;
+    m_front_door_enabled = false;
+    m_internal_port = 0;
     m_lost      = false;
 
     m_list_role     = NULL;
@@ -922,10 +924,31 @@ int CSLSListener::start()
     }
 
     m_port = ((sls_conf_server_t*)m_conf)->listen;
-    ret = m_srt->libsrt_setup(m_port);
+    m_front_door_enabled = ((sls_conf_server_t*)m_conf)->srtla;
+    if (((sls_conf_server_t*)m_conf)->srt_lossmaxttl > 0) {
+        m_srt->libsrt_set_lossmaxttl(((sls_conf_server_t*)m_conf)->srt_lossmaxttl);
+    }
+    if (m_front_door_enabled) {
+        // the front door binds the public port; libsrt gets an ephemeral
+        // loopback port nothing outside this host can reach
+        m_srt->libsrt_set_bind_host("127.0.0.1");
+        ret = m_srt->libsrt_setup(0);
+    } else {
+        ret = m_srt->libsrt_setup(m_port);
+    }
     if (SLS_OK != ret) {
         sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, libsrt_setup failure.", this);
         return ret;
+    }
+    if (m_front_door_enabled) {
+        m_internal_port = m_srt->libsrt_get_local_port();
+        if (m_internal_port <= 0) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSListener::start, cannot read the internal listener's port: %s.",
+                    this, srt_getlasterror_str());
+            return SLS_ERROR;
+        }
+        sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, front door: public port %d, internal 127.0.0.1:%d.",
+                this, m_port, m_internal_port);
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_setup ok.", this);
 

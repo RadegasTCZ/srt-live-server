@@ -133,6 +133,12 @@ public :
     int  libsrt_getpeeraddr(char * peer_name, int& port);
 
     void libsrt_set_latency(int latency);
+    // bind address for libsrt_setup (empty = any); the front door uses 127.0.0.1
+    void libsrt_set_bind_host(const char *host);
+    // the bound socket's local port (0 on error): the real one after binding port 0
+    int  libsrt_get_local_port();
+    // SRTO_LOSSMAXTTL, applied by libsrt_setup when > 0
+    void libsrt_set_lossmaxttl(int lossmaxttl);
     void libsrt_set_passphrase(const char *passphrase, int pbkeylen);
 
 
@@ -155,6 +161,7 @@ private:
     static bool m_inited;
     char m_passphrase[128];
     int  m_pbkeylen;
+    int  m_lossmaxttl;
 };
 
 
