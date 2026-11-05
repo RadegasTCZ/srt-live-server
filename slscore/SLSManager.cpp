@@ -28,6 +28,7 @@
 
 #include "common.hpp"
 #include <sys/resource.h>
+#include <time.h>
 #include "SLSManager.hpp"
 #include "SLSFrontDoor.hpp"
 #include "SLSLog.hpp"
@@ -266,12 +267,16 @@ int CSLSManager::stop()
     //
     sls_log(SLS_LOG_INFO, "[%p]CSLSManager::stop.", this);
 
-    // The front doors first, while every listener is still alive: a joined
-    // front door relays nothing more, and its listener deletes it later.
+    // The front doors outlive everything that relays through them: the
+    // manager takes them over here and stops them last, after every libsrt
+    // socket (roles, listeners) is closed, so the shutdowns libsrt sends then
+    // still reach the peers and they disconnect at once. A listener (and its
+    // listen callback) never outlives its front door.
+    std::list<CSLSFrontDoor *> front_doors;
     for (std::list<CSLSListener *>::iterator it = m_servers.begin(); it != m_servers.end(); it++) {
-        CSLSFrontDoor *fd = *it ? (*it)->front_door() : NULL;
+        CSLSFrontDoor *fd = *it ? (*it)->detach_front_door() : NULL;
         if (fd) {
-            fd->stop();
+            front_doors.push_back(fd);
         }
     }
 
@@ -308,6 +313,18 @@ int CSLSManager::stop()
     	m_list_role->erase();
     	delete m_list_role;
     	m_list_role = NULL;
+    }
+
+    // every libsrt socket is closed: give the front doors a moment to relay
+    // the shutdowns libsrt just sent, then stop and delete them
+    if (!front_doors.empty()) {
+        struct timespec ts = {0, SLS_FD_STOP_DRAIN_MS * 1000000L};
+        nanosleep(&ts, NULL);
+        for (std::list<CSLSFrontDoor *>::iterator it = front_doors.begin(); it != front_doors.end(); it++) {
+            (*it)->stop();
+            delete *it;
+        }
+        front_doors.clear();
     }
 
     if (m_map_data) {

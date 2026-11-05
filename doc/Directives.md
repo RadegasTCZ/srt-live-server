@@ -487,8 +487,9 @@ Limits: IPv4 only. Replies leave from the address the kernel picks for the
 peer, so on a host with several addresses on one interface a peer may see
 replies from another address than the one it sent to. Each srtla block has its
 own caps, so N blocks may hold N times the cap in sockets. When sls stops, the
-front door stops first: peers notice by their idle timeout (about 5 s), as after
-a network loss. libsrt's own log lines (and the DEBUG accept line) show the
+front door stops last, 200 ms after every libsrt socket closed, so peers get
+libsrt's shutdown and disconnect at once. libsrt's own log lines (and the DEBUG
+accept line) show the
 internal `127.0.0.1` peer.
 
 ## max_pull_streams (relay block), pull relay lifetime

@@ -44,6 +44,9 @@
 // closed, so the kernel cannot give its port to a new peer while libsrt may
 // still hold a connection from it (libsrt drops a silent peer after 5 s).
 #define SLS_FD_QUARANTINE_MS   6000
+// sls stop: how long the front doors keep relaying after every libsrt socket
+// closed, so its shutdowns reach the peers
+#define SLS_FD_STOP_DRAIN_MS   200
 
 /**
  * The front door of one srtla-enabled server block (stage 1: plain SRT).
@@ -61,10 +64,10 @@
  *
  * Threads: work() runs on this object's thread and is the only one that
  * creates, reads or closes the sockets. libsrt's thread reads peers() (the
- * map has its own lock). Lifetime: the listener owns it; the manager stops
- * (joins) it first in its stop(), before any listener is torn down. So the
- * shutdowns libsrt sends while sls stops are not relayed: peers notice the
- * stop by their idle timeout (about 5 s), as after a network loss.
+ * map has its own lock). Lifetime: the listener owns it until sls stops;
+ * then the manager takes it over and stops it last, SLS_FD_STOP_DRAIN_MS
+ * after every libsrt socket closed, so the shutdowns libsrt sends at stop
+ * still reach the peers (they disconnect at once).
  * Timeouts are checked once a second, so each one may run up to 1 s longer.
  */
 class CSLSFrontDoor : public CSLSThread

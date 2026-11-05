@@ -67,6 +67,7 @@ CSLSListener::CSLSListener()
     m_front_door_enabled = false;
     m_internal_port = 0;
     m_front_door = NULL;
+    m_front_door_owned = true;
     m_fd_max_total = 300;
     m_fd_max_per_ip = 0;
     m_lost      = false;
@@ -105,7 +106,7 @@ CSLSListener::~CSLSListener()
     // (opaq): close the libsrt listener first. srt_close waits for a callback
     // in flight, and none starts after it. Every delete path calls uninit()
     // first, which already closed it; this covers one that would not.
-    if (m_front_door) {
+    if (m_front_door && m_front_door_owned) {
         if (m_srt) {
             m_srt->libsrt_close();
         }

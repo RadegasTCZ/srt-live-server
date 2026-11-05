@@ -183,6 +183,10 @@ public :
     // srtla on: this block's front door (owned here; the manager starts its
     // thread and stops it before any listener is torn down). NULL when off.
     CSLSFrontDoor *front_door() const { return m_front_door; }
+    // sls stop: the manager takes the front door over, so that it outlives
+    // every libsrt socket and relays their shutdowns (see CSLSManager::stop).
+    // The listener keeps using it until it is deleted, and no longer deletes it.
+    CSLSFrontDoor *detach_front_door() { m_front_door_owned = false; return m_front_door; }
     // The peer as SLS logs and limits it: the address libsrt reports, or with
     // the front door the real remote behind its internal socket. false: the
     // front door has no such mapping (a local process connected to the
@@ -208,6 +212,7 @@ private:
     bool                m_front_door_enabled;
     int                 m_internal_port;   // libsrt's loopback port in srtla mode, else 0
     CSLSFrontDoor     * m_front_door;
+    bool                m_front_door_owned;   // false once the manager took it over
     int                 m_fd_max_total;
     int                 m_fd_max_per_ip;
     int                 m_max_players_per_stream;   // 0 = unlimited

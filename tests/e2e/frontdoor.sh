@@ -241,6 +241,26 @@ case_large_payload_1456(){
     fi
 }
 
+# --- sls stop: connected peers are told at once (the front door relays libsrt's shutdowns)
+case_stop_notifies_peers(){
+    write_conf; start_sls
+    publish s1 60; nap 4
+    local p0=$PUBPID
+    kill -INT "$SLS_PID"; local t0=$(date +%s%N)
+    for i in $(seq 100); do kill -0 "$p0" 2>/dev/null || break; nap 0.1; done
+    local t1=$(date +%s%N)
+    local alive=0; kill -0 "$p0" 2>/dev/null && alive=1
+    unpublish
+    for i in $(seq 100); do kill -0 "$SLS_PID" 2>/dev/null || break; nap 0.2; done
+    SLS_PID=
+    local ms=$(( (t1 - t0) / 1000000 ))
+    if [ "$alive" = 0 ] && [ "$ms" -lt 2000 ] && [ "$(asan_reports)" = 0 ]; then
+        pass stop_notifies_peers "publisher ended ${ms} ms after SIGINT"
+    else
+        fail stop_notifies_peers "publisher still running=$alive after ${ms} ms (needs < 2000), asan=$(asan_reports)"
+    fi
+}
+
 CASES=${*:-$(declare -F | awk '{print $3}' | awk '/^case_/' | sed 's/^case_//')}
 for c in $CASES; do
     "case_$c"
