@@ -116,7 +116,7 @@ std::string sls_url_encode(const std::string &s);
 // JSON string escaping, no surrounding quotes: " \ and control characters; other bytes pass through
 std::string sls_json_escape(const std::string &s);
 // the server version: shown by -h, reported in the stats document
-#define SLS_VERSION_STRING "1.5.4"
+#define SLS_VERSION_STRING "1.5.5"
 // Parse an HTTP/1.x response held in buf. Returns 1: the message is complete; 0: more data needed
 // (or, with no Content-Length and no chunking, the body ends when the peer closes); -1: malformed or
 // larger than 64 KiB. Once the headers are complete *status (second token of the status line),
