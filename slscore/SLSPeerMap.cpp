@@ -142,7 +142,9 @@ void CSLSPeerMap::expire(int64_t now_ms, int halfopen_ms, int idle_ms, std::vect
     while (it != m_by_remote.end()) {
         const entry &e = it->second;
         bool dead;
-        if (!e.established) {
+        if (e.closing_ms > 0 && now_ms - e.closing_ms > SLS_FD_CLOSING_MS) {
+            dead = true;
+        } else if (!e.established) {
             dead = now_ms - e.created_ms > halfopen_ms;
         } else {
             int64_t last = e.last_in_ms > e.last_out_ms ? e.last_in_ms : e.last_out_ms;
@@ -173,6 +175,19 @@ void CSLSPeerMap::remove_fd(int fd)
         return;
     }
     erase_locked(it);
+}
+
+void CSLSPeerMap::mark_closing(int fd, int64_t now_ms)
+{
+    CSLSLock lock(&m_mutex);
+    std::map<int, uint64_t>::iterator f = m_by_fd.find(fd);
+    if (f == m_by_fd.end()) {
+        return;
+    }
+    std::map<uint64_t, entry>::iterator it = m_by_remote.find(f->second);
+    if (it != m_by_remote.end() && 0 == it->second.closing_ms) {
+        it->second.closing_ms = now_ms > 0 ? now_ms : 1;
+    }
 }
 
 void CSLSPeerMap::all_fds(std::vector<int> *fds) const

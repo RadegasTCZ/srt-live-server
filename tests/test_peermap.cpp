@@ -173,3 +173,20 @@ SLS_TEST(peermap_remove_fd)
     m.remove_fd(7);   // twice is harmless
     SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
 }
+
+SLS_TEST(peermap_closing_expires_soon)
+{
+    CSLSPeerMap m(16, 0);
+    struct sockaddr_in r = addr("1.2.3.4", 5000);
+    SLS_CHECK_EQ(m.add(r, 7, 40001, 0), SLS_OK);
+    m.fd_for_remote(r, 100);
+    m.mark_closing(7, 1000);
+    m.fd_for_remote(r, 1500);           // a retransmitted shutdown does not revive it
+    m.mark_closing(7, 1800);            // the first mark counts
+    std::vector<int> fds;
+    m.expire(2900, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
+    SLS_CHECK_EQ(fds.size(), 0);
+    m.expire(3001, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
+    SLS_CHECK_EQ(fds.size(), 1);
+    m.mark_closing(99, 1000);           // unknown fd: harmless
+}

@@ -35,6 +35,7 @@
 
 #define SLS_FD_HALFOPEN_MS   5000    // a mapping whose peer never sent a second packet
 #define SLS_FD_IDLE_MS       30000   // an established mapping with no traffic either way
+#define SLS_FD_CLOSING_MS    2000    // after an SRT shutdown passed: the session is over
 
 /**
  * The front door's map of plain SRT peers: a remote address <-> the internal
@@ -67,6 +68,8 @@ public:
     // removes expired entries and appends their fds (the caller closes them)
     void expire(int64_t now_ms, int halfopen_ms, int idle_ms, std::vector<int> *expired_fds);
     void remove_fd(int fd);
+    // an SRT shutdown passed through fd: expire() drops it SLS_FD_CLOSING_MS later
+    void mark_closing(int fd, int64_t now_ms);
     void all_fds(std::vector<int> *fds) const;
 
     size_t size() const;
@@ -83,6 +86,7 @@ private:
         int64_t  last_in_ms;
         int64_t  last_out_ms;
         bool     established;
+        int64_t  closing_ms;    // 0, or when an SRT shutdown passed
     };
     static uint64_t key_of(const struct sockaddr_in &remote);
     void erase_locked(std::map<uint64_t, entry>::iterator it);

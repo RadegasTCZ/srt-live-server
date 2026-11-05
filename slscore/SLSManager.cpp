@@ -28,6 +28,7 @@
 
 #include "common.hpp"
 #include "SLSManager.hpp"
+#include "SLSFrontDoor.hpp"
 #include "SLSLog.hpp"
 #include "SLSListener.hpp"
 #include "SLSPublisher.hpp"
@@ -107,9 +108,11 @@ int CSLSManager::start_listeners()
     sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, new m_list_role=%p.", this, m_list_role);
 
     // Accepted connections are capped at what the workers can hold.
+    int conn_max_total = 0;
     {
         int threads = conf_srt->worker_threads > 1 ? conf_srt->worker_threads : 1;
         int max_total = conf_srt->worker_connections * threads;
+        conn_max_total = max_total;
         // Slots players may not use, so viewers can never lock publishers out.
         int reserved = conf_srt->reserved_publisher_connections;
         if (SLS_RESERVED_PUBLISHERS_AUTO == reserved) {
@@ -136,6 +139,8 @@ int CSLSManager::start_listeners()
     	CSLSListener * p = new CSLSListener();//deleted by groups
     	p->set_role_list(m_list_role);
         p->set_admission_limiter(m_conn_limiter);
+        // srtla on: the front door maps at most as many peers as may be accepted
+        p->set_front_door_caps(conn_max_total, conf_srt->max_connections_per_ip);
         p->set_conf(conf);
         p->set_map_data("", &m_map_data[i]);
         p->set_map_publisher(&m_map_publisher[i]);
@@ -199,6 +204,16 @@ int CSLSManager::start_workers()
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSManager::start, init worker, count=%d.", this, m_worker_threads);
 
+    // front doors last: the listeners they relay to are polled by now
+    for (std::list<CSLSListener *>::iterator it = m_servers.begin(); it != m_servers.end(); it++) {
+        CSLSFrontDoor *fd = *it ? (*it)->front_door() : NULL;
+        if (fd && 0 != fd->start()) {
+            sls_log(SLS_LOG_ERROR, "[%p]CSLSManager::start, cannot start the front door of port %d.",
+                    this, fd->public_port());
+            return SLS_ERROR;
+        }
+    }
+
 	return ret;
 
 }
@@ -223,6 +238,15 @@ int CSLSManager::stop()
 	int i = 0;
     //
     sls_log(SLS_LOG_INFO, "[%p]CSLSManager::stop.", this);
+
+    // The front doors first, while every listener is still alive: a joined
+    // front door relays nothing more, and its listener deletes it later.
+    for (std::list<CSLSListener *>::iterator it = m_servers.begin(); it != m_servers.end(); it++) {
+        CSLSFrontDoor *fd = *it ? (*it)->front_door() : NULL;
+        if (fd) {
+            fd->stop();
+        }
+    }
 
     // From here on a worker adopts no queued role: they are released below
     // with the role list, not handed to a worker that is about to stop.

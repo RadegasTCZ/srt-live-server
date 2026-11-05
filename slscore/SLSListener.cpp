@@ -39,6 +39,7 @@
 #include <atomic>
 
 #include "SLSListener.hpp"
+#include "SLSFrontDoor.hpp"
 #include "SLSAuthThrottle.hpp"
 #include "SLSLog.hpp"
 #include "SLSPublisher.hpp"
@@ -64,6 +65,9 @@ CSLSListener::CSLSListener()
     m_port      = 0;
     m_front_door_enabled = false;
     m_internal_port = 0;
+    m_front_door = NULL;
+    m_fd_max_total = 300;
+    m_fd_max_per_ip = 0;
     m_lost      = false;
 
     m_list_role     = NULL;
@@ -92,8 +96,21 @@ static std::set<CSLSListener *>  s_listeners;
 
 CSLSListener::~CSLSListener()
 {
-    CSLSLock lock(&s_listeners_mutex);
-    s_listeners.erase(this);
+    {
+        CSLSLock lock(&s_listeners_mutex);
+        s_listeners.erase(this);
+    }
+    // after the erase: a listen callback can no longer reach this listener
+    // (and through it the front door's map). Joins the thread if it still runs.
+    if (m_front_door) {
+        delete m_front_door;
+        m_front_door = NULL;
+    }
+}
+
+bool CSLSListener::is_lost() const
+{
+    return m_lost || (m_front_door && m_front_door->failed());
 }
 
 void CSLSListener::forget_handshake(int ns)
@@ -949,6 +966,13 @@ int CSLSListener::start()
         }
         sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, front door: public port %d, internal 127.0.0.1:%d.",
                 this, m_port, m_internal_port);
+        // bound here, at startup, like the plain listener: a taken port stops sls
+        m_front_door = new CSLSFrontDoor(m_port, m_internal_port, m_fd_max_total, m_fd_max_per_ip);
+        if (SLS_OK != m_front_door->bind_public()) {
+            delete m_front_door;
+            m_front_door = NULL;
+            return SLS_ERROR;
+        }
     }
     sls_log(SLS_LOG_INFO, "[%p]CSLSListener::start, libsrt_setup ok.", this);
 

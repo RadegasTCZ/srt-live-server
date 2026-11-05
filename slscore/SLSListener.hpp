@@ -127,6 +127,8 @@ struct sls_inflight_t {
 /**
  * SLSListener
  */
+class CSLSFrontDoor;
+
 class CSLSListener : public CSLSRole
 {
 public :
@@ -148,7 +150,8 @@ public :
     // failed): it no longer accepts, and the manager stops sls. It stays
     // allocated until its group's clear(), so the manager's pointer stays valid.
     void         set_lost() { m_lost = true; }
-    bool         is_lost() const { return m_lost; }
+    // also true when this block's front door thread failed (it no longer relays)
+    bool         is_lost() const;
     // SIGHUP: re-resolve the on_event_url host (failure keeps the previous address)
     void reload_hook();
 
@@ -163,6 +166,11 @@ public :
     // owns the public port m_port. Off: internal_port() is 0.
     bool front_door_enabled() const { return m_front_door_enabled; }
     int  internal_port() const { return m_internal_port; }
+    // srtla on: this block's front door (owned here; the manager starts its
+    // thread and stops it before any listener is torn down). NULL when off.
+    CSLSFrontDoor *front_door() const { return m_front_door; }
+    // the front door's mapping caps (from the srt block), set before start()
+    void set_front_door_caps(int max_total, int max_per_ip) { m_fd_max_total = max_total; m_fd_max_per_ip = max_per_ip; }
 
 
 private:
@@ -179,6 +187,9 @@ private:
     CSLSConnLimiter   * m_admission_limiter;
     bool                m_front_door_enabled;
     int                 m_internal_port;   // libsrt's loopback port in srtla mode, else 0
+    CSLSFrontDoor     * m_front_door;
+    int                 m_fd_max_total;
+    int                 m_fd_max_per_ip;
     int                 m_max_players_per_stream;   // 0 = unlimited
     char                m_http_url_role[URL_MAX_LEN];
     int                 m_on_event_timeout;    // ms

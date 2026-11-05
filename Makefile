@@ -52,7 +52,8 @@ OBJS = $(OUTPUT_PATH)/SLSLog.o \
 	$(OUTPUT_PATH)/SLSSyncClock.o\
 	$(OUTPUT_PATH)/TSFileTimeReader.o\
 	$(OUTPUT_PATH)/SLSFrontDoorProto.o\
-	$(OUTPUT_PATH)/SLSPeerMap.o
+	$(OUTPUT_PATH)/SLSPeerMap.o\
+	$(OUTPUT_PATH)/SLSFrontDoor.o
 	
 CORE_PATH = slscore
 COMMON_FILES = common.hpp
