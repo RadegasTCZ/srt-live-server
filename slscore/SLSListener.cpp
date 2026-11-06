@@ -644,9 +644,12 @@ static void sls_peer_of(const struct sockaddr *sa, char *ip, size_t ip_len, int 
 }
 
 bool CSLSListener::real_peer(const struct sockaddr *sa, char *ip, size_t ip_len, int *port,
-                             struct sockaddr_in *remote_out) const
+                             struct sockaddr_in *remote_out, bool *srtla_out) const
 {
     sls_peer_of(sa, ip, ip_len, port);
+    if (srtla_out) {
+        *srtla_out = false;
+    }
     if (!m_front_door_enabled) {
         return true;
     }
@@ -659,7 +662,7 @@ bool CSLSListener::real_peer(const struct sockaddr *sa, char *ip, size_t ip_len,
         return false;
     }
     struct sockaddr_in remote;
-    if (!m_front_door->peers().remote_for_local_port(ntohs(a->sin_port), &remote)) {
+    if (!m_front_door->peers().remote_for_local_port(ntohs(a->sin_port), &remote, srtla_out)) {
         return false;   // the map lookup only takes its mutex: no system call under it
     }
     inet_ntop(AF_INET, &remote.sin_addr, ip, ip_len);
@@ -670,7 +673,8 @@ bool CSLSListener::real_peer(const struct sockaddr *sa, char *ip, size_t ip_len,
     return true;
 }
 
-bool CSLSListener::pinned_peer(int fd, const char *libsrt_ip, int libsrt_port, char *ip, size_t ip_len, int *port)
+bool CSLSListener::pinned_peer(int fd, const char *libsrt_ip, int libsrt_port, char *ip, size_t ip_len, int *port,
+                               bool *srtla)
 {
     sls_fd_identity_t id;
     if (!m_fd_identity.take(fd, &id, sls_monotonic_ms())) {
@@ -683,11 +687,16 @@ bool CSLSListener::pinned_peer(int fd, const char *libsrt_ip, int libsrt_port, c
     struct sockaddr_in now;
     char tmp[IP_MAX_LEN];
     int  tmp_port = 0;
+    bool now_srtla = false;
     if (1 != inet_pton(AF_INET, libsrt_ip, &in.sin_addr)
             || id.local_port != libsrt_port
-            || !real_peer((const struct sockaddr *)&in, tmp, sizeof(tmp), &tmp_port, &now)
-            || now.sin_addr.s_addr != id.ip_be || ntohs(now.sin_port) != id.port) {
+            || !real_peer((const struct sockaddr *)&in, tmp, sizeof(tmp), &tmp_port, &now, &now_srtla)
+            || now.sin_addr.s_addr != id.ip_be || ntohs(now.sin_port) != id.port
+            || now_srtla != id.srtla) {
         return false;   // the mapping changed hands since the handshake
+    }
+    if (srtla) {
+        *srtla = id.srtla;
     }
     struct in_addr a;
     a.s_addr = id.ip_be;
@@ -746,7 +755,8 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
     // counted against anyone.
     struct sockaddr_in fd_remote;
     memset(&fd_remote, 0, sizeof(fd_remote));
-    if (!self->real_peer(peeraddr, peer_ip, sizeof(peer_ip), &peer_port, &fd_remote)) {
+    bool via_srtla = false;
+    if (!self->real_peer(peeraddr, peer_ip, sizeof(peer_ip), &peer_port, &fd_remote, &via_srtla)) {
         // a local process on the internal port: its own budget, so a flood of
         // it cannot use up the lines that explain real refusals
         static std::atomic<int64_t> s_last_direct_log(0);
@@ -797,6 +807,14 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         return -1;
     }
     const char *direction = (SLS_SID_PUBLISHER == role) ? "publish" : "play";
+    // SRTLA is for publishers: a group's links are not proven to receive
+    // (anyone with the group id can add one), so it never carries a stream out
+    if (via_srtla && SLS_SID_PUBLISHER != role) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, refused [%s:%d]: a player through an SRTLA group (publishers only).",
+                self, peer_ip, peer_port);
+        srt_setrejectreason(ns, SRT_REJX_FORBIDDEN);
+        return -1;
+    }
 
     // Too many wrong passphrases from this address (S8, R45): refused
     // before any key exchange, whatever user or stream it names, the right
@@ -862,7 +880,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         if (((sls_conf_server_t*)self->m_conf)->srt_passphrase[0] != 0) {
             sls_auth_throttle().note_handshake(ns, peer_ip, sls_monotonic_ms());
         }
-        self->pin_identity(ns, fd_remote, peeraddr);
+        self->pin_identity(ns, fd_remote, peeraddr, via_srtla);
         return 0;
     }
 
@@ -948,13 +966,31 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::listen_callback, %d handshakes in progress: dropped the oldest one's record.",
                 self, SLS_INFLIGHT_MAX);
     }
-    self->pin_identity(ns, fd_remote, peeraddr);
+    self->pin_identity(ns, fd_remote, peeraddr, via_srtla);
     return 0;
+}
+
+// srtla on: the front door asks this before answering a REG1/REG2 (on its
+// thread): an address the wrong-passphrase throttle blocks, or that has used
+// up its handshake rate, registers nothing. Nothing is counted here.
+bool CSLSListener::srtla_ip_refused(void *ctx, uint32_t ip_be)
+{
+    CSLSListener *self = static_cast<CSLSListener*>(ctx);
+    struct in_addr a;
+    a.s_addr = ip_be;
+    char ip[INET_ADDRSTRLEN] = "";
+    inet_ntop(AF_INET, &a, ip, sizeof(ip));
+    int64_t now_ms = sls_monotonic_ms();
+    if (sls_auth_throttle().blocked(ip, now_ms)) {
+        return true;
+    }
+    return NULL != self->m_admission_limiter && self->m_admission_limiter->handshake_exhausted(ip, now_ms);
 }
 
 // srtla on: the remote this handshake was checked as, for accept_one (on
 // the success paths only, like m_inflight, so refusals take no room)
-void CSLSListener::pin_identity(int ns, const struct sockaddr_in &remote, const struct sockaddr *peeraddr)
+void CSLSListener::pin_identity(int ns, const struct sockaddr_in &remote, const struct sockaddr *peeraddr,
+                                bool srtla)
 {
     if (!m_front_door_enabled || NULL == peeraddr || AF_INET != peeraddr->sa_family) {
         return;
@@ -963,6 +999,7 @@ void CSLSListener::pin_identity(int ns, const struct sockaddr_in &remote, const 
     id.ip_be = remote.sin_addr.s_addr;
     id.port = ntohs(remote.sin_port);
     id.local_port = ntohs(((const struct sockaddr_in *)peeraddr)->sin_port);
+    id.srtla = srtla;
     m_fd_identity.put(ns, id, sls_monotonic_ms());
 }
 
@@ -1065,10 +1102,15 @@ int CSLSListener::start()
         // bound here, at startup, like the plain listener: a taken port stops sls
         m_front_door = new CSLSFrontDoor(m_port, m_internal_port, m_fd_max_total, m_fd_max_per_ip);
         {
-            // stage 2 defaults; the srtla_* directives set them (Task 6)
-            sls_srtla_caps caps = {200, 4, 8, 5};
-            int lat = ((sls_conf_server_t*)m_conf)->latency;
-            m_front_door->set_srtla(caps, SLS_SRTLA_REORDER_DEFAULT_MS, lat > 0 ? lat : 120);
+            sls_conf_server_t *sc = (sls_conf_server_t*)m_conf;
+            sls_srtla_caps caps;
+            caps.max_groups          = sc->srtla_max_groups;
+            caps.max_groups_per_ip   = sc->srtla_max_groups_per_ip;
+            caps.max_links_per_group = sc->srtla_max_links_per_group;
+            caps.reg_per_ip_per_sec  = sc->srtla_reg_per_ip_per_sec;
+            // until a session's latency is known: the listener's (libsrt's default 120 ms)
+            m_front_door->set_srtla(caps, sc->srtla_reorder_max, sc->latency > 0 ? sc->latency : 120);
+            m_front_door->set_srtla_ip_check(CSLSListener::srtla_ip_refused, this);
         }
         if (SLS_OK != m_front_door->bind_public()) {
             delete m_front_door;
@@ -1212,6 +1254,7 @@ int CSLSListener::accept_one()
 	// non-blocking only for its own accepts: give the connection the
 	// blocking mode it always had (players switch to non-blocking below).
 	srt->libsrt_socket_nonblock(1);
+    bool via_srtla = false;   // through an SRTLA group (pinned at the handshake)
     ret = srt->libsrt_getpeeraddr(peer_name, peer_port);
     if (ret != 0) {
         // the peer may already be gone again (it closed right after the handshake)
@@ -1225,7 +1268,7 @@ int CSLSListener::accept_one()
         // the callback checked this handshake as (pinned, not looked up again)
         char real_ip[IP_MAX_LEN] = {0};
         int  real_port = 0;
-        if (!pinned_peer(fd_client, peer_name, peer_port, real_ip, sizeof(real_ip), &real_port)) {
+        if (!pinned_peer(fd_client, peer_name, peer_port, real_ip, sizeof(real_ip), &real_port, &via_srtla)) {
             // its mapping expired or changed hands between the handshake and this accept
             sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d], fd=%d: its front door mapping changed since the handshake.",
                     this, peer_name, peer_port, srt->libsrt_get_fd());
@@ -1307,6 +1350,15 @@ int CSLSListener::accept_one()
     admit_ctx.map_pusher    = m_map_pusher;
     admit_ctx.role_list     = m_list_role;
     admit_ctx.port          = m_port;
+
+    // the listen callback refused this already; the backstop at accept
+    if (via_srtla && SLS_SID_PUBLISHER != role) {
+        sls_peer_log(SLS_LOG_INFO, "[%p]CSLSListener::handler, refused [%s:%d]: a player through an SRTLA group (publishers only).",
+                this, peer_name, peer_port);
+        srt->libsrt_close();
+        delete srt;
+        return client_count;
+    }
 
     //3.is player?
     if (SLS_SID_PLAYER == role) {

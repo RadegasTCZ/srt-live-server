@@ -65,6 +65,11 @@ int              on_event_timeout;//unit ms
 int              max_players_per_stream;//0: unlimited
 bool             srtla;//on: the front door owns the public port, libsrt listens on loopback
 int              srt_lossmaxttl;//SRTO_LOSSMAXTTL on the listener; 0: off
+int              srtla_reorder_max;//ms an SRTLA group's out-of-order packets may wait; 0: pass-through
+int              srtla_max_links_per_group;
+int              srtla_max_groups;
+int              srtla_max_groups_per_ip;
+int              srtla_reg_per_ip_per_sec;
 SLS_CONF_DYNAMIC_DECLARE_END
 
 /**
@@ -86,6 +91,11 @@ SLS_SET_CONF(server, int,    on_event_timeout,     "ms the on_event_url hook may
 SLS_SET_CONF(server, int,    max_players_per_stream, "max concurrent players of one stream (default 0 = unlimited)", 0, 100000),
 SLS_SET_CONF(server, bool,   srtla,                "on: sls owns the public port (front door) and relays SRT to a loopback listener (default off)", 0, 1),
 SLS_SET_CONF(server, int,    srt_lossmaxttl,       "SRTO_LOSSMAXTTL on the listener: packets of reordering tolerated before a loss is reported (default 0 = off)", 0, 1000),
+SLS_SET_CONF(server, int,    srtla_reorder_max,    "srtla on: the longest an SRTLA group's out-of-order packet waits, ms (default 500; 0 = pass-through); the hold is min(this, latency/4)", 0, 2000),
+SLS_SET_CONF(server, int,    srtla_max_links_per_group, "srtla on: links per SRTLA group (default 8)", 1, 64),
+SLS_SET_CONF(server, int,    srtla_max_groups,     "srtla on: SRTLA groups on this port (default 200)", 1, 10000),
+SLS_SET_CONF(server, int,    srtla_max_groups_per_ip, "srtla on: SRTLA groups per registering IP (default 4)", 1, 1000),
+SLS_SET_CONF(server, int,    srtla_reg_per_ip_per_sec, "srtla on: SRTLA registrations (REG1 + REG2) per IP per second (default 5)", 1, 1000),
 SLS_CONF_CMD_DYNAMIC_DECLARE_END
 
 #define SLS_DEFAULT_ADMISSION_TIMEOUT 5000
@@ -102,6 +112,11 @@ inline void sls_conf_server_defaults(sls_conf_server_t *c)
     c->on_event_timeout  = SLS_DEFAULT_ON_EVENT_TIMEOUT;
     c->srtla = false;
     c->srt_lossmaxttl = 0;
+    c->srtla_reorder_max = 500;
+    c->srtla_max_links_per_group = 8;
+    c->srtla_max_groups = 200;
+    c->srtla_max_groups_per_ip = 4;
+    c->srtla_reg_per_ip_per_sec = 5;
 }
 
 /**
@@ -115,7 +130,8 @@ struct sls_fd_identity_t {
     uint32_t ip_be;
     uint16_t port;          // the remote's, host order
     uint16_t local_port;    // the internal socket's, host order
-    sls_fd_identity_t() : ip_be(0), port(0), local_port(0) {}
+    bool     srtla;         // through an SRTLA group (publishers only)
+    sls_fd_identity_t() : ip_be(0), port(0), local_port(0), srtla(false) {}
 };
 
 /**
@@ -192,7 +208,7 @@ public :
     // front door has no such mapping (a local process connected to the
     // internal port directly); ip/port are then the address libsrt reported.
     bool real_peer(const struct sockaddr *sa, char *ip, size_t ip_len, int *port,
-                   struct sockaddr_in *remote_out = NULL) const;
+                   struct sockaddr_in *remote_out = NULL, bool *srtla_out = NULL) const;
     // the front door's mapping caps (from the srt block), set before start()
     void set_front_door_caps(int max_total, int max_per_ip) { m_fd_max_total = max_total; m_fd_max_per_ip = max_per_ip; }
 
@@ -236,8 +252,11 @@ private:
     CSLSSockTable<sls_fd_identity_t>       m_fd_identity;
     // the real remote of an accepted front-door connection, as the callback
     // checked it; false: refuse it
-    bool pinned_peer(int fd, const char *libsrt_ip, int libsrt_port, char *ip, size_t ip_len, int *port);
-    void pin_identity(int ns, const struct sockaddr_in &remote, const struct sockaddr *peeraddr);
+    bool pinned_peer(int fd, const char *libsrt_ip, int libsrt_port, char *ip, size_t ip_len, int *port,
+                     bool *srtla = NULL);
+    void pin_identity(int ns, const struct sockaddr_in &remote, const struct sockaddr *peeraddr, bool srtla);
+    // the front door asks before answering an SRTLA REG1/REG2 from ip
+    static bool srtla_ip_refused(void *ctx, uint32_t ip_be);
 
     int  init_conf_app();
     // One accept and its admission: 1 = a socket came off the queue (admitted

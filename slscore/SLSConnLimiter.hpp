@@ -114,6 +114,9 @@ public:
     // must not freeze the refill): true if within the rate (and counted).
     // Never blocks; called on libsrt's receive thread (listen callback).
     bool handshake_allowed(const char *ip, int64_t now_ms);
+    // Would the next handshake from ip be refused? Counts nothing (SRTLA
+    // registrations are checked against it without using a token).
+    bool handshake_exhausted(const char *ip, int64_t now_ms) const;
     int  overflow_rate() const;
     size_t tracked_addresses() const;
 

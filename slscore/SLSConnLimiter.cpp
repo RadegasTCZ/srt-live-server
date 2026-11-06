@@ -203,6 +203,24 @@ void CSLSConnLimiter::release(const char *ip, int kind, const std::string &strea
 
 // Refill b (capacity and rate: rate per second) up to now_ms, then take one
 // token if there is one.
+bool CSLSConnLimiter::handshake_exhausted(const char *ip, int64_t now_ms) const
+{
+    if (m_hs_rate <= 0) {
+        return false;
+    }
+    std::string key = sls_ip_key(ip);
+    CSLSLock lock(&m_mutex);
+    std::map<std::string, hs_bucket>::const_iterator it = m_hs_buckets.find(key);
+    if (it == m_hs_buckets.end()) {
+        return false;   // untracked: a full bucket (or the shared overflow one)
+    }
+    double tokens = it->second.tokens;
+    if (now_ms > it->second.last_ms) {
+        tokens += (now_ms - it->second.last_ms) * (double)m_hs_rate / 1000.0;
+    }
+    return tokens < 1.0;
+}
+
 bool CSLSConnLimiter::take_token(hs_bucket &b, int rate, int64_t now_ms)
 {
     if (now_ms > b.last_ms) {
