@@ -95,6 +95,8 @@ public:
     void set_srtla(int fd);
     // SLS_FD_STATE_*: what libsrt has done with fd's connection
     int  state_for_fd(int fd) const;
+    // a new handshake attempt on a half-open fd: its half-open time starts again
+    void restart_halfopen(int fd, int64_t now_ms);
     // the fd mapped for remote (or -1) and its state, without touching it
     int  peek_remote(const struct sockaddr_in &remote, int *state) const;
     // removes expired entries and appends their fds (the caller closes them)

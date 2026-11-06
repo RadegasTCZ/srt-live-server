@@ -219,6 +219,19 @@ int CSLSPeerMap::peek_remote(const struct sockaddr_in &remote, int *state) const
     return it->second.fd;
 }
 
+void CSLSPeerMap::restart_halfopen(int fd, int64_t now_ms)
+{
+    CSLSLock lock(&m_mutex);
+    std::map<int, uint64_t>::iterator f = m_by_fd.find(fd);
+    if (f == m_by_fd.end()) {
+        return;
+    }
+    by_remote_t::iterator it = m_by_remote.find(f->second);
+    if (it != m_by_remote.end() && !it->second.established && 0 == it->second.closing_ms) {
+        it->second.created_ms = now_ms;
+    }
+}
+
 int CSLSPeerMap::state_for_fd(int fd) const
 {
     CSLSLock lock(&m_mutex);
