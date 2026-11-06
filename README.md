@@ -77,13 +77,22 @@ Changes in 1.6.0 (in development)
   can later also take SRTLA (bonded links, e.g. IRL Pro or BELABOX) next to
   plain SRT. Clients keep the same URL; logs, limits, lockouts, the webhook and
   stats keep showing each peer's real address. Off by default, and with it off
-  nothing changes. See "Front door (srtla on)" in `doc/Directives.md`. Stage 1:
-  SRTLA packets are recognised and dropped; receiving them comes next.
+  nothing changes. See "Front door (srtla on)" in `doc/Directives.md`.
+- **SRTLA receiver (`srtla on;`).** Bonded senders (srtla2: IRL Pro, BELABOX
+  srtla_send) publish on the same port as plain SRT, with no separate
+  srtla_rec. SLS reorders the links' packets before libsrt (so SRT only
+  retransmits real losses), answers per-link SRTLA ACKs, and shows the
+  sender's real address. Publishers only; per-link stats in the publisher's
+  stats line. New directives `srtla_reorder_max`, `srtla_max_links_per_group`,
+  `srtla_max_groups`, `srtla_max_groups_per_ip`, `srtla_reg_per_ip_per_sec`.
+  See "SRTLA (srtla on)" in `doc/Directives.md`.
 - **`srt_lossmaxttl N;`** sets `SRTO_LOSSMAXTTL` on a server block's listener
   (default 0 = off).
 - **On/off directives** also accept `on` and `off`.
-- **`make test`** builds and runs unit tests; `tests/e2e/frontdoor.sh` and
-  `tests/e2e/parity.sh` are loopback e2e harnesses (ASAN build by default).
+- **`make test`** builds and runs unit tests; `tests/e2e/frontdoor.sh`,
+  `tests/e2e/parity.sh` and `tests/e2e/srtla.sh` are loopback e2e harnesses
+  (ASAN build by default); `tests/e2e/srtla_sender.py` is a small SRTLA test
+  sender.
 
 Upgrading from 1.5.3
 ====================

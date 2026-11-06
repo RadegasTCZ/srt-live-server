@@ -94,10 +94,17 @@ srt {
                                     # wait for a free worker slot before it is closed.
         max_players_per_stream 100; # concurrent players of one stream (default 0 = unlimited).
 
-        # Front door (default off): sls owns this port itself and relays SRT to a
-        # libsrt listener on 127.0.0.1, the basis for SRTLA (bonded links) on
-        # the same port. Clients use the same URL either way. See doc/Directives.md.
+        # Front door (default off): sls owns this port itself, relays plain SRT
+        # to a libsrt listener on 127.0.0.1 and receives SRTLA (bonded links,
+        # publishers only) on the same port. Clients use the same URL either
+        # way. See doc/Directives.md, "Front door" and "SRTLA".
         #srtla on;
+        #srtla_reorder_max 500;     # ms a packet waits for a gap (0-2000; 0 = pass-through);
+                                    # the hold is min(this, latency / 4).
+        #srtla_max_links_per_group 8;
+        #srtla_max_groups 200;
+        #srtla_max_groups_per_ip 4;
+        #srtla_reg_per_ip_per_sec 5;
         #srt_lossmaxttl 0;          # SRTO_LOSSMAXTTL (0-1000, default 0 = off): reordering
                                     # tolerated before a loss is reported.
 

@@ -414,8 +414,9 @@ binds an ephemeral port on `127.0.0.1` only. Startup logs
 `front door: public port <listen>, internal 127.0.0.1:<port>`. Players and
 publishers keep using `<host>:<listen>` unchanged. Off (or absent), libsrt binds
 the public port exactly as before and none of the front door code runs. The
-front door is the basis for receiving SRTLA (bonded links) on the same port;
-see "Front door (srtla on)" below.
+front door also receives SRTLA (srtla2: bonded links from IRL Pro, BELABOX
+srtla_send and the like) on the same port; see "Front door (srtla on)" and
+"SRTLA (srtla on)" below.
 
 ## srt_lossmaxttl (server block)
 
@@ -468,8 +469,8 @@ What changes with `srtla on;` in a server block:
   2 s after libsrt sent a shutdown; 2 s after the peer sent one, unless the peer
   keeps sending (a forged shutdown does not end a session).
 - **Dropped packets.** Anything else from an unknown source is dropped and
-  counted, never logged per packet: SRTLA packets (`dropped_srtla`; SRTLA support
-  itself comes later) and the rest (`dropped_unknown`, e.g. data from a peer
+  counted, never logged per packet: SRTLA packets other than a registration
+  (`dropped_srtla`) and the rest (`dropped_unknown`, e.g. data from a peer
   whose NAT changed its port: its session ends, and the encoder's reconnect
   arrives as a new handshake; oversized datagrams count here too).
 - **Counters.** A DEBUG summary every 10 s when something moved, and at stop
@@ -491,6 +492,74 @@ front door stops last, 200 ms after every libsrt socket closed, so peers get
 libsrt's shutdown and disconnect at once. libsrt's own log lines (and the DEBUG
 accept line) show the
 internal `127.0.0.1` peer.
+
+## SRTLA (srtla on)
+
+With `srtla on;` a bonded sender registers its links on the block's `listen`
+port, next to plain SRT. Nothing changes for the sender: point it at
+`<host>:<listen>` with the usual streamid and passphrase. SLS reorders the
+links' packets before libsrt sees them, so SRT only reports (NAKs) real
+losses, and answers each link with SRTLA ACKs so the sender balances its links
+by what each one delivers.
+
+- **Registration (srtla2).** A REG1 is answered with REG2 (the group id: the
+  sender's half and a half of ours with a keyed MAC; REG1 itself creates
+  nothing). A REG2 with that id, at most 10 s old, creates the group and adds
+  its source as a link (REG3); later REG2s add more links. An unknown or expired
+  id gets REG_NGP (the sender registers again); a cap, the rate, a locked-out
+  address or a source that is a live plain SRT peer gets REG_ERR (try later).
+  REG_NAK is never sent. A link moves to another group only after 3 s of
+  silence.
+- **Identity.** The group's SRT session uses the address that sent REG1: that
+  is `remote=`, `remote_ip` in the stats and the webhook, and the address the
+  caps and the wrong-passphrase lockout count against. REG1/REG2 from an address
+  the lockout blocks, or that has used up `max_handshakes_per_ip_per_sec`, get
+  REG_ERR.
+- **Publishers only.** A connection through a group must publish: a player is
+  refused (`a player through an SRTLA group (publishers only)`). Anyone who
+  knows a group's id can add a link with any source address, so a group never
+  sends a stream out; SRT ACKs go only to links that delivered data in the last
+  2 s and since the previous ACK (the most recently active link always), all
+  other SRT packets to the most recently active link. Keepalives are echoed.
+- **Reorder buffer.** One per group. In-order packets go through at once; a
+  packet after a gap waits until the gap fills or the oldest waiting packet has
+  waited the hold, `min(srtla_reorder_max, latency / 4)`, with the session's
+  negotiated SRT latency (from libsrt's handshake answer; until then the
+  block's `latency`). Late packets (retransmissions) go through at once; a
+  second copy of a waiting packet is dropped. The window is sized for about
+  20 Mbit/s over the hold: up to about 2 MB per group at the default 500 ms
+  hold, 8.6 MB at 2000 ms (allocated on first use).
+- **Sessions.** A group lives while it has links (a link silent 10 s is
+  dropped; a group without links for 10 s ends; a group without an SRT
+  handshake 10 s after it was created ends). A new SRT connection from the
+  sender (another SRT socket) in the same group gets a fresh socket and an empty
+  buffer; a refused handshake ends the session, not the group.
+- **Logs.** INFO: `SRTLA group N registered by <ip:port>`, `link <ip:port>
+  joined` / `left (<reason>)`, `SRTLA group N ended: ... reason=, duration=,
+  peak links=`; at most 20 such lines per 10 s, then a held-back count.
+  Refused registrations go through the refusal budget. DEBUG: the session's
+  latency and hold, and every 10 s one summary line per group (links with
+  kbit/s and share, the reorder counters). Never one line per packet. The stop
+  line adds `srtla_groups= srtla_reg_ok= srtla_reg_refused= srtla_in=
+  srtla_acks= srtla_no_session=`.
+- **Stats.** A publisher fed by a group has an `srtla` object in its stats
+  line: `{"links":[{"ip","port","kbitrate","share_pct","packets","last_ms"}],
+  "reordered","gap_released","duplicates","held_max_ms"}` (`last_ms` is wall
+  clock ms; refreshed every 3 s).
+
+Directives (server block, with `srtla on;`):
+
+| Directive | Range | Default | |
+|---|---|---|---|
+| `srtla_reorder_max` | 0-2000 ms | 500 | the longest a packet waits for a gap; 0 = pass-through (no reordering) |
+| `srtla_max_links_per_group` | 1-64 | 8 | links per group |
+| `srtla_max_groups` | 1-10000 | 200 | groups on this port |
+| `srtla_max_groups_per_ip` | 1-1000 | 4 | groups per registering address |
+| `srtla_reg_per_ip_per_sec` | 1-1000 | 5 | REG1 + REG2 per address per second (a link re-registering is not counted) |
+
+Senders should use a latency of 2000 ms or more (SRT takes the larger of the
+two sides'); with bonded cellular links a short latency turns ordinary
+reordering and retransmission delays into drops.
 
 ## max_pull_streams (relay block), pull relay lifetime
 
