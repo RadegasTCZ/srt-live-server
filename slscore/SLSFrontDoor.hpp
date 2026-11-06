@@ -95,9 +95,9 @@ public:
     void set_srtla(const sls_srtla_caps &caps, int reorder_max_ms, int latency_ms);
     // asked before a REG1/REG2 is answered (on this thread): a reason refuses
     // it, NULL allows it (the listener: wrong-passphrase lockout, handshake
-    // rate). ctx must outlive this front door (it runs until the manager's
-    // stop, after the listeners are gone).
-    typedef const char *(*srtla_ip_check_fn)(void *ctx, uint32_t ip_be);
+    // rate; rate false: the lockout only). ctx must outlive this front door
+    // (it runs until the manager's stop, after the listeners are gone).
+    typedef const char *(*srtla_ip_check_fn)(void *ctx, uint32_t ip_be, bool rate);
     void set_srtla_ip_check(srtla_ip_check_fn fn, void *ctx) { m_ip_check = fn; m_ip_check_ctx = ctx; }
     // work() ended on an error: the port is no longer served (the manager stops sls)
     bool failed() const { return m_failed; }
@@ -120,6 +120,7 @@ public:
     std::atomic<uint64_t> m_srtla_in;          // packets from registered links
     std::atomic<uint64_t> m_srtla_acks;        // SRTLA ACKs sent
     std::atomic<uint64_t> m_srtla_no_session;  // SRT data/control from a group without an SRT session
+    std::atomic<uint64_t> m_srtla_foreign;     // SRT packets from a link for another session (dropped)
 
 private:
     std::atomic<bool> m_failed;
@@ -150,7 +151,9 @@ private:
         CSLSSrtlaReorder *buf;
         bool              logged;   // "group registered" was logged
         uint32_t          peer_sock;  // the caller's SRT socket id of the current session (0: none)
-        const char       *last_end;   // how the last SRT session ended (for the "group ended" line)
+        uint32_t          srt_sock;   // libsrt's socket id of the current session (0: not known yet)
+        bool              established;  // libsrt answered past the handshake: data is reordered
+        const char       *last_end;   // how the last SRT session ended (one of the SRTLA_END_* strings)
     };
     srtla_ip_check_fn m_ip_check;
     void             *m_ip_check_ctx;
@@ -161,6 +164,7 @@ private:
     std::map<uint32_t, group_rt *> m_group_rt;
     std::map<int, uint32_t>        m_group_by_fd;
     int64_t  m_last_srtla_cleanup_ms;
+    int64_t  m_srtla_due_ms;   // the earliest reorder deadline (INT64_MAX: none; earlier is harmless)
     int64_t  m_srtla_log_window_ms;
     int      m_srtla_log_n;
     uint64_t m_srtla_log_held;

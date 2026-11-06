@@ -193,24 +193,38 @@ SLS_TEST(groups_global_cap_spoof_flood)
 
 SLS_TEST(groups_rate_limit)
 {
-    // REG1s and REG2s with ids we don't know are counted per IP; a REG2 with
-    // a valid id (from our REG1 answer) is not, nor a link re-registering
+    // REG1s are counted per source ip:port (rate 3) and per IP (4 x 3); REG2s
+    // with ids we don't know per IP in their own budget; a REG2 with a valid
+    // id (from our REG1 answer) is not counted, nor a link re-registering
     CSLSSrtlaGroups g(caps(200, 100, 8, 3), fill_counter);
     uint8_t sid[SLS_SRTLA_ID_LEN], full[SLS_SRTLA_ID_LEN], junk[SLS_SRTLA_ID_LEN];
     memset(sid, 3, sizeof(sid));
     memset(junk, 9, sizeof(junk));
-    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 1), sid, 0, full), SLS_SRTLA_REG_OK);      // 1
-    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 1), full, 100), SLS_SRTLA_REG_OK);         // valid: not counted
-    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 7), junk, 150), SLS_SRTLA_REG_NGP);        // 2
-    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 2), sid, 200, full), SLS_SRTLA_REG_OK);    // 3
-    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 3), sid, 300, full), SLS_SRTLA_REG_ERR);   // 4th in the second
-    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 8), junk, 310), SLS_SRTLA_REG_ERR);        // unknown ids too
-    // ... but a sender holding a valid id still gets its links in
+    struct sockaddr_in s1 = addr("10.0.0.1", 1);
+    SLS_CHECK_EQ(g.reg1(s1, sid, 0, full), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(g.reg2(s1, full, 100), SLS_SRTLA_REG_OK);         // valid: not counted
+    SLS_CHECK_EQ(g.reg1(s1, sid, 110, full), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(g.reg1(s1, sid, 120, full), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(g.reg1(s1, sid, 130, full), SLS_SRTLA_REG_ERR);   // 4th from this source in the second
+    // junk REG2s use up their own budget, not the REG1s'
+    for (int i = 0; i < 3; i++) SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 7), junk, 150), SLS_SRTLA_REG_NGP);
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 8), junk, 160), SLS_SRTLA_REG_ERR);
+    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 2), sid, 200, full), SLS_SRTLA_REG_OK);   // another source, same IP
+    // ... and a sender holding a valid id still gets its links in
     SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 2), full, 320), SLS_SRTLA_REG_OK);
-    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 4), full, 330), SLS_SRTLA_REG_OK);
     for (int i = 0; i < 10; i++) SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 4), full, 340 + i), SLS_SRTLA_REG_OK);
+    // the per-IP ceiling: 12 REG1s per second from all its sources together
+    int ok = 0;
+    for (int p = 10; p < 30; p++) ok += g.reg1(addr("10.0.0.5", p), sid, 400, full) == SLS_SRTLA_REG_OK;
+    SLS_CHECK_EQ(ok, 3 * SLS_SRTLA_REG1_IP_FACTOR);
+    // a source over its own budget doesn't charge the IP's
+    SLS_CHECK_EQ(g.reg1(addr("10.0.0.6", 1), sid, 400, full), SLS_SRTLA_REG_OK);
+    for (int i = 0; i < 20; i++) g.reg1(addr("10.0.0.6", 1), sid, 400, full);
+    ok = 0;
+    for (int p = 10; p < 30; p++) ok += g.reg1(addr("10.0.0.6", p), sid, 400, full) == SLS_SRTLA_REG_OK;
+    SLS_CHECK_EQ(ok, 3 * SLS_SRTLA_REG1_IP_FACTOR - 3);
     // the next window allows again; other IPs are separate
-    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 3), sid, 1000, full), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(g.reg1(s1, sid, 1000, full), SLS_SRTLA_REG_OK);
     SLS_CHECK_EQ(g.reg1(addr("10.0.0.2", 1), sid, 300, full), SLS_SRTLA_REG_OK);
 }
 
@@ -233,6 +247,58 @@ SLS_TEST(groups_link_move)
     SLS_CHECK_EQ(count_events(g, SLS_SRTLA_EV_LINK_REMOVED, "moved"), 1);
 }
 
+// a link a forged REG2 put into another group: its traffic belongs to its own
+// session, never to that group's, so it turns foreign and its REG2 takes it back
+SLS_TEST(groups_foreign_link_reclaimed)
+{
+    CSLSSrtlaGroups g(caps(200, 4, 8, 0), fill_counter);
+    uint8_t a[SLS_SRTLA_ID_LEN], b[SLS_SRTLA_ID_LEN];
+    struct sockaddr_in x = addr("10.0.0.9", 9);
+    uint32_t ha = join(g, addr("10.0.0.1", 1), 0, a);   // the attacker's group
+    uint32_t hb = join(g, addr("10.0.0.2", 1), 0, b);   // the owner's group
+    SLS_CHECK_EQ(g.reg2(x, a, 100), SLS_SRTLA_REG_OK);   // forged "from" x
+    g.mark_own(addr("10.0.0.1", 1), 100);
+    // x carries the owner's session: data, never the attacker's session
+    for (int64_t t = 200; t <= 3000; t += 100) {
+        g.on_packet(x, 1316, true, t);
+    }
+    SLS_CHECK(!g.is_foreign(x, 3000));
+    SLS_CHECK_EQ(g.reg2(x, b, 3000), SLS_SRTLA_REG_ERR);   // not yet
+    g.on_packet(x, 1316, true, 3100);
+    SLS_CHECK(g.is_foreign(x, 3100));
+    struct sockaddr_in latest;
+    g.on_packet(addr("10.0.0.1", 1), 50, false, 1000);
+    SLS_CHECK(g.latest_link(ha, 3100, &latest) && latest.sin_addr.s_addr == addr("10.0.0.1", 1).sin_addr.s_addr);
+    std::vector<struct sockaddr_in> to;
+    g.fanout_links(ha, 3100, 2000, &to);
+    SLS_CHECK_EQ(to.size(), 1u);
+    // the owner's sender re-registers it (a REG2 doesn't count as activity)
+    g.on_packet(x, SLS_SRTLA_REG_LEN, false, 3200, false);
+    SLS_CHECK_EQ(g.reg2(x, b, 3200), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(g.group_of(x), hb);
+    // and a forged REG2 cannot take it again while it carries its own session
+    g.mark_own(x, 3300);
+    g.on_packet(x, 1316, true, 3300);
+    g.on_packet(x, SLS_SRTLA_REG_LEN, false, 6400, false);
+    g.on_packet(x, 1316, true, 6400);
+    g.mark_own(x, 6400);
+    SLS_CHECK_EQ(g.reg2(x, a, 6400), SLS_SRTLA_REG_ERR);
+    SLS_CHECK_EQ(g.group_of(x), hb);
+}
+
+SLS_TEST(groups_id_valid)
+{
+    CSLSSrtlaGroups g(caps(200, 4, 8, 0), fill_counter);
+    uint8_t id[SLS_SRTLA_ID_LEN];
+    uint32_t h1 = join(g, addr("10.0.0.1", 1), 0, id);
+    SLS_CHECK(h1 != 0);
+    // id_valid: known ids and our fresh answers only
+    SLS_CHECK(g.id_valid(id, 50000));
+    uint8_t junk[SLS_SRTLA_ID_LEN];
+    memset(junk, 7, sizeof(junk));
+    SLS_CHECK(!g.id_valid(junk, 0));
+}
+
 SLS_TEST(groups_timeouts)
 {
     CSLSSrtlaGroups g(caps(200, 4, 8, 0), fill_counter);
@@ -240,7 +306,7 @@ SLS_TEST(groups_timeouts)
     struct sockaddr_in l1 = addr("10.0.0.1", 1), l2 = addr("10.0.0.2", 1);
     uint32_t h = join(g, l1, 0, id);
     g.reg2(l2, id, 0);
-    g.mark_handshake(h);
+    g.mark_established(h);
     // l1 keeps sending, l2 goes silent
     for (int64_t t = 1000; t <= 12000; t += 1000) {
         g.on_packet(l1, 1316, true, t);
@@ -289,7 +355,7 @@ SLS_TEST(groups_no_handshake)
     g.on_packet(l1, 100, false, 10000);
     g.cleanup(10000);
     SLS_CHECK_EQ(g.group_count(), 0u);   // registered, links alive, but no SRT session
-    SLS_CHECK_EQ(count_events(g, SLS_SRTLA_EV_GROUP_REMOVED, "no handshake"), 1);
+    SLS_CHECK_EQ(count_events(g, SLS_SRTLA_EV_GROUP_REMOVED, "no session"), 1);
 }
 
 SLS_TEST(groups_fanout_links_and_stats)
@@ -302,6 +368,7 @@ SLS_TEST(groups_fanout_links_and_stats)
     g.reg2(l3, id, 0);
     g.on_packet(l1, 1000, true, 1000);
     g.on_packet(l2, 1000, true, 2500);
+    g.mark_own(l2, 2500);                  // the front door: this session's packet
     g.on_packet(l3, 50, false, 3000);      // keepalive only: the latest link, no data
     std::vector<struct sockaddr_in> act;
     g.fanout_links(h, 3000, 2000, &act);
@@ -312,10 +379,11 @@ SLS_TEST(groups_fanout_links_and_stats)
     g.fanout_links(h, 3010, 2000, &act);
     SLS_CHECK_EQ(act.size(), 1u);
     g.on_packet(l2, 1000, true, 3020);
+    g.mark_own(l2, 3020);
     g.fanout_links(h, 3030, 2000, &act);
     SLS_CHECK_EQ(act.size(), 1u);          // l2 is now the latest link itself
     struct sockaddr_in latest;
-    SLS_CHECK(g.latest_link(h, &latest) && latest.sin_addr.s_addr == l2.sin_addr.s_addr);
+    SLS_CHECK(g.latest_link(h, 3020, &latest) && latest.sin_addr.s_addr == l2.sin_addr.s_addr);
     // rates: (1000 + 125000) B on l1 over 4 s = 252 kbit/s
     g.cleanup(0);
     for (int i = 0; i < 100; i++) g.on_packet(l1, 1250, true, 3500);
@@ -381,4 +449,27 @@ SLS_TEST(groups_flooded_rate_table)
     SLS_CHECK_EQ(g.reg2(addr("192.0.2.9", 1), full, 20), SLS_SRTLA_REG_OK);
     SLS_CHECK_EQ(g.reg2(addr("192.0.2.10", 5), full, 20), SLS_SRTLA_REG_OK);
     SLS_CHECK_EQ(g.link_count(), 2u);
+}
+
+// libsrt's control goes to a link with a data history (a link that only sent
+// keepalives, e.g. a forged one, doesn't take it); before any data, to the
+// most recent link (the handshake's)
+SLS_TEST(groups_latest_link_needs_data_history)
+{
+    CSLSSrtlaGroups g(caps(200, 4, 8, 0), fill_counter);
+    uint8_t id[SLS_SRTLA_ID_LEN];
+    struct sockaddr_in l1 = addr("10.0.0.1", 1), l2 = addr("10.0.0.2", 1);
+    uint32_t h = join(g, l1, 0, id);
+    g.reg2(l2, id, 0);
+    struct sockaddr_in latest;
+    g.on_packet(l2, 64, false, 100);           // the handshake over l2
+    SLS_CHECK(g.latest_link(h, 100, &latest) && latest.sin_addr.s_addr == l2.sin_addr.s_addr);
+    g.on_packet(l1, 1316, true, 200);
+    g.mark_own(l1, 200, true);
+    g.on_packet(l2, 10, false, 300);           // keepalive only
+    g.mark_own(l2, 300);
+    SLS_CHECK(g.latest_link(h, 300, &latest) && latest.sin_addr.s_addr == l1.sin_addr.s_addr);
+    g.on_packet(l2, 1316, true, 400);
+    g.mark_own(l2, 400, true);
+    SLS_CHECK(g.latest_link(h, 400, &latest) && latest.sin_addr.s_addr == l2.sin_addr.s_addr);
 }

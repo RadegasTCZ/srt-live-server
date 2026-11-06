@@ -24,7 +24,6 @@
 
 #include <string.h>
 #include <algorithm>
-#include <string.h>
 
 #include "SLSSrtlaGroups.hpp"
 
@@ -34,7 +33,9 @@ CSLSSrtlaGroups::CSLSSrtlaGroups(const sls_srtla_caps &caps, rand_fill_fn rand_f
     m_rand_fill   = rand_fill;
     m_next_handle = 1;
     m_rand_fill(m_key, sizeof(m_key));
-    memset(m_rate, 0, sizeof(m_rate));
+    memset(m_rate_reg1_src, 0, sizeof(m_rate_reg1_src));
+    memset(m_rate_reg1_ip, 0, sizeof(m_rate_reg1_ip));
+    memset(m_rate_reg2, 0, sizeof(m_rate_reg2));
 }
 
 CSLSSrtlaGroups::~CSLSSrtlaGroups()
@@ -60,21 +61,26 @@ void CSLSSrtlaGroups::event(sls_srtla_event_type type, uint32_t handle,
     m_events.push_back(ev);
 }
 
-bool CSLSSrtlaGroups::rate_ok(uint32_t ip_be, int64_t now_ms)
+// key: an IP, or an ip:port (key_of). take: count it if within the limit
+bool CSLSSrtlaGroups::rate_ok(rate *table, uint64_t key, int limit, int64_t now_ms, bool take)
 {
-    if (m_caps.reg_per_ip_per_sec <= 0) {
+    if (limit <= 0) {
         return true;
     }
-    uint64_t h = sls_siphash24(m_key + 16, (const uint8_t *)&ip_be, sizeof(ip_be));
-    rate &r = m_rate[h % SLS_SRTLA_RATE_SLOTS];
+    uint8_t k[8];
+    for (int i = 0; i < 8; i++) k[i] = (uint8_t)(key >> (8 * i));
+    uint64_t h = sls_siphash24(m_key + 16, k, sizeof(k));
+    rate &r = table[h % SLS_SRTLA_RATE_SLOTS];
     if (now_ms - r.window_ms >= SLS_SRTLA_RATE_WINDOW_MS || now_ms < r.window_ms) {
         r.window_ms = now_ms;
         r.count     = 0;
     }
-    if (r.count >= m_caps.reg_per_ip_per_sec) {
+    if (r.count >= limit) {
         return false;
     }
-    r.count++;
+    if (take) {
+        r.count++;
+    }
     return true;
 }
 
@@ -108,9 +114,15 @@ void CSLSSrtlaGroups::id_mac(const uint8_t *id, uint8_t *mac16) const
 sls_srtla_reg_result CSLSSrtlaGroups::reg1(const struct sockaddr_in &src, const uint8_t *sender_id,
                                            int64_t now_ms, uint8_t *full_id_out)
 {
-    if (!rate_ok(src.sin_addr.s_addr, now_ms)) {
+    int n = m_caps.reg_per_ip_per_sec;
+    int ip_n = n > 0 ? n * SLS_SRTLA_REG1_IP_FACTOR : 0;
+    // both budgets must have room; only then is either charged
+    if (!rate_ok(m_rate_reg1_src, key_of(src), n, now_ms, false)
+            || !rate_ok(m_rate_reg1_ip, src.sin_addr.s_addr, ip_n, now_ms, false)) {
         return SLS_SRTLA_REG_ERR;
     }
+    rate_ok(m_rate_reg1_src, key_of(src), n, now_ms, true);
+    rate_ok(m_rate_reg1_ip, src.sin_addr.s_addr, ip_n, now_ms, true);
     uint8_t *id = full_id_out;
     memcpy(id, sender_id, SLS_SRTLA_ID_HALF);
     memcpy(id + ID_OFF_IP, &src.sin_addr.s_addr, 4);
@@ -146,6 +158,46 @@ CSLSSrtlaGroups::link *CSLSSrtlaGroups::find_link(const struct sockaddr_in &src,
     return NULL;
 }
 
+const CSLSSrtlaGroups::link *CSLSSrtlaGroups::find_link(const struct sockaddr_in &src) const
+{
+    return const_cast<CSLSSrtlaGroups *>(this)->find_link(src, NULL);
+}
+
+bool CSLSSrtlaGroups::foreign(const link &l, int64_t now_ms)
+{
+    return l.last_data_ms > 0 && now_ms - l.last_data_ms < SLS_SRTLA_LINK_MOVE_QUIET_MS
+           && now_ms - l.own_ms >= SLS_SRTLA_LINK_MOVE_QUIET_MS;
+}
+
+bool CSLSSrtlaGroups::is_foreign(const struct sockaddr_in &src, int64_t now_ms) const
+{
+    const link *l = find_link(src);
+    return l && foreign(*l, now_ms);
+}
+
+void CSLSSrtlaGroups::mark_own(const struct sockaddr_in &src, int64_t now_ms, bool data)
+{
+    link *l = find_link(src, NULL);
+    if (l) {
+        l->own_ms = now_ms;
+        l->own_data = l->own_data || data;
+    }
+}
+
+bool CSLSSrtlaGroups::id_valid(const uint8_t *full_id, int64_t now_ms) const
+{
+    if (m_by_id.count(std::string((const char *)full_id, SLS_SRTLA_ID_LEN))) {
+        return true;
+    }
+    uint8_t mac[16];
+    id_mac(full_id, mac);
+    uint8_t diff = 0;
+    for (int i = 0; i < 16; i++) diff |= (uint8_t)(mac[i] ^ full_id[ID_OFF_MAC + i]);
+    uint64_t t = 0;
+    for (int i = 0; i < 8; i++) t = (t << 8) | full_id[ID_OFF_TIME + i];
+    return !diff && (int64_t)t <= now_ms && now_ms - (int64_t)t <= SLS_SRTLA_REG_VALID_MS;
+}
+
 sls_srtla_reg_result CSLSSrtlaGroups::reg2(const struct sockaddr_in &src, const uint8_t *full_id,
                                            int64_t now_ms)
 {
@@ -160,23 +212,13 @@ sls_srtla_reg_result CSLSSrtlaGroups::reg2(const struct sockaddr_in &src, const 
     // only an id we don't know is rate-counted (no free probing); a valid one
     // proves the REG1 source could receive, so a flood that fills the rate
     // table cannot stop a sender that already has its id
-    bool valid = ii != m_by_id.end();
-    if (!valid) {
-        uint8_t mac[16];
-        id_mac(full_id, mac);
-        uint8_t diff = 0;
-        for (int i = 0; i < 16; i++) diff |= (uint8_t)(mac[i] ^ full_id[ID_OFF_MAC + i]);
-        uint64_t t = 0;
-        for (int i = 0; i < 8; i++) t = (t << 8) | full_id[ID_OFF_TIME + i];
-        valid = !diff && (int64_t)t <= now_ms && now_ms - (int64_t)t <= SLS_SRTLA_REG_VALID_MS;
-    }
-    if (!valid) {
-        if (!rate_ok(src.sin_addr.s_addr, now_ms)) {
+    if (!id_valid(full_id, now_ms)) {
+        if (!rate_ok(m_rate_reg2, src.sin_addr.s_addr, m_caps.reg_per_ip_per_sec, now_ms, true)) {
             return SLS_SRTLA_REG_ERR;
         }
         return SLS_SRTLA_REG_NGP;   // not ours, or too old: register again with REG1
     }
-    if (l && now_ms - l->last_ms < SLS_SRTLA_LINK_MOVE_QUIET_MS) {
+    if (l && now_ms - l->last_ms < SLS_SRTLA_LINK_MOVE_QUIET_MS && !foreign(*l, now_ms)) {
         return SLS_SRTLA_REG_ERR;   // a live link of another group: not taken by a REG2 (it may be forged)
     }
     uint32_t handle;
@@ -197,13 +239,12 @@ sls_srtla_reg_result CSLSSrtlaGroups::reg2(const struct sockaddr_in &src, const 
         g.reg_addr       = reg;
         g.created_ms     = now_ms;
         g.empty_since_ms = now_ms;
-        g.handshake      = false;
+        g.established    = false;
         g.fd             = -1;
         g.peak_links     = 0;
-        handle = m_next_handle++;
-        if (0 == m_next_handle) {
-            m_next_handle = 1;
-        }
+        do {   // skips 0 and, after a wrap, handles still in use
+            handle = m_next_handle++;
+        } while (0 == handle || m_groups.count(handle));
         m_groups[handle] = g;
         m_by_id[key] = handle;
         m_per_ip[ip]++;
@@ -232,6 +273,7 @@ sls_srtla_reg_result CSLSSrtlaGroups::reg2(const struct sockaddr_in &src, const 
     nl.addr         = src;
     nl.last_ms      = now_ms;
     nl.last_data_ms = 0;
+    nl.own_ms       = now_ms;
     nl.rate_ms      = now_ms;
     g.links.push_back(nl);
     if ((int)g.links.size() > g.peak_links) {
@@ -242,7 +284,8 @@ sls_srtla_reg_result CSLSSrtlaGroups::reg2(const struct sockaddr_in &src, const 
     return SLS_SRTLA_REG_OK;
 }
 
-uint32_t CSLSSrtlaGroups::on_packet(const struct sockaddr_in &src, int len, bool data, int64_t now_ms)
+uint32_t CSLSSrtlaGroups::on_packet(const struct sockaddr_in &src, int len, bool data, int64_t now_ms,
+                                    bool alive)
 {
     uint32_t handle = 0;
     link *l = find_link(src, &handle);
@@ -251,7 +294,9 @@ uint32_t CSLSSrtlaGroups::on_packet(const struct sockaddr_in &src, int len, bool
     }
     l->packets++;
     l->bytes += len > 0 ? (uint64_t)len : 0;
-    l->last_ms = now_ms;
+    if (alive) {
+        l->last_ms = now_ms;
+    }
     if (data) {
         l->last_data_ms = now_ms;
         l->data_since_fanout = true;
@@ -291,11 +336,11 @@ uint32_t CSLSSrtlaGroups::group_of(const struct sockaddr_in &src) const
     return li == m_links.end() ? 0 : li->second;
 }
 
-void CSLSSrtlaGroups::mark_handshake(uint32_t handle)
+void CSLSSrtlaGroups::mark_established(uint32_t handle)
 {
     groups_t::iterator it = m_groups.find(handle);
     if (it != m_groups.end()) {
-        it->second.handshake = true;
+        it->second.established = true;
     }
 }
 
@@ -351,20 +396,32 @@ void CSLSSrtlaGroups::links(uint32_t handle, std::vector<sls_srtla_link_stats> *
     std::stable_sort(out->begin(), out->end(), by_last_desc);
 }
 
-bool CSLSSrtlaGroups::latest_link(uint32_t handle, struct sockaddr_in *out) const
+bool CSLSSrtlaGroups::latest_link(uint32_t handle, int64_t now_ms, struct sockaddr_in *out) const
 {
     groups_t::const_iterator it = m_groups.find(handle);
-    if (it == m_groups.end() || it->second.links.empty()) {
+    if (it == m_groups.end()) {
         return false;
     }
     const std::vector<link> &ls = it->second.links;
-    size_t best = 0;
-    for (size_t i = 1; i < ls.size(); i++) {
-        if (ls[i].last_ms > ls[best].last_ms) {
-            best = i;
+    const link *best = NULL, *any = NULL;
+    for (size_t i = 0; i < ls.size(); i++) {
+        if (foreign(ls[i], now_ms)) {
+            continue;
+        }
+        if (!any || ls[i].last_ms > any->last_ms) {
+            any = &ls[i];
+        }
+        if (ls[i].own_data && (!best || ls[i].last_ms > best->last_ms)) {
+            best = &ls[i];
         }
     }
-    *out = ls[best].addr;
+    if (!best) {
+        best = any;
+    }
+    if (!best) {
+        return false;
+    }
+    *out = best->addr;
     return true;
 }
 
@@ -373,7 +430,7 @@ void CSLSSrtlaGroups::fanout_links(uint32_t handle, int64_t now_ms, int64_t wind
 {
     out->clear();
     struct sockaddr_in latest;
-    if (!latest_link(handle, &latest)) {
+    if (!latest_link(handle, now_ms, &latest)) {
         return;
     }
     out->push_back(latest);
@@ -384,7 +441,7 @@ void CSLSSrtlaGroups::fanout_links(uint32_t handle, int64_t now_ms, int64_t wind
         if (key_of(ls[i].addr) == key_of(latest)) {
             continue;
         }
-        if (fresh && now_ms - ls[i].last_data_ms < window_ms) {
+        if (fresh && now_ms - ls[i].last_data_ms < window_ms && !foreign(ls[i], now_ms)) {
             out->push_back(ls[i].addr);
         }
     }
@@ -438,8 +495,8 @@ void CSLSSrtlaGroups::cleanup(int64_t now_ms)
             g.empty_since_ms = now_ms;
         }
         groups_t::iterator cur = it++;
-        if (!g.handshake && now_ms - g.created_ms >= SLS_SRTLA_HANDSHAKE_MS) {
-            remove_group(cur, "no handshake", now_ms);
+        if (!g.established && now_ms - g.created_ms >= SLS_SRTLA_HANDSHAKE_MS) {
+            remove_group(cur, "no session", now_ms);
         } else if (g.links.empty() && now_ms - g.empty_since_ms >= SLS_SRTLA_GROUP_EMPTY_MS) {
             remove_group(cur, "no links", now_ms);
         }

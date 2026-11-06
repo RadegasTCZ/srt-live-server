@@ -975,7 +975,7 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
 // up its handshake rate, registers nothing. Nothing is counted here. ctx is
 // the manager's limiter, not the listener: the front door outlives the
 // listeners at stop (it relays their shutdowns) and the limiter outlives it.
-const char *CSLSListener::srtla_ip_refused(void *ctx, uint32_t ip_be)
+const char *CSLSListener::srtla_ip_refused(void *ctx, uint32_t ip_be, bool rate)
 {
     CSLSConnLimiter *limiter = static_cast<CSLSConnLimiter*>(ctx);
     struct in_addr a;
@@ -986,7 +986,7 @@ const char *CSLSListener::srtla_ip_refused(void *ctx, uint32_t ip_be)
     if (sls_auth_throttle().blocked(ip, now_ms)) {
         return "the address is locked out (wrong passphrases)";
     }
-    if (NULL != limiter && limiter->handshake_exhausted(ip, now_ms)) {
+    if (rate && NULL != limiter && limiter->handshake_exhausted(ip, now_ms)) {
         return "the address used up its handshake rate";
     }
     return NULL;

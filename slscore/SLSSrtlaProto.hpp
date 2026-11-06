@@ -42,6 +42,7 @@
 #define SLS_SRTLA_SHORT_LEN     2                           // REG3, REG_ERR, REG_NGP, REG_NAK
 #define SLS_SRTLA_ID_HALF       (SLS_SRTLA_ID_LEN / 2)      // the sender's half; the receiver fills the rest
 
+#define SLS_SRTLA_KEEPALIVE_MAX 128     // longer keepalives are not echoed (senders send 2-10 bytes)
 #define SLS_SRT_TYPE_ACK        0x8002
 #define SLS_SRT_TYPE_NAK        0x8003
 #define SLS_SRT_TYPE_SHUTDOWN   0x8005

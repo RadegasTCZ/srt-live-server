@@ -36,18 +36,22 @@
 
 #define SLS_SRTLA_LINK_TIMEOUT_MS    10000   // a link silent this long is removed
 #define SLS_SRTLA_GROUP_EMPTY_MS     10000   // a group without links this long is removed
-#define SLS_SRTLA_HANDSHAKE_MS       10000   // a group without an SRT handshake this long is removed
+#define SLS_SRTLA_HANDSHAKE_MS       10000   // a group without an established SRT session this long is removed
 #define SLS_SRTLA_CLEANUP_MS         3000    // how often the owner calls cleanup()
 #define SLS_SRTLA_RATE_WINDOW_MS     1000    // registrations per IP are counted per window
-#define SLS_SRTLA_RATE_SLOTS         4096    // the rate table: a keyed hash of the IP picks a slot
+#define SLS_SRTLA_RATE_SLOTS         4096    // each rate table: a keyed hash of the key picks a slot
+#define SLS_SRTLA_REG1_IP_FACTOR     4       // REG1s per IP: this many times the per-source rate
 #define SLS_SRTLA_REG_VALID_MS       10000   // a REG1 answer (our id half) is good for this long
 #define SLS_SRTLA_LINK_MOVE_QUIET_MS 3000    // a link moves to another group only after this much silence
+                                             // (or this long carrying only another session's SRT traffic)
 
 struct sls_srtla_caps {
     int max_groups;            // srtla_max_groups (200)
     int max_groups_per_ip;     // srtla_max_groups_per_ip (4), by the registering (REG1) IP
     int max_links_per_group;   // srtla_max_links_per_group (8)
-    int reg_per_ip_per_sec;    // srtla_reg_per_ip_per_sec (5), REG1 and REG2 together
+    int reg_per_ip_per_sec;    // srtla_reg_per_ip_per_sec (5): REG1s per source ip:port (and
+                               // SLS_SRTLA_REG1_IP_FACTOR times that per IP); REG2s with an
+                               // invalid id per IP, in a table of their own
 };
 
 // what to answer a registration with
@@ -68,7 +72,7 @@ struct sls_srtla_event {
     sls_srtla_event_type type;
     uint32_t           group;    // the group's handle
     struct sockaddr_in addr;     // the link (link events) or the registering address (group events)
-    const char        *reason;   // static string: "registered", "timed out", "no links", "no handshake", "moved", "stopped"
+    const char        *reason;   // static string: "registered", "timed out", "no links", "no session", "moved", "stopped"
     int                fd;       // GROUP_REMOVED: the group's SRT socket (or -1); the owner closes it
     int64_t            duration_ms;  // GROUP_REMOVED: how long it lived
     int                peak_links;   // GROUP_REMOVED
@@ -98,8 +102,16 @@ struct sls_srtla_link_stats {
  * A link is its source address and port; a source belongs to at most one
  * group (a REG2 for another group moves it, once it has been silent for
  * SLS_SRTLA_LINK_MOVE_QUIET_MS: a forged REG2 cannot steal a live link).
- * The registration rate per IP uses a fixed table indexed by a keyed hash
- * (O(1), no allocation; IPs that collide share a budget).
+ * Registrations themselves don't count as activity for that. A link that
+ * carries SRT traffic but none of its own group's session (for that long) is
+ * "foreign": a forged REG2 put it there. It gets no answers (the owner's
+ * sender re-registers it) and a valid REG2 for another group moves it.
+ * The registration rates use fixed tables indexed by a keyed hash (O(1), no
+ * allocation; keys that collide share a budget). REG1 and invalid REG2 have
+ * separate budgets, so junk REG2s "from" an address cannot use up the REG1s
+ * its real sender needs; REG1 is counted per source ip:port with a higher
+ * ceiling per IP (an address sharing a CGNAT IP, or one spoofed REG1 source,
+ * doesn't use up the others' budget). Valid REG2s are never counted.
  */
 class CSLSSrtlaGroups
 {
@@ -117,8 +129,17 @@ public:
     sls_srtla_reg_result reg2(const struct sockaddr_in &src, const uint8_t *full_id, int64_t now_ms);
 
     // the group src is a link of (0 if none); counts the packet for that link.
-    // data: an SRT data packet (counts towards the link's recent data).
-    uint32_t on_packet(const struct sockaddr_in &src, int len, bool data, int64_t now_ms);
+    // data: an SRT data packet (counts towards the link's recent data);
+    // alive: false for a registration (it doesn't keep the link from moving)
+    uint32_t on_packet(const struct sockaddr_in &src, int len, bool data, int64_t now_ms,
+                       bool alive = true);
+    // src carried SRT traffic of its own group's session (the owner knows the
+    // session); data: an SRT data packet (the link has a data history)
+    void mark_own(const struct sockaddr_in &src, int64_t now_ms, bool data = false);
+    // src carries SRT traffic, but none of its group's session: see the class comment
+    bool is_foreign(const struct sockaddr_in &src, int64_t now_ms) const;
+    // full_id names a group, or is one of our REG1 answers and still fresh
+    bool id_valid(const uint8_t *full_id, int64_t now_ms) const;
     uint32_t group_of(const struct sockaddr_in &src) const;
     // src is already a link of the group named by full_id (a REG2 refresh)
     bool is_link_of(const struct sockaddr_in &src, const uint8_t *full_id) const;
@@ -127,8 +148,8 @@ public:
     // true (send that link an SRTLA ACK)
     bool record_ack_seq(const struct sockaddr_in &src, uint32_t seq, uint32_t *ack_out);
 
-    // the group's SRT session has been seen (an SRT handshake through it)
-    void mark_handshake(uint32_t group);
+    // the group's SRT session got established (libsrt answered past the handshake)
+    void mark_established(uint32_t group);
     // the group's SRT socket (to the loopback listener), -1 for none; returns the previous one
     int  set_fd(uint32_t group, int fd);
     int  fd_of(uint32_t group) const;
@@ -141,8 +162,10 @@ public:
     // (a forged link gets at most one ACK per forged packet); clears the marks
     void fanout_links(uint32_t group, int64_t now_ms, int64_t window_ms,
                       std::vector<struct sockaddr_in> *out);
-    // the most recently active link of the group
-    bool latest_link(uint32_t group, struct sockaddr_in *out) const;
+    // where libsrt's control (not ACKs) goes: the most recently active link
+    // that has carried data of the group's session; before any has, the most
+    // recently active link (the handshake). Never a foreign link.
+    bool latest_link(uint32_t group, int64_t now_ms, struct sockaddr_in *out) const;
 
     // removes timed-out links and groups; call every SLS_SRTLA_CLEANUP_MS
     void cleanup(int64_t now_ms);
@@ -162,6 +185,8 @@ private:
         uint64_t bytes;
         int64_t  last_ms;
         int64_t  last_data_ms;
+        int64_t  own_ms;         // joined, or last carried its own session's SRT traffic
+        bool     own_data;       // has carried data of its group's session
         uint64_t rate_bytes;     // bytes at the last rate sample
         int64_t  rate_ms;
         int      kbitrate;
@@ -174,7 +199,7 @@ private:
         struct sockaddr_in reg_addr;
         int64_t  created_ms;
         int64_t  empty_since_ms;   // when it last had no links
-        bool     handshake;
+        bool     established;      // an SRT session got established through it
         int      fd;
         int      peak_links;
         std::vector<link> links;
@@ -182,13 +207,16 @@ private:
     typedef std::map<uint32_t, group> groups_t;
 
     static uint64_t key_of(const struct sockaddr_in &a);
-    bool rate_ok(uint32_t ip_be, int64_t now_ms);
+    struct rate { int64_t window_ms; int count; };
+    bool rate_ok(rate *table, uint64_t key, int limit, int64_t now_ms, bool take);
     void remove_group(groups_t::iterator it, const char *reason, int64_t now_ms);
     void id_mac(const uint8_t *id, uint8_t *mac16) const;
     void remove_link(group &g, uint32_t handle, size_t i, const char *reason);
     void event(sls_srtla_event_type type, uint32_t handle, const struct sockaddr_in &addr,
                const char *reason);
     link *find_link(const struct sockaddr_in &src, uint32_t *handle);
+    const link *find_link(const struct sockaddr_in &src) const;
+    static bool foreign(const link &l, int64_t now_ms);
 
     sls_srtla_caps m_caps;
     rand_fill_fn   m_rand_fill;
@@ -198,8 +226,9 @@ private:
     std::map<std::string, uint32_t> m_by_id;
     std::map<uint64_t, uint32_t>    m_links;      // link source -> group
     std::map<uint32_t, int>         m_per_ip;     // groups per registering IP
-    struct rate { int64_t window_ms; int count; };
-    rate                            m_rate[SLS_SRTLA_RATE_SLOTS];
+    rate                            m_rate_reg1_src[SLS_SRTLA_RATE_SLOTS];
+    rate                            m_rate_reg1_ip[SLS_SRTLA_RATE_SLOTS];
+    rate                            m_rate_reg2[SLS_SRTLA_RATE_SLOTS];
     std::vector<sls_srtla_event>    m_events;
 };
 
