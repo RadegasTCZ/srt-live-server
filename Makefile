@@ -52,6 +52,7 @@ OBJS = $(OUTPUT_PATH)/SLSLog.o \
 	$(OUTPUT_PATH)/SLSSyncClock.o\
 	$(OUTPUT_PATH)/TSFileTimeReader.o\
 	$(OUTPUT_PATH)/SLSFrontDoorProto.o\
+	$(OUTPUT_PATH)/SLSSrtlaProto.o\
 	$(OUTPUT_PATH)/SLSPeerMap.o\
 	$(OUTPUT_PATH)/SLSFrontDoor.o
 	
@@ -80,7 +81,7 @@ $(OUTPUT_PATH):
 # no threads). `make test` builds $(BIN_PATH)/sls-tests and runs it.
 TEST_PATH = tests
 TEST_SRCS = $(wildcard $(TEST_PATH)/*.cpp)
-TEST_OBJS = $(OUTPUT_PATH)/SLSFrontDoorProto.o $(OUTPUT_PATH)/SLSPeerMap.o \
+TEST_OBJS = $(OUTPUT_PATH)/SLSFrontDoorProto.o $(OUTPUT_PATH)/SLSSrtlaProto.o $(OUTPUT_PATH)/SLSPeerMap.o \
             $(OUTPUT_PATH)/conf.o $(OUTPUT_PATH)/SLSLog.o $(OUTPUT_PATH)/common.o
 
 test: $(TEST_OBJS)
