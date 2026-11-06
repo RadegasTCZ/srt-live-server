@@ -37,6 +37,7 @@ CSLSSrtlaReorder::CSLSSrtlaReorder(int hold_ms, emit_fn emit, void *ctx)
     m_max_seen = 0;
     m_head    = 0;
     m_held    = 0;
+    m_far_ahead = 0;
     m_slot.assign(m_slots, slot());
     for (size_t i = 0; i < m_slot.size(); i++) {
         m_slot[i].used = false;
@@ -158,42 +159,50 @@ void CSLSSrtlaReorder::push(const uint8_t *pkt, int len, int64_t now_ms)
         start_at(seq);
     }
     int32_t d = sls_srt_seq_diff(m_next, seq);
-    if (d < -2 * m_slots) {
-        // far behind the release point: the sender started over
-        flush();
-        m_stats.resets++;
-        start_at(seq);
-        d = 0;
-    } else if (d < 0) {
+    if (d < 0) {
+        // behind the release point, however far (an SRT retransmission can be
+        // up to the latency old): forwarded at once, never a reset. A new SRT
+        // session gets flush() from the caller.
         m_stats.late++;
         m_emit(m_ctx, pkt, len);
         return;
     }
+    if (d >= 2 * m_slots) {
+        // far ahead: a long outage, or a forged sequence number. Forward it
+        // unbuffered; only SLS_SRTLA_REORDER_JUMP_CONFIRM in a row move the
+        // window (one packet cannot flush the buffer).
+        if (++m_far_ahead < SLS_SRTLA_REORDER_JUMP_CONFIRM) {
+            m_stats.late++;
+            m_emit(m_ctx, pkt, len);
+            return;
+        }
+        flush();
+        m_stats.resets++;
+        start_at(seq);
+        d = 0;
+    }
+    m_far_ahead = 0;
     if (sls_srt_seq_diff(m_max_seen, seq) < 0) {
         m_stats.reordered++;
     } else {
         m_max_seen = seq;
     }
     if (d >= m_slots) {
-        if (d >= 2 * m_slots) {
-            flush();
-            m_stats.resets++;
-            start_at(seq);
-            m_max_seen = seq;
-            d = 0;
-        } else {
-            // just beyond the window: release (and skip gaps) until it fits
-            m_stats.cap_released++;
-            while (d >= m_slots) {
-                if (m_slot[m_head].used) {
-                    emit_slot(m_head, now_ms);
-                }
-                advance();
-                d--;
+        // just beyond the window: release (and skip gaps) until it fits
+        bool released = false;
+        while (d >= m_slots) {
+            if (m_slot[m_head].used) {
+                emit_slot(m_head, now_ms);
+                released = true;
             }
-            release_run(now_ms);
-            d = sls_srt_seq_diff(m_next, seq);
+            advance();
+            d--;
         }
+        if (released) {
+            m_stats.cap_released++;
+        }
+        release_run(now_ms);
+        d = sls_srt_seq_diff(m_next, seq);
     }
     if (0 == d) {
         m_stats.passed++;
@@ -258,12 +267,14 @@ void CSLSSrtlaReorder::flush()
             m_emit(m_ctx, &m_data[m_head * SLS_SRTLA_REORDER_SLOT_LEN], s.len);
             s.used = false;
             m_held--;
+            m_stats.held++;
             advance();
         }
     }
     m_arrivals.clear();
     m_started = false;
     m_head    = 0;
+    m_far_ahead = 0;
 }
 
 void CSLSSrtlaReorder::reset()
@@ -275,4 +286,5 @@ void CSLSSrtlaReorder::reset()
     m_arrivals.clear();
     m_started = false;
     m_head    = 0;
+    m_far_ahead = 0;
 }

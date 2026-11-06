@@ -171,19 +171,103 @@ SLS_TEST(reorder_big_jump_resets)
 {
     std::vector<uint32_t> out;
     CSLSSrtlaReorder r(10, collect, &out);
+    int n = r.slots();
     push(r, 100, 0);
     push(r, 102, 0);
-    push(r, 100000, 1);    // far beyond: flush 102, restart at 100000
-    uint32_t want[] = {100, 102, 100000};
-    SLS_CHECK(seqs_are(out, want, 3));
+    // a confirmed jump far ahead (an outage): forwarded unbuffered until
+    // confirmed, then the window moves there
+    uint32_t far = 100 + 3 * (uint32_t)n;
+    for (int k = 0; k < SLS_SRTLA_REORDER_JUMP_CONFIRM - 1; k++) push(r, far + k, 1);
+    SLS_CHECK_EQ(r.stats().resets, 0u);
+    SLS_CHECK_EQ(r.held_count(), 1u);      // 102 still waits for 101
+    push(r, far + SLS_SRTLA_REORDER_JUMP_CONFIRM - 1, 1);
     SLS_CHECK_EQ(r.stats().resets, 1u);
-    push(r, 100001, 2);
-    SLS_CHECK_EQ(out.size(), 4u);
-    push(r, 5, 3);         // far behind: the sender started over
-    SLS_CHECK_EQ(r.stats().resets, 2u);
-    push(r, 6, 4);
-    SLS_CHECK_EQ(out.size(), 6u);
     SLS_CHECK_EQ(r.held_count(), 0u);
+    SLS_CHECK_EQ(out.size(), (size_t)SLS_SRTLA_REORDER_JUMP_CONFIRM + 2);
+    push(r, far + SLS_SRTLA_REORDER_JUMP_CONFIRM, 2);
+    SLS_CHECK_EQ(out.back(), far + SLS_SRTLA_REORDER_JUMP_CONFIRM);
+}
+
+SLS_TEST(reorder_single_forged_far_ahead)
+{
+    std::vector<uint32_t> out;
+    CSLSSrtlaReorder r(100, collect, &out);
+    push(r, 1000, 0);
+    push(r, 1002, 0);
+    push(r, 1000 + 10 * (uint32_t)r.slots(), 1);   // one forged packet
+    SLS_CHECK_EQ(r.stats().resets, 0u);
+    SLS_CHECK_EQ(r.held_count(), 1u);               // the buffer is untouched
+    push(r, 1001, 2);
+    push(r, 1003, 3);
+    SLS_CHECK_EQ(r.held_count(), 0u);
+    SLS_CHECK_EQ(out.size(), 5u);
+    SLS_CHECK_EQ(out[2], 1001u);
+    SLS_CHECK_EQ(out[3], 1002u);
+    SLS_CHECK_EQ(out[4], 1003u);
+}
+
+SLS_TEST(reorder_old_retransmission_is_late)
+{
+    // the reviewer's case: hold 50, a retransmission ~400 packets late must
+    // not reset the buffer or disturb the order of what is held
+    std::vector<uint32_t> out;
+    CSLSSrtlaReorder r(50, collect, &out);
+    r.start_at(1000);
+    for (uint32_t s = 1000; s < 1400; s++) if (s != 1100) push(r, s, 0);
+    r.tick(60);                    // 1101.. waited; the gap at 1100 is given up
+    push(r, 1402, 61);             // 1400, 1401 missing: held
+    push(r, 1100, 70);             // the retransmission: late, forwarded
+    push(r, 1400, 71);
+    push(r, 1401, 72);
+    SLS_CHECK_EQ(r.stats().resets, 0u);
+    SLS_CHECK_EQ(r.held_count(), 0u);
+    size_t k = out.size();
+    SLS_CHECK(k >= 4 && out[k - 4] == 1100 && out[k - 3] == 1400 && out[k - 2] == 1401 && out[k - 1] == 1402);
+    // a retransmission from far back (more than 2x the window) as well
+    push(r, 1001, 80);
+    SLS_CHECK_EQ(r.stats().resets, 0u);
+    SLS_CHECK_EQ(out.back(), 1001u);
+}
+
+SLS_TEST(reorder_cap_empty_buffer_not_counted)
+{
+    std::vector<uint32_t> out;
+    CSLSSrtlaReorder r(10, collect, &out);
+    push(r, 0, 0);
+    push(r, (uint32_t)r.slots() + 10, 0);   // a loss within 2x the window, nothing held
+    SLS_CHECK_EQ(r.stats().cap_released, 0u);
+    SLS_CHECK_EQ(r.held_count(), 1u);
+}
+
+SLS_TEST(reorder_set_hold_keeps_order)
+{
+    std::vector<uint32_t> out;
+    CSLSSrtlaReorder r(100, collect, &out);
+    push(r, 10, 0);
+    push(r, 14, 0);
+    push(r, 12, 0);
+    push(r, 13, 0);
+    r.set_hold(200, 5);
+    uint32_t want[] = {10, 12, 13, 14};
+    SLS_CHECK(seqs_are(out, want, 4));
+    SLS_CHECK_EQ(r.stats().held, 3u);
+}
+
+SLS_TEST(reorder_deadline_across_wrap)
+{
+    std::vector<uint32_t> out;
+    CSLSSrtlaReorder r(100, collect, &out);
+    push(r, 0x7FFFFFFDu, 0);
+    push(r, 0x7FFFFFFFu, 10);
+    push(r, 1, 20);
+    SLS_CHECK_EQ(r.next_deadline(50), 60);
+    r.tick(110);
+    uint32_t want[] = {0x7FFFFFFDu, 0x7FFFFFFFu};
+    SLS_CHECK(seqs_are(out, want, 2));
+    SLS_CHECK_EQ(r.next_deadline(110), 10);
+    r.tick(120);
+    SLS_CHECK_EQ(out.size(), 3u);
+    SLS_CHECK_EQ(r.next_deadline(120), -1);
 }
 
 SLS_TEST(reorder_hold_zero_passthrough)
