@@ -204,6 +204,21 @@ void CSLSPeerMap::set_srtla(int fd)
     }
 }
 
+int CSLSPeerMap::peek_remote(const struct sockaddr_in &remote, int *state) const
+{
+    CSLSLock lock(&m_mutex);
+    by_remote_t::const_iterator it = m_by_remote.find(key_of(remote));
+    if (it == m_by_remote.end()) {
+        if (state) *state = SLS_FD_STATE_NONE;
+        return -1;
+    }
+    if (state) {
+        *state = it->second.closing_ms ? SLS_FD_STATE_ENDED
+               : (it->second.established ? SLS_FD_STATE_ESTABLISHED : SLS_FD_STATE_HALFOPEN);
+    }
+    return it->second.fd;
+}
+
 int CSLSPeerMap::state_for_fd(int fd) const
 {
     CSLSLock lock(&m_mutex);

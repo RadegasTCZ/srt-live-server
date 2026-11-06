@@ -79,15 +79,45 @@ static uint32_t join(CSLSSrtlaGroups &g, const struct sockaddr_in &a, int64_t no
 SLS_TEST(groups_reg1_id)
 {
     CSLSSrtlaGroups g(caps(200, 4, 8, 0), fill_counter);
-    uint8_t sid[SLS_SRTLA_ID_LEN], full[SLS_SRTLA_ID_LEN];
+    uint8_t sid[SLS_SRTLA_ID_LEN], full[SLS_SRTLA_ID_LEN], full2[SLS_SRTLA_ID_LEN];
     for (int i = 0; i < SLS_SRTLA_ID_LEN; i++) sid[i] = (uint8_t)(0xFF - i);
     SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 5000), sid, 0, full), SLS_SRTLA_REG_OK);
     // the sender's first half is kept, the second half is ours
     SLS_CHECK(0 == memcmp(full, sid, SLS_SRTLA_ID_HALF));
     SLS_CHECK(0 != memcmp(full + SLS_SRTLA_ID_HALF, sid + SLS_SRTLA_ID_HALF, SLS_SRTLA_ID_HALF));
+    // REG1 is stateless: nothing exists until a REG2 comes back with the id
+    SLS_CHECK_EQ(g.group_count(), 0u);
+    SLS_CHECK_EQ(count_events(g, SLS_SRTLA_EV_GROUP_ADDED), 0);
+    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 5000), sid, 0, full2), SLS_SRTLA_REG_OK);
+    SLS_CHECK(0 != memcmp(full, full2, SLS_SRTLA_ID_LEN));   // every answer differs
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.2", 6000), full, 100), SLS_SRTLA_REG_OK);   // from another link
     SLS_CHECK_EQ(g.group_count(), 1u);
-    SLS_CHECK_EQ(g.link_count(), 0u);   // REG1 alone adds no link
     SLS_CHECK_EQ(count_events(g, SLS_SRTLA_EV_GROUP_ADDED), 1);
+    struct sockaddr_in reg;
+    SLS_CHECK(g.registering_addr(g.group_of(addr("10.0.0.2", 6000)), &reg));
+    SLS_CHECK(reg.sin_addr.s_addr == inet_addr("10.0.0.1") && ntohs(reg.sin_port) == 5000);   // the REG1 source
+}
+
+SLS_TEST(groups_id_mac)
+{
+    CSLSSrtlaGroups g(caps(200, 4, 8, 0), fill_counter);
+    uint8_t sid[SLS_SRTLA_ID_LEN], full[SLS_SRTLA_ID_LEN], t[SLS_SRTLA_ID_LEN];
+    memset(sid, 7, sizeof(sid));
+    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 5000), sid, 1000, full), SLS_SRTLA_REG_OK);
+    // any changed byte (the sender's half, the source, the time, the MAC) is not ours
+    int offs[] = {0, 127, 128, 133, 140, 200, 255};
+    for (size_t k = 0; k < sizeof(offs) / sizeof(offs[0]); k++) {
+        memcpy(t, full, sizeof(t));
+        t[offs[k]] ^= 1;
+        SLS_CHECK_EQ(g.reg2(addr("10.0.0.3", (int)k + 1), t, 1100), SLS_SRTLA_REG_NGP);
+    }
+    // another instance (another key) does not know it
+    CSLSSrtlaGroups other(caps(200, 4, 8, 0), fill_counter);
+    SLS_CHECK_EQ(other.reg2(addr("10.0.0.3", 99), full, 1100), SLS_SRTLA_REG_NGP);
+    // too old
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.3", 50), full, 1000 + SLS_SRTLA_REG_VALID_MS + 1), SLS_SRTLA_REG_NGP);
+    SLS_CHECK_EQ(g.group_count(), 0u);
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.3", 51), full, 1000 + SLS_SRTLA_REG_VALID_MS), SLS_SRTLA_REG_OK);
 }
 
 SLS_TEST(groups_reg2_links)
@@ -123,52 +153,42 @@ SLS_TEST(groups_link_cap)
     SLS_CHECK_EQ(g.link_count(), 3u);
 }
 
-SLS_TEST(groups_per_ip_cap_and_eviction)
+SLS_TEST(groups_per_ip_cap)
 {
     CSLSSrtlaGroups g(caps(200, 2, 8, 0), fill_counter);
     uint8_t sid[SLS_SRTLA_ID_LEN], full[SLS_SRTLA_ID_LEN];
     memset(sid, 1, sizeof(sid));
-    // two established groups from one IP: a third REG1 is refused
     SLS_CHECK(join(g, addr("10.0.0.1", 1), 0) != 0);
     SLS_CHECK(join(g, addr("10.0.0.1", 2), 0) != 0);
-    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 3), sid, 0, full), SLS_SRTLA_REG_ERR);
+    // a third group from that IP: REG1 is answered (stateless), its REG2 refused
+    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 3), sid, 0, full), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 3), full, 0), SLS_SRTLA_REG_ERR);
     SLS_CHECK_EQ(g.groups_for_ip(inet_addr("10.0.0.1")), 2);
     // another IP is not affected
-    SLS_CHECK_EQ(g.reg1(addr("10.0.0.9", 1), sid, 0, full), SLS_SRTLA_REG_OK);
-    // half-open groups (no link yet) are evicted to make room
-    CSLSSrtlaGroups h(caps(200, 2, 8, 0), fill_counter);
-    SLS_CHECK_EQ(h.reg1(addr("10.0.0.1", 1), sid, 0, full), SLS_SRTLA_REG_OK);
-    SLS_CHECK_EQ(h.reg1(addr("10.0.0.1", 2), sid, 0, full), SLS_SRTLA_REG_OK);
-    count_events(h, SLS_SRTLA_EV_GROUP_ADDED);
-    SLS_CHECK_EQ(h.reg1(addr("10.0.0.1", 3), sid, 0, full), SLS_SRTLA_REG_OK);
-    SLS_CHECK_EQ(h.groups_for_ip(inet_addr("10.0.0.1")), 2);
-    std::vector<sls_srtla_event> ev;
-    h.take_events(&ev);
-    SLS_CHECK_EQ(ev.size(), 2u);
-    SLS_CHECK(ev.size() == 2 && ev[0].type == SLS_SRTLA_EV_GROUP_REMOVED && 0 == strcmp(ev[0].reason, "evicted"));
+    SLS_CHECK(join(g, addr("10.0.0.9", 1), 0) != 0);
 }
 
 SLS_TEST(groups_global_cap_spoof_flood)
 {
-    // a flood of spoofed REG1s cannot lock out a real sender: half-open groups
-    // are evicted at random, and a sender that completes REG2 is safe
+    // spoofed REG1s cost no state, so they cannot crowd out a real sender
     CSLSSrtlaGroups g(caps(10, 0, 8, 0), fill_counter);
     uint8_t sid[SLS_SRTLA_ID_LEN], full[SLS_SRTLA_ID_LEN], real[SLS_SRTLA_ID_LEN];
     memset(sid, 2, sizeof(sid));
     SLS_CHECK_EQ(g.reg1(addr("192.0.2.1", 1), sid, 0, real), SLS_SRTLA_REG_OK);
-    SLS_CHECK_EQ(g.reg2(addr("192.0.2.1", 1), real, 0), SLS_SRTLA_REG_OK);
     char ip[32];
-    for (int i = 0; i < 1000; i++) {
-        snprintf(ip, sizeof(ip), "10.%d.%d.1", i / 250, i % 250);
+    for (int i = 0; i < 100000; i++) {
+        snprintf(ip, sizeof(ip), "10.%d.%d.%d", (i >> 16) & 255, (i >> 8) & 255, i & 255);
         SLS_CHECK_EQ(g.reg1(addr(ip, 1), sid, 0, full), SLS_SRTLA_REG_OK);
     }
-    SLS_CHECK_EQ(g.group_count(), 10u);
-    SLS_CHECK(g.group_of(addr("192.0.2.1", 1)) != 0);   // the established group survived
-    // all groups established: a new REG1 is refused
+    SLS_CHECK_EQ(g.group_count(), 0u);
+    SLS_CHECK_EQ(g.reg2(addr("192.0.2.1", 1), real, 50), SLS_SRTLA_REG_OK);   // the real one, after the flood
+    SLS_CHECK_EQ(g.group_count(), 1u);
+    // all groups established: a new group is refused at REG2
     CSLSSrtlaGroups f(caps(2, 0, 8, 0), fill_counter);
     SLS_CHECK(join(f, addr("10.0.0.1", 1), 0) != 0);
     SLS_CHECK(join(f, addr("10.0.0.2", 1), 0) != 0);
-    SLS_CHECK_EQ(f.reg1(addr("10.0.0.3", 1), sid, 0, full), SLS_SRTLA_REG_ERR);
+    SLS_CHECK_EQ(f.reg1(addr("10.0.0.3", 1), sid, 0, full), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(f.reg2(addr("10.0.0.3", 1), full, 0), SLS_SRTLA_REG_ERR);
 }
 
 SLS_TEST(groups_rate_limit)
@@ -186,7 +206,7 @@ SLS_TEST(groups_rate_limit)
     join(r, addr("10.0.0.5", 1), 0, id);
     for (int i = 0; i < 10; i++) SLS_CHECK_EQ(r.reg2(addr("10.0.0.5", 1), id, 10 + i), SLS_SRTLA_REG_OK);
     // an unknown REG2 counts (no free probing of ids)
-    SLS_CHECK_EQ(r.reg2(addr("10.0.0.5", 9), id, 20), SLS_SRTLA_REG_ERR);
+    SLS_CHECK_EQ(r.reg2(addr("10.0.0.5", 9), id, 20), SLS_SRTLA_REG_ERR);   // (join used 2: REG1 + REG2)
     // the next window allows again
     SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 3), sid, 1000, full), SLS_SRTLA_REG_OK);
     // other IPs are separate
@@ -201,7 +221,12 @@ SLS_TEST(groups_link_move)
     uint32_t hb = join(g, addr("10.0.0.2", 1), 0, b);
     SLS_CHECK(ha != hb);
     count_events(g, SLS_SRTLA_EV_LINK_ADDED);
-    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 1), b, 10), SLS_SRTLA_REG_OK);
+    // a live link is not taken by a REG2 for another group (it may be forged)
+    g.on_packet(addr("10.0.0.1", 1), 100, true, 2000);
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 1), b, 2500), SLS_SRTLA_REG_ERR);
+    SLS_CHECK_EQ(g.group_of(addr("10.0.0.1", 1)), ha);
+    // after SLS_SRTLA_LINK_MOVE_QUIET_MS of silence it moves
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 1), b, 2000 + SLS_SRTLA_LINK_MOVE_QUIET_MS), SLS_SRTLA_REG_OK);
     SLS_CHECK_EQ(g.group_of(addr("10.0.0.1", 1)), hb);
     SLS_CHECK_EQ(g.link_count(), 2u);
     SLS_CHECK_EQ(count_events(g, SLS_SRTLA_EV_LINK_REMOVED, "moved"), 1);
@@ -266,7 +291,7 @@ SLS_TEST(groups_no_handshake)
     SLS_CHECK_EQ(count_events(g, SLS_SRTLA_EV_GROUP_REMOVED, "no handshake"), 1);
 }
 
-SLS_TEST(groups_active_links_and_stats)
+SLS_TEST(groups_fanout_links_and_stats)
 {
     CSLSSrtlaGroups g(caps(200, 4, 8, 0), fill_counter);
     uint8_t id[SLS_SRTLA_ID_LEN];
@@ -278,13 +303,19 @@ SLS_TEST(groups_active_links_and_stats)
     g.on_packet(l2, 1000, true, 2500);
     g.on_packet(l3, 50, false, 3000);      // keepalive only: the latest link, no data
     std::vector<struct sockaddr_in> act;
-    g.active_links(h, 3000, 2000, &act);
-    SLS_CHECK_EQ(act.size(), 2u);          // l3 (latest, always) + l2 (data 0.5 s ago); l1 is 2 s old
+    g.fanout_links(h, 3000, 2000, &act);
+    SLS_CHECK_EQ(act.size(), 2u);          // l3 (latest, always) + l2 (data 0.5 s ago); l1's is 2 s old
     SLS_CHECK(act.size() == 2 && act[0].sin_addr.s_addr == l3.sin_addr.s_addr);
     SLS_CHECK(act.size() == 2 && act[1].sin_addr.s_addr == l2.sin_addr.s_addr);
+    // no new data since: only the latest link (a forged link gets one ACK per forged packet)
+    g.fanout_links(h, 3010, 2000, &act);
+    SLS_CHECK_EQ(act.size(), 1u);
+    g.on_packet(l2, 1000, true, 3020);
+    g.fanout_links(h, 3030, 2000, &act);
+    SLS_CHECK_EQ(act.size(), 1u);          // l2 is now the latest link itself
     struct sockaddr_in latest;
-    SLS_CHECK(g.latest_link(h, &latest) && latest.sin_addr.s_addr == l3.sin_addr.s_addr);
-    // rates: 125000 bytes in 1 s on l1 = 1000 kbit/s
+    SLS_CHECK(g.latest_link(h, &latest) && latest.sin_addr.s_addr == l2.sin_addr.s_addr);
+    // rates: (1000 + 125000) B on l1 over 4 s = 252 kbit/s
     g.cleanup(0);
     for (int i = 0; i < 100; i++) g.on_packet(l1, 1250, true, 3500);
     g.cleanup(4000);
@@ -292,7 +323,7 @@ SLS_TEST(groups_active_links_and_stats)
     g.links(h, &st);
     SLS_CHECK_EQ(st.size(), 3u);
     SLS_CHECK(st.size() == 3 && st[0].addr.sin_addr.s_addr == l1.sin_addr.s_addr);   // most recent first
-    SLS_CHECK(st.size() == 3 && st[0].packets == 101 && st[0].kbitrate == 252);       // (1000 + 125000) B * 8 / 4000 ms
+    SLS_CHECK(st.size() == 3 && st[0].packets == 101 && st[0].kbitrate == 252);
 }
 
 SLS_TEST(groups_clear)

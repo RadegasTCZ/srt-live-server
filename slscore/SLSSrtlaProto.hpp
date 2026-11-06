@@ -100,11 +100,13 @@ int sls_srtla_build_ack(uint8_t *out, int cap, const uint32_t *seqs);
 bool sls_srtla_parse_ack(const uint8_t *p, int len, uint32_t *seqs_out);
 
 /**
- * The handshake type (+36: 1 = induction, 0xFFFFFFFF = conclusion, ...) and
- * the initial data sequence number (+24) of an SRT handshake of at least
+ * The handshake type (+36: 1 = induction, 0xFFFFFFFF = conclusion, ...),
+ * the sender's SRT socket id (+40) and the initial data sequence number
+ * (+24) of an SRT handshake of at least
  * SLS_SRT_HS_MIN_LEN bytes. False for anything else.
  */
-bool sls_srt_hs_fields(const uint8_t *p, int len, uint32_t *hs_type, uint32_t *isn);
+bool sls_srt_hs_fields(const uint8_t *p, int len, uint32_t *hs_type, uint32_t *isn,
+                       uint32_t *sock_id = NULL);
 
 #define SLS_SRT_HS_INDUCTION    1u
 #define SLS_SRT_HS_CONCLUSION   0xFFFFFFFFu
@@ -117,5 +119,11 @@ bool sls_srt_hs_fields(const uint8_t *p, int len, uint32_t *hs_type, uint32_t *i
  * such extension, or a truncated extension).
  */
 bool sls_srt_hs_tsbpd(const uint8_t *p, int len, int *cmd_out, int *rcv_ms, int *snd_ms);
+
+/**
+ * SipHash-2-4 (Aumasson & Bernstein) with a 128-bit key: a keyed PRF for the
+ * stateless group ids and the registration-rate table. 64-bit output.
+ */
+uint64_t sls_siphash24(const uint8_t key[16], const uint8_t *msg, size_t len);
 
 #endif

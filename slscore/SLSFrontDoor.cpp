@@ -82,6 +82,7 @@ CSLSFrontDoor::CSLSFrontDoor(int public_port, int internal_port, int max_total, 
       m_peers(max_total, max_per_ip), m_pollfds_dirty(true),
       m_last_expire_ms(0), m_last_summary_ms(0), m_last_cap_log_ms(0), m_last_local_error_log_ms(-100000),
       m_summary_seen(0), m_rcvbuf(0), m_sndbuf(0),
+      m_ip_check(NULL), m_ip_check_ctx(NULL),
       m_groups(NULL), m_reorder_max_ms(SLS_SRTLA_REORDER_DEFAULT_MS), m_latency_ms(120),
       m_last_srtla_cleanup_ms(0), m_srtla_log_window_ms(0), m_srtla_log_n(0), m_srtla_log_held(0)
 {
@@ -241,14 +242,16 @@ void CSLSFrontDoor::on_public_readable(int64_t now_ms)
             on_srtla_reg(kind, from, buf, (int)len, now_ms);
             continue;
         }
-        bool shutdown = sls_fd_is_shutdown(buf, (int)len);
-        int fd = m_peers.fd_for_remote(from, now_ms, shutdown, SLS_FD_SRT_HANDSHAKE == kind);
-        if (fd >= 0 && m_group_by_fd.count(fd)) {
-            // the registering address of a group, but not (or no longer) one of
-            // its links: its packets only reach the session through a link
+        // the registering address of a group, but not (or no longer) one of its
+        // links: its packets only reach the session through a link, and must not
+        // touch the session's entry (keep it alive, undo its shutdown)
+        int peek = m_peers.peek_remote(from, NULL);
+        if (peek >= 0 && m_group_by_fd.count(peek)) {
             m_dropped_unknown++;
             continue;
         }
+        bool shutdown = sls_fd_is_shutdown(buf, (int)len);
+        int fd = m_peers.fd_for_remote(from, now_ms, shutdown, SLS_FD_SRT_HANDSHAKE == kind);
         if (fd < 0) {
             if (SLS_FD_SRT_HANDSHAKE == kind) {
                 fd = open_mapping(from, now_ms);
@@ -516,6 +519,7 @@ CSLSFrontDoor::group_rt *CSLSFrontDoor::rt_of(uint32_t handle)
     rt->fd     = -1;
     rt->buf    = new CSLSSrtlaReorder(initial_hold(), emit_to_session, rt);
     rt->logged = false;
+    rt->peer_sock = 0;
     m_group_rt[handle] = rt;
     return rt;
 }
@@ -545,14 +549,26 @@ void CSLSFrontDoor::on_srtla_reg(int kind, const struct sockaddr_in &from, const
         return;
     }
     sls_srtla_reg_result r;
-    int n;
-    if (SLS_SRTLA_TYPE_REG1 == type) {
+    int n = 0;
+    int pstate = SLS_FD_STATE_NONE;
+    int pfd = m_peers.peek_remote(from, &pstate);
+    if (m_ip_check && m_ip_check(m_ip_check_ctx, from.sin_addr.s_addr)) {
+        // locked out (wrong passphrases) or over its handshake rate: no group, no link
+        r = SLS_SRTLA_REG_ERR;
+    } else if (SLS_SRTLA_TYPE_REG2 == type && pfd >= 0 && !m_group_by_fd.count(pfd)
+               && SLS_FD_STATE_ENDED != pstate) {
+        // a live plain SRT peer: a REG2 "from" it may be forged to steal its traffic
+        r = SLS_SRTLA_REG_ERR;
+    } else if (SLS_SRTLA_TYPE_REG1 == type) {
         uint8_t full[SLS_SRTLA_ID_LEN];
         r = m_groups->reg1(from, id, now_ms, full);
         n = (SLS_SRTLA_REG_OK == r) ? sls_srtla_build_reg(out, sizeof(out), SLS_SRTLA_TYPE_REG2, full) : 0;
     } else {
         r = m_groups->reg2(from, id, now_ms);
         n = (SLS_SRTLA_REG_OK == r) ? sls_srtla_build_short(out, sizeof(out), SLS_SRTLA_TYPE_REG3) : 0;
+        if (SLS_SRTLA_REG_OK == r) {
+            srtla_events(now_ms);   // a new group's rt exists before its first packet
+        }
         if (SLS_SRTLA_REG_OK == r) {
             rt_of(m_groups->group_of(from));
         }
@@ -567,7 +583,7 @@ void CSLSFrontDoor::on_srtla_reg(int kind, const struct sockaddr_in &from, const
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSFrontDoor, refused SRTLA %s from [%s:%d]: %s.",
                      this, SLS_SRTLA_TYPE_REG1 == type ? "REG1" : "REG2", sls_fd_ip(from, ip, sizeof(ip)),
                      ntohs(from.sin_port),
-                     SLS_SRTLA_REG_NGP == r ? "unknown group id" : "a registration cap or rate");
+                     SLS_SRTLA_REG_NGP == r ? "unknown or expired group id" : "a cap, the rate, a lockout or a live peer");
     }
     reply(from, out, n);
 }
@@ -600,6 +616,7 @@ int CSLSFrontDoor::open_group_session(group_rt *rt, int64_t now_ms)
     m_groups->set_fd(rt->handle, fd);
     m_group_by_fd[fd] = rt->handle;
     rt->fd = fd;
+    rt->peer_sock = 0;
     rt->buf->reset();
     rt->buf->set_hold(initial_hold(), now_ms);
     return fd;
@@ -676,14 +693,17 @@ void CSLSFrontDoor::on_link_packet(uint32_t handle, const struct sockaddr_in &fr
 
     // SRT control from the sender bypasses the buffer
     if (SLS_SRT_TYPE_HANDSHAKE == type) {
-        uint32_t hs_type = 0, isn = 0;
-        if (!sls_srt_hs_fields(buf, len, &hs_type, &isn)) {
+        uint32_t hs_type = 0, isn = 0, sock = 0;
+        if (!sls_srt_hs_fields(buf, len, &hs_type, &isn, &sock)) {
             m_dropped_srtla++;
             return;
         }
         int state = rt->fd >= 0 ? m_peers.state_for_fd(rt->fd) : SLS_FD_STATE_NONE;
+        // a new session: none yet, or an induction from another SRT socket once
+        // the current one got going (a late duplicate of this session's own
+        // induction, over a slower link, is just relayed)
         bool fresh = SLS_FD_STATE_NONE == state
-                     || (SLS_SRT_HS_INDUCTION == hs_type
+                     || (SLS_SRT_HS_INDUCTION == hs_type && sock != rt->peer_sock
                          && (SLS_FD_STATE_ESTABLISHED == state || SLS_FD_STATE_ENDED == state));
         if (fresh) {
             // a new SRT session in this group: a new socket and an empty buffer
@@ -691,6 +711,9 @@ void CSLSFrontDoor::on_link_packet(uint32_t handle, const struct sockaddr_in &fr
             if (open_group_session(rt, now_ms) < 0) {
                 return;   // over a mapping cap: the sender retries its handshake
             }
+        }
+        if (0 == rt->peer_sock) {
+            rt->peer_sock = sock;
         }
         if (SLS_SRT_HS_CONCLUSION == hs_type) {
             rt->buf->start_at(isn);
@@ -728,7 +751,7 @@ void CSLSFrontDoor::on_group_readable(int fd, uint32_t handle, const uint8_t *bu
     }
     if (SLS_SRT_TYPE_ACK == type) {
         std::vector<struct sockaddr_in> to;
-        m_groups->active_links(handle, now_ms, SLS_SRTLA_ACK_FANOUT_MS, &to);
+        m_groups->fanout_links(handle, now_ms, SLS_SRTLA_ACK_FANOUT_MS, &to);
         for (size_t i = 0; i < to.size(); i++) {
             reply(to[i], buf, len);
         }
@@ -778,12 +801,6 @@ void CSLSFrontDoor::srtla_events(int64_t now_ms)
                 delete it->second->buf;
                 delete it->second;
                 m_group_rt.erase(it);
-            }
-            if (e.fd >= 0 && m_group_by_fd.count(e.fd)) {   // not through end_group_session
-                forget_group_fd(e.fd);
-                m_peers.remove_fd(e.fd);
-                quarantine(e.fd, now_ms);
-                m_pollfds_dirty = true;
             }
             // half-open groups (never a link) go silently: they may be spoofed
             if (logged && srtla_log_ok(now_ms)) {

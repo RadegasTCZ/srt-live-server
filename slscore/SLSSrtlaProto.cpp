@@ -153,13 +153,14 @@ bool sls_srtla_parse_ack(const uint8_t *p, int len, uint32_t *seqs_out)
 #define HS_CONCLUSION    0xFFFFFFFFu
 #define HS_EXT_MAX       16      // walk at most this many extensions
 
-bool sls_srt_hs_fields(const uint8_t *p, int len, uint32_t *hs_type, uint32_t *isn)
+bool sls_srt_hs_fields(const uint8_t *p, int len, uint32_t *hs_type, uint32_t *isn, uint32_t *sock_id)
 {
     if (NULL == p || len < SLS_SRT_HS_MIN_LEN || rd16(p) != SLS_SRT_TYPE_HANDSHAKE) {
         return false;
     }
     if (hs_type) *hs_type = rd32(p + HS_OFF_TYPE);
     if (isn) *isn = rd32(p + 24) & SLS_SRT_SEQ_MASK;
+    if (sock_id) *sock_id = rd32(p + 40);
     return true;
 }
 
@@ -189,4 +190,39 @@ bool sls_srt_hs_tsbpd(const uint8_t *p, int len, int *cmd_out, int *rcv_ms, int 
         off = body + 4 * words;
     }
     return false;
+}
+
+static inline uint64_t rotl64(uint64_t x, int b) { return (x << b) | (x >> (64 - b)); }
+static inline uint64_t rd64le(const uint8_t *p)
+{
+    uint64_t v = 0;
+    for (int i = 7; i >= 0; i--) v = (v << 8) | p[i];
+    return v;
+}
+#define SIPROUND do { \
+    v0 += v1; v1 = rotl64(v1, 13); v1 ^= v0; v0 = rotl64(v0, 32); \
+    v2 += v3; v3 = rotl64(v3, 16); v3 ^= v2; \
+    v0 += v3; v3 = rotl64(v3, 21); v3 ^= v0; \
+    v2 += v1; v1 = rotl64(v1, 17); v1 ^= v2; v2 = rotl64(v2, 32); } while (0)
+
+uint64_t sls_siphash24(const uint8_t key[16], const uint8_t *msg, size_t len)
+{
+    uint64_t k0 = rd64le(key), k1 = rd64le(key + 8);
+    uint64_t v0 = k0 ^ 0x736f6d6570736575ull;
+    uint64_t v1 = k1 ^ 0x646f72616e646f6dull;
+    uint64_t v2 = k0 ^ 0x6c7967656e657261ull;
+    uint64_t v3 = k1 ^ 0x7465646279746573ull;
+    size_t full = len - (len % 8);
+    for (size_t i = 0; i < full; i += 8) {
+        uint64_t m = rd64le(msg + i);
+        v3 ^= m; SIPROUND; SIPROUND; v0 ^= m;
+    }
+    uint64_t b = ((uint64_t)len) << 56;
+    for (size_t i = 0; i < len % 8; i++) {
+        b |= ((uint64_t)msg[full + i]) << (8 * i);
+    }
+    v3 ^= b; SIPROUND; SIPROUND; v0 ^= b;
+    v2 ^= 0xff;
+    SIPROUND; SIPROUND; SIPROUND; SIPROUND;
+    return v0 ^ v1 ^ v2 ^ v3;
 }

@@ -210,3 +210,16 @@ SLS_TEST(srt_hs_fields)
     h[1] = 2;   // an ACK, not a handshake
     SLS_CHECK(!sls_srt_hs_fields(&h[0], (int)h.size(), &type, &isn));
 }
+
+SLS_TEST(siphash24_vectors)
+{
+    // the reference vectors: key 00..0f, messages 00, 00 01, ... (SipHash paper, appendix)
+    uint8_t key[16], msg[64];
+    for (int i = 0; i < 16; i++) key[i] = (uint8_t)i;
+    for (int i = 0; i < 64; i++) msg[i] = (uint8_t)i;
+    SLS_CHECK_EQ(sls_siphash24(key, msg, 0), 0x726fdb47dd0e0e31ull);
+    SLS_CHECK_EQ(sls_siphash24(key, msg, 1), 0x74f839c593dc67fdull);
+    SLS_CHECK_EQ(sls_siphash24(key, msg, 8), 0x93f5f5799a932462ull);
+    SLS_CHECK_EQ(sls_siphash24(key, msg, 15), 0xa129ca6149be45e5ull);
+    SLS_CHECK_EQ(sls_siphash24(key, msg, 63), 0x958a324ceb064572ull);
+}
