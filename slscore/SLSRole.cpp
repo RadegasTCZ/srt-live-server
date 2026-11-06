@@ -650,7 +650,7 @@ std::string   CSLSRole::srtla_stat_json()
 	if (0 != strcmp(m_role_name, "publisher")) {
 		return std::string();
 	}
-	std::string j = sls_srtla_stats_get(m_stat_remote_ip + ":" + std::to_string(m_stat_remote_port));
+	std::string j = sls_srtla_stats_get(sls_srtla_stats_key(m_admit.port, m_stat_remote_ip, m_stat_remote_port));
 	return j.empty() ? j : ",\"srtla\":" + j;
 }
 

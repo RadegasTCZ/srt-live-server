@@ -13,6 +13,8 @@ data packets, or kill a link mid-stream.
 
 --delay L:MS   hold every data packet on link L for MS ms
 --kill L:SEC   link L stops sending (and answering) after SEC seconds
+--late-induction SEC  re-send the caller's last SRT induction on link 0 at SEC
+               (a late duplicate over a slow link)
 Data packets go round robin over the live links. Control packets go on link 0
 (or the first live one). Prints a JSON summary at the end.
 """
@@ -37,6 +39,7 @@ def main():
     ap.add_argument('--duration', type=float, default=30)
     ap.add_argument('--stats', default='')
     ap.add_argument('--register-only', action='store_true')
+    ap.add_argument('--late-induction', type=float, default=0)
     a = ap.parse_args()
     host, port = a.server.rsplit(':', 1)
     server = (host, int(port))
@@ -96,6 +99,8 @@ def main():
     rr = 0
     ndata = 0
     pending = []   # (due, n, link index, bytes)
+    last_ind = None
+    li_done = False
     n = 0
     while time.time() < end:
         now = time.time()
@@ -103,6 +108,8 @@ def main():
             if l['alive'] and i in kill and now - t0 >= kill[i]:
                 l['alive'] = False
         live = [i for i, l in enumerate(links) if l['alive']]
+        if a.late_induction and not li_done and last_ind and now - t0 >= a.late_induction:
+            links[0]['sock'].sendto(last_ind, server); li_done = True; stats['late_induction_sent'] = 1
         if now >= next_ka:
             for i in live:
                 links[i]['sock'].sendto(struct.pack('!H', T_KEEPALIVE) + struct.pack('!Q', int(now * 1000)), server)
@@ -125,6 +132,8 @@ def main():
                         break
                     caller = addr
                     stats['from_caller'] += 1
+                    if len(b) >= 44 and b[:2] == b'\x80\x00' and struct.unpack('!I', b[36:40])[0] == 1:
+                        last_ind = b
                     if not live:
                         continue
                     if len(b) >= 16 and not (b[0] & 0x80):

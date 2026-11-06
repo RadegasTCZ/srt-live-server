@@ -241,6 +241,38 @@ case_dup_and_drop(){
     fi
 }
 
+case_late_induction(){
+    # a refused attempt first, then the real publisher; at 12 s a late copy of
+    # an SRT induction arrives over a link: the live session must not be cut
+    write_conf; start_sls
+    $SENDER --server 127.0.0.1:$PORT --local $LOCAL --links 127.0.0.2,127.0.0.3 --delay 1:30 \
+        --duration 26 --late-induction 12 > sender.json 2> sender.err &
+    local sp=$!
+    nap 1
+    timeout 3 srt-live-transmit -q -a no "srt://127.0.0.1:$LOCAL?streamid=uplive.m/live/nobody&passphrase=xxxxxxxxxxxxxxxx&mode=caller" \
+        file://con < /dev/null > /dev/null 2>&1
+    nap 0.5
+    ( nice ffmpeg -nostdin -loglevel error -re -stream_loop -1 -i "$SRC_TS" -c copy -f mpegts - 2>/dev/null | \
+      timeout 22 srt-live-transmit -q -chunk 1316 file://con \
+        "srt://127.0.0.1:$LOCAL?streamid=uplive.m/live/m1&passphrase=$(key 2)&latency=2000&mode=caller" ) > /dev/null 2>&1 &
+    local pp=$!
+    nap 5
+    rm -f play.ts
+    timeout 16 srt-live-transmit -q "srt://127.0.0.1:$PORT?streamid=live.m/live/m1&passphrase=$(key 3)&mode=caller" file://con > play.ts 2>/dev/null &
+    local pl=$!
+    local flat=0 prev=0 cur
+    for i in $(seq 15); do nap 1; cur=$(stat -c%s play.ts 2>/dev/null || echo 0); [ "$cur" = "$prev" ] && flat=$((flat+1)); prev=$cur; done
+    wait $pl 2>/dev/null; wait $sp
+    kill_cmd srt-live-transm "127.0.0.1:$LOCAL"; kill_cmd ffmpeg "$SRC_TS"; wait $pp 2>/dev/null
+    stop_sls
+    local li=$(sender_field 'd.get("late_induction_sent", 0)') pubs=$(awk '/session start, publisher/' out.log | wc -l)
+    if [ "$li" = 1 ] && [ "$pubs" = 1 ] && [ "$flat" -le 1 ] && [ "$prev" -ge 5000000 ] && [ "$(asan_reports)" = 0 ]; then
+        pass srtla_late_induction "late induction sent, 1 publisher session, player $prev B, flat seconds $flat"
+    else
+        fail srtla_late_induction "late induction sent=$li, publisher sessions $pubs, player $prev B, flat seconds $flat, asan=$(asan_reports)"
+    fi
+}
+
 case_caps(){
     write_conf "srtla_max_groups_per_ip 1;" "srtla_max_links_per_group 2;" "srtla_reg_per_ip_per_sec 100;"
     start_sls
@@ -350,7 +382,7 @@ case_stock_srtla_send(){
     fi
 }
 
-ALL="reorder_clean stats reorder_off_compare link_dies dup_and_drop caps reg_rate forged_reg2 player_through_group locked_out_ip stock_srtla_send"
+ALL="reorder_clean stats reorder_off_compare link_dies dup_and_drop late_induction caps reg_rate forged_reg2 player_through_group locked_out_ip stock_srtla_send"
 for c in ${*:-$ALL}; do
     c=${c#srtla_}
     "case_$c"

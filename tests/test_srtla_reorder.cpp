@@ -342,3 +342,21 @@ SLS_TEST(reorder_long_run_bounded)
     SLS_CHECK_EQ(r.stats().gap_released, 0u);
     SLS_CHECK_EQ(r.held_count(), 0u);
 }
+
+SLS_TEST(reorder_start_at_latest_until_data)
+{
+    // a refused attempt's handshake, then the accepted one's, then a hold change
+    std::vector<uint32_t> out;
+    CSLSSrtlaReorder r(30, collect, &out);
+    r.start_at(5000);         // refused attempt
+    r.start_at(100);          // the accepted retry: wins (no data yet)
+    r.set_hold(500, 0);       // libsrt's answer changes the hold: the start survives
+    push(r, 101, 1);          // 100 (the first) arrives second: held, not late
+    push(r, 100, 2);
+    uint32_t want[] = {100, 101};
+    SLS_CHECK(seqs_are(out, want, 2));
+    SLS_CHECK_EQ(r.stats().late, 0u);
+    r.start_at(7);            // ignored once data was seen
+    push(r, 102, 3);
+    SLS_CHECK_EQ(out.size(), 3u);
+}

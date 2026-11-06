@@ -28,33 +28,49 @@
 #include "SLSLock.hpp"
 
 namespace {
+struct entry {
+    const void *door;
+    uint32_t    group;
+    std::string json;
+};
 CSLSMutex &stats_mutex()
 {
     static CSLSMutex m;
     return m;
 }
-std::map<std::string, std::string> &stats_map()
+std::map<std::string, entry> &stats_map()
 {
-    static std::map<std::string, std::string> m;
+    static std::map<std::string, entry> m;
     return m;
 }
 }
 
-void sls_srtla_stats_set(const std::string &key, const std::string &json)
+std::string sls_srtla_stats_key(int public_port, const std::string &ip, int port)
 {
-    CSLSLock lock(&stats_mutex());
-    stats_map()[key] = json;
+    return std::to_string(public_port) + "/" + ip + ":" + std::to_string(port);
 }
 
-void sls_srtla_stats_erase(const std::string &key)
+void sls_srtla_stats_set(const std::string &key, const void *door, uint32_t group, const std::string &json)
 {
     CSLSLock lock(&stats_mutex());
-    stats_map().erase(key);
+    entry &e = stats_map()[key];
+    e.door  = door;
+    e.group = group;
+    e.json  = json;
+}
+
+void sls_srtla_stats_erase(const std::string &key, const void *door, uint32_t group)
+{
+    CSLSLock lock(&stats_mutex());
+    std::map<std::string, entry>::iterator it = stats_map().find(key);
+    if (it != stats_map().end() && it->second.door == door && it->second.group == group) {
+        stats_map().erase(it);
+    }
 }
 
 std::string sls_srtla_stats_get(const std::string &key)
 {
     CSLSLock lock(&stats_mutex());
-    std::map<std::string, std::string>::const_iterator it = stats_map().find(key);
-    return it == stats_map().end() ? std::string() : it->second;
+    std::map<std::string, entry>::const_iterator it = stats_map().find(key);
+    return it == stats_map().end() ? std::string() : it->second.json;
 }

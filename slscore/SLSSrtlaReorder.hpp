@@ -85,8 +85,9 @@ public:
     int  slots() const { return m_slots; }
 
     // the first sequence number to expect (from the SRT handshake's initial
-    // sequence number); ignored once packets have been seen. Without it the
-    // first data packet sets it.
+    // sequence number); the latest call wins until the first data packet
+    // (a refused attempt's handshake must not stick), and it survives
+    // set_hold(). Without it the first data packet sets it.
     void start_at(uint32_t seq);
     // one SRT data packet (the caller checked sls_srt_is_data)
     void push(const uint8_t *pkt, int len, int64_t now_ms);
@@ -126,6 +127,7 @@ private:
     size_t   m_head;        // slot of m_next
     size_t   m_held;
     int      m_far_ahead;   // far-ahead packets in a row
+    bool     m_seen;        // a data packet was pushed since the last flush/reset
     std::vector<slot>    m_slot;
     std::vector<uint8_t> m_data;     // m_slots * SLS_SRTLA_REORDER_SLOT_LEN, allocated on first hold
     std::deque<std::pair<int64_t, uint32_t> > m_arrivals;   // (arrival, seq) of held packets, oldest first

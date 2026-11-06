@@ -38,6 +38,7 @@ CSLSSrtlaReorder::CSLSSrtlaReorder(int hold_ms, emit_fn emit, void *ctx)
     m_head    = 0;
     m_held    = 0;
     m_far_ahead = 0;
+    m_seen    = false;
     m_slot.assign(m_slots, slot());
     for (size_t i = 0; i < m_slot.size(); i++) {
         m_slot[i].used = false;
@@ -65,6 +66,8 @@ void CSLSSrtlaReorder::set_hold(int hold_ms, int64_t now_ms)
     if (hold_ms == m_hold_ms) {
         return;
     }
+    bool pending = m_started && !m_seen;   // a start from the handshake, no data yet
+    uint32_t start = m_next;
     flush();
     m_hold_ms = hold_ms;
     m_slots   = slots_for(hold_ms);
@@ -73,11 +76,14 @@ void CSLSSrtlaReorder::set_hold(int hold_ms, int64_t now_ms)
         m_slot[i].used = false;
     }
     std::vector<uint8_t>().swap(m_data);
+    if (pending) {
+        start_at(start);
+    }
 }
 
 void CSLSSrtlaReorder::start_at(uint32_t seq)
 {
-    if (m_started) {
+    if (m_seen) {
         return;
     }
     m_started  = true;
@@ -158,6 +164,7 @@ void CSLSSrtlaReorder::push(const uint8_t *pkt, int len, int64_t now_ms)
     if (!m_started) {
         start_at(seq);
     }
+    m_seen = true;
     int32_t d = sls_srt_seq_diff(m_next, seq);
     if (d < 0) {
         // behind the release point, however far (an SRT retransmission can be
@@ -179,6 +186,7 @@ void CSLSSrtlaReorder::push(const uint8_t *pkt, int len, int64_t now_ms)
         flush();
         m_stats.resets++;
         start_at(seq);
+        m_seen = true;
         d = 0;
     }
     m_far_ahead = 0;
@@ -273,6 +281,7 @@ void CSLSSrtlaReorder::flush()
     }
     m_arrivals.clear();
     m_started = false;
+    m_seen    = false;
     m_head    = 0;
     m_far_ahead = 0;
 }
@@ -285,6 +294,7 @@ void CSLSSrtlaReorder::reset()
     m_held = 0;
     m_arrivals.clear();
     m_started = false;
+    m_seen    = false;
     m_head    = 0;
     m_far_ahead = 0;
 }

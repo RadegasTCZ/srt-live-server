@@ -193,23 +193,24 @@ SLS_TEST(groups_global_cap_spoof_flood)
 
 SLS_TEST(groups_rate_limit)
 {
+    // REG1s and REG2s with ids we don't know are counted per IP; a REG2 with
+    // a valid id (from our REG1 answer) is not, nor a link re-registering
     CSLSSrtlaGroups g(caps(200, 100, 8, 3), fill_counter);
-    uint8_t sid[SLS_SRTLA_ID_LEN], full[SLS_SRTLA_ID_LEN];
+    uint8_t sid[SLS_SRTLA_ID_LEN], full[SLS_SRTLA_ID_LEN], junk[SLS_SRTLA_ID_LEN];
     memset(sid, 3, sizeof(sid));
-    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 1), sid, 0, full), SLS_SRTLA_REG_OK);
-    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 1), full, 100), SLS_SRTLA_REG_OK);
-    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 2), sid, 200, full), SLS_SRTLA_REG_OK);
+    memset(junk, 9, sizeof(junk));
+    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 1), sid, 0, full), SLS_SRTLA_REG_OK);      // 1
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 1), full, 100), SLS_SRTLA_REG_OK);         // valid: not counted
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 7), junk, 150), SLS_SRTLA_REG_NGP);        // 2
+    SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 2), sid, 200, full), SLS_SRTLA_REG_OK);    // 3
     SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 3), sid, 300, full), SLS_SRTLA_REG_ERR);   // 4th in the second
-    // a registered link re-sending REG2 is not counted
-    uint8_t id[SLS_SRTLA_ID_LEN];
-    CSLSSrtlaGroups r(caps(200, 100, 8, 2), fill_counter);
-    join(r, addr("10.0.0.5", 1), 0, id);
-    for (int i = 0; i < 10; i++) SLS_CHECK_EQ(r.reg2(addr("10.0.0.5", 1), id, 10 + i), SLS_SRTLA_REG_OK);
-    // an unknown REG2 counts (no free probing of ids)
-    SLS_CHECK_EQ(r.reg2(addr("10.0.0.5", 9), id, 20), SLS_SRTLA_REG_ERR);   // (join used 2: REG1 + REG2)
-    // the next window allows again
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 8), junk, 310), SLS_SRTLA_REG_ERR);        // unknown ids too
+    // ... but a sender holding a valid id still gets its links in
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 2), full, 320), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 4), full, 330), SLS_SRTLA_REG_OK);
+    for (int i = 0; i < 10; i++) SLS_CHECK_EQ(g.reg2(addr("10.0.0.1", 4), full, 340 + i), SLS_SRTLA_REG_OK);
+    // the next window allows again; other IPs are separate
     SLS_CHECK_EQ(g.reg1(addr("10.0.0.1", 3), sid, 1000, full), SLS_SRTLA_REG_OK);
-    // other IPs are separate
     SLS_CHECK_EQ(g.reg1(addr("10.0.0.2", 1), sid, 300, full), SLS_SRTLA_REG_OK);
 }
 
@@ -363,4 +364,21 @@ SLS_TEST(groups_ack_every_10)
     SLS_CHECK(l1_acks.size() == 2 && l1_acks[0][0] == 1 && l1_acks[0][9] == 12);
     SLS_CHECK(l1_acks.size() == 2 && l1_acks[1][0] == 13 && l1_acks[1][9] == 24);
     SLS_CHECK(!g.record_ack_seq(addr("10.0.0.9", 1), 1, ack));   // not a link
+}
+
+SLS_TEST(groups_flooded_rate_table)
+{
+    // a spoofed flood that uses up every rate slot cannot stop REG2s with a valid id
+    CSLSSrtlaGroups g(caps(200, 100, 8, 5), fill_counter);
+    uint8_t sid[SLS_SRTLA_ID_LEN], full[SLS_SRTLA_ID_LEN], junk[SLS_SRTLA_ID_LEN];
+    memset(sid, 4, sizeof(sid));
+    SLS_CHECK_EQ(g.reg1(addr("192.0.2.9", 1), sid, 0, full), SLS_SRTLA_REG_OK);
+    char ip[32];
+    for (int i = 0; i < 200000; i++) {
+        snprintf(ip, sizeof(ip), "10.%d.%d.%d", (i >> 16) & 255, (i >> 8) & 255, i & 255);
+        g.reg1(addr(ip, 1), sid, 10, junk);
+    }
+    SLS_CHECK_EQ(g.reg2(addr("192.0.2.9", 1), full, 20), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(g.reg2(addr("192.0.2.10", 5), full, 20), SLS_SRTLA_REG_OK);
+    SLS_CHECK_EQ(g.link_count(), 2u);
 }

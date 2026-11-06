@@ -514,7 +514,8 @@ by what each one delivers.
   is `remote=`, `remote_ip` in the stats and the webhook, and the address the
   caps and the wrong-passphrase lockout count against. REG1/REG2 from an address
   the lockout blocks, or that has used up `max_handshakes_per_ip_per_sec`, get
-  REG_ERR.
+  REG_ERR (a link re-sending REG2 to its own group only refreshes it and is
+  never refused).
 - **Publishers only.** A connection through a group must publish: a player is
   refused (`a player through an SRTLA group (publishers only)`). Anyone who
   knows a group's id can add a link with any source address, so a group never
@@ -536,7 +537,8 @@ by what each one delivers.
   buffer; a refused handshake ends the session, not the group.
 - **Logs.** INFO: `SRTLA group N registered by <ip:port>`, `link <ip:port>
   joined` / `left (<reason>)`, `SRTLA group N ended: ... reason=, duration=,
-  peak links=`; at most 20 such lines per 10 s, then a held-back count.
+  peak links=, last session end=`; at most 20 such lines per 10 s, then a
+  held-back count.
   Refused registrations go through the refusal budget. DEBUG: the session's
   latency and hold, and every 10 s one summary line per group (links with
   kbit/s and share, the reorder counters). Never one line per packet. The stop
@@ -545,7 +547,8 @@ by what each one delivers.
 - **Stats.** A publisher fed by a group has an `srtla` object in its stats
   line: `{"links":[{"ip","port","kbitrate","share_pct","packets","last_ms"}],
   "reordered","gap_released","duplicates","held_max_ms"}` (`last_ms` is wall
-  clock ms; refreshed every 3 s).
+  clock ms; refreshed every 3 s; the reorder counters cover the group's whole
+  life, across its SRT sessions).
 
 Directives (server block, with `srtla on;`):
 
@@ -555,7 +558,13 @@ Directives (server block, with `srtla on;`):
 | `srtla_max_links_per_group` | 1-64 | 8 | links per group |
 | `srtla_max_groups` | 1-10000 | 200 | groups on this port |
 | `srtla_max_groups_per_ip` | 1-1000 | 4 | groups per registering address |
-| `srtla_reg_per_ip_per_sec` | 1-1000 | 5 | REG1 + REG2 per address per second (a link re-registering is not counted) |
+| `srtla_reg_per_ip_per_sec` | 1-1000 | 5 | REG1s and REG2s with an unknown id per address per second (a REG2 with a valid id, or a link re-registering, is not counted) |
+
+Limits: the registration rate uses a fixed table of 4096 counters (addresses
+that collide share one). A spoofed REG1 flood large enough to use up all of
+them (in the order of 20 000 counted packets per second) delays new
+registrations while it lasts; groups and links that exist are not affected,
+and a sender that already got its REG2 answer still adds its links.
 
 Senders should use a latency of 2000 ms or more (SRT takes the larger of the
 two sides'); with bonded cellular links a short latency turns ordinary

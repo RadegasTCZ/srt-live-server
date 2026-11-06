@@ -150,6 +150,7 @@ private:
         CSLSSrtlaReorder *buf;
         bool              logged;   // "group registered" was logged
         uint32_t          peer_sock;  // the caller's SRT socket id of the current session (0: none)
+        const char       *last_end;   // how the last SRT session ended (for the "group ended" line)
     };
     srtla_ip_check_fn m_ip_check;
     void             *m_ip_check_ctx;

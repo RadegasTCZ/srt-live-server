@@ -157,24 +157,31 @@ sls_srtla_reg_result CSLSSrtlaGroups::reg2(const struct sockaddr_in &src, const 
         l->last_ms = now_ms;   // a link re-registering: not counted against the rate
         return SLS_SRTLA_REG_OK;
     }
-    if (!rate_ok(src.sin_addr.s_addr, now_ms)) {
-        return SLS_SRTLA_REG_ERR;
-    }
-    if (l && now_ms - l->last_ms < SLS_SRTLA_LINK_MOVE_QUIET_MS) {
-        return SLS_SRTLA_REG_ERR;   // a live link of another group: not taken by a REG2 (it may be forged)
-    }
-    uint32_t handle;
-    if (ii == m_by_id.end()) {
-        // a new group, if the id is one of our REG1 answers and still fresh
+    // only an id we don't know is rate-counted (no free probing); a valid one
+    // proves the REG1 source could receive, so a flood that fills the rate
+    // table cannot stop a sender that already has its id
+    bool valid = ii != m_by_id.end();
+    if (!valid) {
         uint8_t mac[16];
         id_mac(full_id, mac);
         uint8_t diff = 0;
         for (int i = 0; i < 16; i++) diff |= (uint8_t)(mac[i] ^ full_id[ID_OFF_MAC + i]);
         uint64_t t = 0;
         for (int i = 0; i < 8; i++) t = (t << 8) | full_id[ID_OFF_TIME + i];
-        if (diff || (int64_t)t > now_ms || now_ms - (int64_t)t > SLS_SRTLA_REG_VALID_MS) {
-            return SLS_SRTLA_REG_NGP;   // not ours, or too old: register again with REG1
+        valid = !diff && (int64_t)t <= now_ms && now_ms - (int64_t)t <= SLS_SRTLA_REG_VALID_MS;
+    }
+    if (!valid) {
+        if (!rate_ok(src.sin_addr.s_addr, now_ms)) {
+            return SLS_SRTLA_REG_ERR;
         }
+        return SLS_SRTLA_REG_NGP;   // not ours, or too old: register again with REG1
+    }
+    if (l && now_ms - l->last_ms < SLS_SRTLA_LINK_MOVE_QUIET_MS) {
+        return SLS_SRTLA_REG_ERR;   // a live link of another group: not taken by a REG2 (it may be forged)
+    }
+    uint32_t handle;
+    if (ii == m_by_id.end()) {
+        // a new group: the id is one of our REG1 answers and still fresh
         struct sockaddr_in reg;
         memset(&reg, 0, sizeof(reg));
         reg.sin_family = AF_INET;

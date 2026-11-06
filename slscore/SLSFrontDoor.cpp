@@ -247,7 +247,7 @@ void CSLSFrontDoor::on_public_readable(int64_t now_ms)
         // the registering address of a group, but not (or no longer) one of its
         // links: its packets only reach the session through a link, and must not
         // touch the session's entry (keep it alive, undo its shutdown)
-        int peek = m_peers.peek_remote(from, NULL);
+        int peek = m_group_by_fd.empty() ? -1 : m_peers.peek_remote(from, NULL);
         if (peek >= 0 && m_group_by_fd.count(peek)) {
             m_dropped_unknown++;
             continue;
@@ -457,7 +457,7 @@ void CSLSFrontDoor::close_all()
         if (m_groups && m_groups->registering_addr(it->first, &reg)) {
             char ip[INET_ADDRSTRLEN] = "";
             inet_ntop(AF_INET, &reg.sin_addr, ip, sizeof(ip));
-            sls_srtla_stats_erase(std::string(ip) + ":" + std::to_string(ntohs(reg.sin_port)));
+            sls_srtla_stats_erase(sls_srtla_stats_key(m_public_port, ip, ntohs(reg.sin_port)), this, it->first);
         }
         delete it->second->buf;
         delete it->second;
@@ -534,6 +534,7 @@ CSLSFrontDoor::group_rt *CSLSFrontDoor::rt_of(uint32_t handle)
     rt->buf    = new CSLSSrtlaReorder(initial_hold(), emit_to_session, rt);
     rt->logged = false;
     rt->peer_sock = 0;
+    rt->last_end = "none";
     m_group_rt[handle] = rt;
     return rt;
 }
@@ -648,6 +649,7 @@ void CSLSFrontDoor::end_group_session(group_rt *rt, int64_t now_ms)
         return;
     }
     int fd = rt->fd;
+    rt->last_end = "replaced by a new session";
     rt->buf->reset();
     rt->fd = -1;
     m_groups->set_fd(rt->handle, -1);
@@ -668,6 +670,9 @@ void CSLSFrontDoor::forget_group_fd(int fd)
     if (it != m_group_rt.end()) {
         it->second->fd = -1;
         it->second->buf->reset();
+        if (0 == strcmp(it->second->last_end, "none") || 0 == strncmp(it->second->last_end, "replaced", 8)) {
+            it->second->last_end = "timed out";
+        }
     }
     m_groups->set_fd(g->second, -1);
     m_group_by_fd.erase(g);
@@ -691,7 +696,10 @@ void CSLSFrontDoor::on_link_packet(uint32_t handle, const struct sockaddr_in &fr
     }
     group_rt *rt = rt_of(handle);
     struct sockaddr_in reg;
-    m_groups->registering_addr(handle, &reg);
+    memset(&reg, 0, sizeof(reg));
+    if (!m_groups->registering_addr(handle, &reg)) {
+        return;
+    }
 
     if (sls_srt_is_data(buf, len)) {
         // the link's SRTLA ACK counts what arrived on it, before the buffer
@@ -732,7 +740,12 @@ void CSLSFrontDoor::on_link_packet(uint32_t handle, const struct sockaddr_in &fr
                 return;   // over a mapping cap: the sender retries its handshake
             }
         }
-        if (0 == rt->peer_sock) {
+        // the session's caller socket is the one whose conclusion got it going:
+        // follow the conclusions (and a first induction) until it is established
+        // (a refused attempt before it must not stay pinned)
+        int now_state = m_peers.state_for_fd(rt->fd);
+        if (0 == rt->peer_sock
+                || (SLS_SRT_HS_CONCLUSION == hs_type && SLS_FD_STATE_ESTABLISHED != now_state)) {
             rt->peer_sock = sock;
         }
         if (SLS_SRT_HS_CONCLUSION == hs_type) {
@@ -743,6 +756,9 @@ void CSLSFrontDoor::on_link_packet(uint32_t handle, const struct sockaddr_in &fr
     if (rt->fd < 0) {
         m_srtla_no_session++;
         return;
+    }
+    if (sls_fd_is_shutdown(buf, len)) {
+        rt->last_end = "closed by the sender";
     }
     m_peers.fd_for_remote(reg, now_ms, sls_fd_is_shutdown(buf, len));
     if (send(rt->fd, buf, len, 0) < 0) {
@@ -757,6 +773,9 @@ void CSLSFrontDoor::on_group_readable(int fd, uint32_t handle, const uint8_t *bu
     (void)fd;
     group_rt *rt = rt_of(handle);
     int type = sls_srtla_type(buf, len);
+    if (SLS_SRT_TYPE_SHUTDOWN == type) {
+        rt->last_end = "closed by sls";
+    }
     if (SLS_SRT_TYPE_HANDSHAKE == type) {
         // libsrt's answer carries the session's TSBPD delays: hold a quarter of
         // the latency, at most srtla_reorder_max
@@ -815,9 +834,14 @@ void CSLSFrontDoor::srtla_events(int64_t now_ms)
         if (SLS_SRTLA_EV_GROUP_REMOVED == e.type) {
             std::map<uint32_t, group_rt *>::iterator it = m_group_rt.find(e.group);
             bool logged = false;
-            sls_srtla_stats_erase(std::string(ip) + ":" + std::to_string(ntohs(e.addr.sin_port)));
+            sls_srtla_stats_erase(sls_srtla_stats_key(m_public_port, ip, ntohs(e.addr.sin_port)), this, e.group);
+            const char *last_end = "none";
             if (it != m_group_rt.end()) {
                 logged = it->second->logged;
+                if (it->second->fd >= 0) {
+                    it->second->last_end = "group ended";
+                }
+                last_end = it->second->last_end;
                 end_group_session(it->second, now_ms);
                 delete it->second->buf;
                 delete it->second;
@@ -826,14 +850,16 @@ void CSLSFrontDoor::srtla_events(int64_t now_ms)
             // half-open groups (never a link) go silently: they may be spoofed
             if (logged && srtla_log_ok(now_ms)) {
                 sls_log(SLS_LOG_INFO, "[%p]CSLSFrontDoor, SRTLA group %u ended: registered by %s:%d, reason=%s, "
-                        "duration=%.1fs, peak links=%d.",
-                        this, e.group, ip, ntohs(e.addr.sin_port), e.reason, e.duration_ms / 1000.0, e.peak_links);
+                        "duration=%.1fs, peak links=%d, last session end=%s.",
+                        this, e.group, ip, ntohs(e.addr.sin_port), e.reason, e.duration_ms / 1000.0, e.peak_links,
+                        last_end);
             }
         } else if (SLS_SRTLA_EV_LINK_ADDED == e.type) {
             group_rt *rt = rt_of(e.group);
             if (!rt->logged) {
                 rt->logged = true;
                 struct sockaddr_in reg;
+                memset(&reg, 0, sizeof(reg));
                 m_groups->registering_addr(e.group, &reg);
                 char rip[INET_ADDRSTRLEN];
                 if (srtla_log_ok(now_ms)) {
@@ -868,9 +894,9 @@ void CSLSFrontDoor::srtla_publish_stats(int64_t now_ms, bool summary)
         }
         char rip[INET_ADDRSTRLEN];
         sls_fd_ip(reg, rip, sizeof(rip));
-        std::string key = std::string(rip) + ":" + std::to_string(ntohs(reg.sin_port));
+        std::string key = sls_srtla_stats_key(m_public_port, rip, ntohs(reg.sin_port));
         if (rt->fd < 0) {
-            sls_srtla_stats_erase(key);
+            sls_srtla_stats_erase(key, this, rt->handle);
             continue;
         }
         m_groups->links(rt->handle, &ls);
@@ -902,7 +928,7 @@ void CSLSFrontDoor::srtla_publish_stats(int64_t now_ms, bool summary)
                  (unsigned long long)st.reordered, (unsigned long long)st.gap_released,
                  (unsigned long long)st.duplicates, st.held_max_ms);
         j += tail;
-        sls_srtla_stats_set(key, j);
+        sls_srtla_stats_set(key, this, rt->handle, j);
         if (summary) {
             sls_log(SLS_LOG_DEBUG, "[%p]CSLSFrontDoor, SRTLA group %u (%s): hold %d ms, links%s; reordered=%llu "
                     "held=%llu gap_released=%llu late=%llu duplicates=%llu cap_released=%llu resets=%llu held_max_ms=%d.",
