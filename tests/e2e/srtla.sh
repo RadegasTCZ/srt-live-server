@@ -80,8 +80,8 @@ bonded_publish(){ # secs sender-args...
     SPID=$!
     nap 1
     ( nice ffmpeg -nostdin -loglevel error -re -stream_loop -1 -i "$SRC_TS" -c copy -f mpegts - 2>/dev/null | \
-      timeout "$secs" srt-live-transmit -q -chunk 1316 -s 1000 -pf csv -statsout pub.csv file://con \
-        "srt://127.0.0.1:$LOCAL?streamid=uplive.m/live/m1&passphrase=$(key 2)&latency=2000&mode=caller" ) > /dev/null 2>&1 &
+      timeout "$secs" srt-live-transmit -q $PUB_OPTS -chunk 1316 -s 1000 -pf csv -statsout pub.csv file://con \
+        "srt://127.0.0.1:$LOCAL?streamid=uplive.m/live/m1&passphrase=${PUB_PASS:-$(key 2)}&latency=2000&mode=caller" ) > /dev/null 2>&1 &
     PPID_=$!
 }
 bonded_wait(){
@@ -151,6 +151,10 @@ for step in script.split(','):
         out.append(b[:2].hex() or 'none')
     elif step == 'forged':
         b = ask(struct.pack('!H', 0x9201) + os.urandom(256)); out.append(b[:2].hex() or 'none')
+    elif step.startswith('ka'):   # a keepalive of N bytes from this socket: echoed length or none
+        n = int(step[2:])
+        b = ask(struct.pack('!H', 0x9000) + bytes(n - 2))
+        out.append(str(len(b)) if b else 'none')
     elif step.startswith('sleep'):
         time.sleep(float(step[5:]))
 print(' '.join(out))
@@ -359,6 +363,33 @@ case_locked_out_ip(){
     fi
 }
 
+case_keepalive_echo_cap(){
+    # a link's keepalives are echoed up to SLS_SRTLA_KEEPALIVE_MAX (128) bytes only
+    write_conf; start_sls
+    local r=$(srtla_raw 127.0.0.26 reg1,reg2self,ka2,ka10,ka128,ka129,ka1400)
+    stop_sls
+    if [ "$r" = "9201 9202 2 10 128 none none" ] && [ "$(asan_reports)" = 0 ]; then
+        pass srtla_keepalive_echo_cap "$r"
+    else
+        fail srtla_keepalive_echo_cap "'$r' (want 9201 9202 2 10 128 none none)"
+    fi
+}
+
+case_refused_session_expires(){
+    # a group whose SRT handshake libsrt refuses (a wrong passphrase) never
+    # gets a session: it ends after 10 s although its links keep sending keepalives
+    LOG_LEVEL=debug write_conf; start_sls
+    PUB_PASS=wrongwrongwrong1 PUB_OPTS="-a no" bonded_publish 16 --links 127.0.0.2,127.0.0.3
+    bonded_wait; stop_sls
+    local ended=$(awk '/SRTLA group [0-9]+ ended/ && /reason=no session/' out.log | wc -l)
+    local acc=$(awk '/session accepted by libsrt/' out.log | wc -l)
+    if [ "$ended" -ge 1 ] && [ "$acc" = 0 ] && [ "$(asan_reports)" = 0 ]; then
+        pass srtla_refused_session_expires "group ended with reason=no session ($ended), accepted sessions $acc"
+    else
+        fail srtla_refused_session_expires "ended lines $ended (want >=1), accepted $acc (want 0), asan=$(asan_reports)"
+    fi
+}
+
 case_stock_srtla_send(){
     # BELABOX srtla_send as a black-box second sender (if built)
     if [ ! -x "$SRTLA_SEND" ]; then pass srtla_stock_srtla_send "skipped: no $SRTLA_SEND"; return; fi
@@ -382,7 +413,7 @@ case_stock_srtla_send(){
     fi
 }
 
-ALL="reorder_clean stats reorder_off_compare link_dies dup_and_drop late_induction caps reg_rate forged_reg2 player_through_group locked_out_ip stock_srtla_send"
+ALL="reorder_clean stats reorder_off_compare link_dies dup_and_drop late_induction caps reg_rate forged_reg2 player_through_group locked_out_ip keepalive_echo_cap refused_session_expires stock_srtla_send"
 for c in ${*:-$ALL}; do
     c=${c#srtla_}
     "case_$c"
