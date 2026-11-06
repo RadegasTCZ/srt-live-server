@@ -737,6 +737,11 @@ void CSLSFrontDoor::on_link_packet(uint32_t handle, const struct sockaddr_in &fr
         }
         m_groups->mark_own(from, now_ms, sls_srt_is_data(buf, len));
     }
+    if (m_groups->is_foreign(from, now_ms)) {
+        // also between sessions (no socket id to check): no ACKs, nothing relayed
+        m_srtla_foreign++;
+        return;
+    }
 
     if (sls_srt_is_data(buf, len)) {
         // the link's SRTLA ACK counts what arrived on it, before the buffer

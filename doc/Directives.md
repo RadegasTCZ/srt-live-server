@@ -509,9 +509,11 @@ by what each one delivers.
   id gets REG_NGP (the sender registers again); a cap, the rate, a locked-out
   address or a source that is a live plain SRT peer gets REG_ERR (try later).
   REG_NAK is never sent. A link moves to another group only after 3 s of
-  silence (its REG2s don't count as activity), or once it is *foreign*: for 3 s
-  it has carried SRT packets, but none of its group's session (packets after
-  the handshake name libsrt's socket of the session). A foreign link (one a
+  silence (its REG1s and REG2s don't count as activity), or once it is
+  *foreign*: for 3 s it has carried SRT data, but nothing of its group's
+  session (packets after the handshake name libsrt's socket of the session).
+  A foreign link's SRT packets are dropped and it gets no keepalive echoes and
+  no ACKs. A foreign link (one a
   forged REG2 put into another group) gets no answers, so its sender
   re-registers it, and that REG2 takes it back.
 - **Identity.** The group's SRT session uses the address that sent REG1: that
@@ -539,8 +541,8 @@ by what each one delivers.
   20 Mbit/s over the hold: up to about 2 MB per group at the default 500 ms
   hold, 8.6 MB at 2000 ms. It is allocated on first use, only once libsrt
   accepted the session (the streamid and passphrase passed; until then packets
-  go through unbuffered), and freed when the session ends. libsrt's own
-  receive buffer per connection is larger.
+  go through unbuffered), and freed when the session's socket is closed or
+  replaced. libsrt's own receive buffer per connection is larger.
 - **Sessions.** A group lives while it has links (a link silent 10 s is
   dropped; a group without links for 10 s ends; a group whose SRT session
   libsrt has not accepted 10 s after it was created ends, `reason=no session`,

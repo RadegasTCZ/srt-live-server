@@ -206,7 +206,8 @@ sls_srtla_reg_result CSLSSrtlaGroups::reg2(const struct sockaddr_in &src, const 
     uint32_t cur = 0;
     link *l = find_link(src, &cur);
     if (ii != m_by_id.end() && l && cur == ii->second) {
-        l->last_ms = now_ms;   // a link re-registering: not counted against the rate
+        // a link re-registering: not counted against the rate, and not
+        // activity (a forged refresh must not pin an address that is unused)
         return SLS_SRTLA_REG_OK;
     }
     // only an id we don't know is rate-counted (no free probing); a valid one

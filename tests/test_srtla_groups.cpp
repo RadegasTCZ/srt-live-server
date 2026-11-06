@@ -473,3 +473,24 @@ SLS_TEST(groups_latest_link_needs_data_history)
     g.mark_own(l2, 400, true);
     SLS_CHECK(g.latest_link(h, 400, &latest) && latest.sin_addr.s_addr == l2.sin_addr.s_addr);
 }
+
+// a REG2 refresh is not activity: an address kept only by (forged) refreshes times out
+SLS_TEST(groups_refresh_not_activity)
+{
+    CSLSSrtlaGroups g(caps(200, 4, 8, 0), fill_counter);
+    uint8_t id[SLS_SRTLA_ID_LEN];
+    struct sockaddr_in l1 = addr("10.0.0.1", 1), x = addr("10.0.0.9", 9);
+    uint32_t h = join(g, l1, 0, id);
+    g.mark_established(h);
+    SLS_CHECK_EQ(g.reg2(x, id, 0), SLS_SRTLA_REG_OK);
+    count_events(g, SLS_SRTLA_EV_LINK_ADDED);
+    for (int64_t t = 1000; t <= 10000; t += 1000) {
+        g.on_packet(l1, 10, false, t);
+        g.on_packet(x, SLS_SRTLA_REG_LEN, false, t, false);
+        SLS_CHECK_EQ(g.reg2(x, id, t), SLS_SRTLA_REG_OK);   // refresh: always OK
+    }
+    g.cleanup(10000);
+    SLS_CHECK_EQ(g.group_of(x), 0u);                       // timed out all the same
+    SLS_CHECK_EQ(count_events(g, SLS_SRTLA_EV_LINK_REMOVED, "timed out"), 1);
+    SLS_CHECK_EQ(g.group_of(l1), h);
+}
