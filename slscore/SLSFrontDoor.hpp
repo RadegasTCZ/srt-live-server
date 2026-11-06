@@ -27,6 +27,7 @@
 
 #include <atomic>
 #include <deque>
+#include <map>
 #include <utility>
 #include <vector>
 #include <stdint.h>
@@ -34,6 +35,8 @@
 
 #include "SLSThread.hpp"
 #include "SLSPeerMap.hpp"
+#include "SLSSrtlaGroups.hpp"
+#include "SLSSrtlaReorder.hpp"
 
 #define SLS_FD_RECV_BURST      256      // datagrams read from one socket per wakeup
 #define SLS_FD_POLL_MS         100
@@ -47,6 +50,12 @@
 // sls stop: how long the front doors keep relaying after every libsrt socket
 // closed, so its shutdowns reach the peers
 #define SLS_FD_STOP_DRAIN_MS   200
+// SRTLA: SRT ACKs go to every link that delivered data this recently
+#define SLS_SRTLA_ACK_FANOUT_MS 2000
+#define SLS_SRTLA_REORDER_DEFAULT_MS 500
+// SRTLA log lines (group/link events): at most this many per window, then counted
+#define SLS_SRTLA_LOG_BURST     20
+#define SLS_SRTLA_LOG_WINDOW_MS 10000
 
 /**
  * The front door of one srtla-enabled server block (stage 1: plain SRT).
@@ -81,6 +90,9 @@ public:
     virtual int work();
 
     CSLSPeerMap &peers() { return m_peers; }
+    // SRTLA settings (before start): caps, srtla_reorder_max, and the
+    // listener's latency (the hold until a session's latency is known)
+    void set_srtla(const sls_srtla_caps &caps, int reorder_max_ms, int latency_ms);
     // work() ended on an error: the port is no longer served (the manager stops sls)
     bool failed() const { return m_failed; }
     int  public_port() const { return m_public_port; }
@@ -97,6 +109,11 @@ public:
     std::atomic<uint64_t> m_mappings_created;
     std::atomic<uint64_t> m_mappings_expired;
     std::atomic<uint64_t> m_mappings_evicted;  // ended, half-open or long-silent, to make room at a cap
+    std::atomic<uint64_t> m_srtla_reg_ok;      // REG1/REG2 answered REG2/REG3
+    std::atomic<uint64_t> m_srtla_reg_refused; // answered REG_ERR or REG_NGP
+    std::atomic<uint64_t> m_srtla_in;          // packets from registered links
+    std::atomic<uint64_t> m_srtla_acks;        // SRTLA ACKs sent
+    std::atomic<uint64_t> m_srtla_no_session;  // SRT data/control from a group without an SRT session
 
 private:
     std::atomic<bool> m_failed;
@@ -118,6 +135,39 @@ private:
     uint64_t m_summary_seen;   // the sum of the moving counters at the last summary
     int  m_rcvbuf;             // the public socket's buffers as the kernel granted them
     int  m_sndbuf;
+
+    // SRTLA
+    struct group_rt {
+        CSLSFrontDoor    *door;
+        uint32_t          handle;
+        int               fd;       // the group's SRT session socket, or -1
+        CSLSSrtlaReorder *buf;
+        bool              logged;   // "group registered" was logged
+    };
+    CSLSSrtlaGroups *m_groups;
+    sls_srtla_caps   m_srtla_caps;
+    int  m_reorder_max_ms;
+    int  m_latency_ms;
+    std::map<uint32_t, group_rt *> m_group_rt;
+    std::map<int, uint32_t>        m_group_by_fd;
+    int64_t  m_last_srtla_cleanup_ms;
+    int64_t  m_srtla_log_window_ms;
+    int      m_srtla_log_n;
+    uint64_t m_srtla_log_held;
+    static void emit_to_session(void *ctx, const uint8_t *pkt, int len);
+    int  initial_hold() const;
+    void on_srtla_reg(int kind, const struct sockaddr_in &from, const uint8_t *buf, int len, int64_t now_ms);
+    void on_link_packet(uint32_t handle, const struct sockaddr_in &from, const uint8_t *buf, int len, int64_t now_ms);
+    void on_group_readable(int fd, uint32_t handle, const uint8_t *buf, int len, int64_t now_ms);
+    group_rt *rt_of(uint32_t handle);
+    int  open_group_session(group_rt *rt, int64_t now_ms);
+    void end_group_session(group_rt *rt, int64_t now_ms);
+    void forget_group_fd(int fd);
+    void srtla_events(int64_t now_ms);
+    void srtla_tick(int64_t now_ms);
+    int  srtla_poll_timeout(int64_t now_ms) const;
+    void reply(const struct sockaddr_in &to, const uint8_t *buf, int len);
+    bool srtla_log_ok(int64_t now_ms);
 
     void on_public_readable(int64_t now_ms);
     void on_mapping_readable(int fd, int64_t now_ms);

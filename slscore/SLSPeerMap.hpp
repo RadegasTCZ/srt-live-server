@@ -38,6 +38,11 @@
 #define SLS_FD_CLOSING_MS    2000    // after an SRT shutdown: the session is over
 #define SLS_FD_QUIET_MS      5000    // established but silent this long: may be evicted at a cap
 
+#define SLS_FD_STATE_NONE        0   // no such fd
+#define SLS_FD_STATE_HALFOPEN    1   // only handshakes from libsrt so far
+#define SLS_FD_STATE_ESTABLISHED 2
+#define SLS_FD_STATE_ENDED       3   // libsrt sent a shutdown
+
 /**
  * The front door's map of plain SRT peers: a remote address <-> the internal
  * UDP socket (fd) that relays it to the loopback listener <-> that socket's
@@ -82,8 +87,14 @@ public:
     // non-handshake packet (the entry is established); shutdown: an SRT shutdown
     bool remote_for_fd(int fd, struct sockaddr_in *remote, int64_t now_ms,
                        bool confirms = false, bool shutdown = false);
-    // identity: the real peer behind an internal socket's local port
-    bool remote_for_local_port(uint16_t local_port, struct sockaddr_in *remote) const;
+    // identity: the real peer behind an internal socket's local port; srtla
+    // (if given) tells whether the socket carries an SRTLA group's session
+    bool remote_for_local_port(uint16_t local_port, struct sockaddr_in *remote,
+                               bool *srtla = NULL) const;
+    // marks fd's entry as an SRTLA group's session (remote = the registering address)
+    void set_srtla(int fd);
+    // SLS_FD_STATE_*: what libsrt has done with fd's connection
+    int  state_for_fd(int fd) const;
     // removes expired entries and appends their fds (the caller closes them)
     void expire(int64_t now_ms, int halfopen_ms, int idle_ms, std::vector<int> *expired_fds);
     void remove_fd(int fd);
@@ -104,6 +115,7 @@ private:
         bool     established;
         int64_t  closing_ms;        // 0, or when libsrt sent a shutdown (final)
         int64_t  peer_shutdown_ms;  // 0, or when the remote sent one (undone by later packets)
+        bool     srtla;             // an SRTLA group's session
     };
     typedef std::map<uint64_t, entry> by_remote_t;
     static uint64_t key_of(const struct sockaddr_in &remote);

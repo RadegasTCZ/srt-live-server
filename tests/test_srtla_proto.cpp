@@ -197,3 +197,16 @@ SLS_TEST(srt_hs_tsbpd)
     SLS_CHECK(!sls_srt_hs_tsbpd(&h[0], (int)h.size(), &cmd, &rcv, &snd));
     SLS_CHECK(!sls_srt_hs_tsbpd(NULL, 100, &cmd, &rcv, &snd));
 }
+
+SLS_TEST(srt_hs_fields)
+{
+    std::vector<uint8_t> h = conclusion(SLS_SRT_HS_CMD_HSREQ, 1, 1);
+    put32(h, 24, 0x80001234u);   // the top bit is not part of the sequence number
+    uint32_t type = 0, isn = 0;
+    SLS_CHECK(sls_srt_hs_fields(&h[0], (int)h.size(), &type, &isn));
+    SLS_CHECK_EQ(type, SLS_SRT_HS_CONCLUSION);
+    SLS_CHECK_EQ(isn, 0x1234u);
+    SLS_CHECK(!sls_srt_hs_fields(&h[0], 63, &type, &isn));
+    h[1] = 2;   // an ACK, not a handshake
+    SLS_CHECK(!sls_srt_hs_fields(&h[0], (int)h.size(), &type, &isn));
+}

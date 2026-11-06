@@ -153,6 +153,16 @@ bool sls_srtla_parse_ack(const uint8_t *p, int len, uint32_t *seqs_out)
 #define HS_CONCLUSION    0xFFFFFFFFu
 #define HS_EXT_MAX       16      // walk at most this many extensions
 
+bool sls_srt_hs_fields(const uint8_t *p, int len, uint32_t *hs_type, uint32_t *isn)
+{
+    if (NULL == p || len < SLS_SRT_HS_MIN_LEN || rd16(p) != SLS_SRT_TYPE_HANDSHAKE) {
+        return false;
+    }
+    if (hs_type) *hs_type = rd32(p + HS_OFF_TYPE);
+    if (isn) *isn = rd32(p + 24) & SLS_SRT_SEQ_MASK;
+    return true;
+}
+
 bool sls_srt_hs_tsbpd(const uint8_t *p, int len, int *cmd_out, int *rcv_ms, int *snd_ms)
 {
     if (NULL == p || len < HS_OFF_EXT || rd16(p) != SLS_SRT_TYPE_HANDSHAKE) {

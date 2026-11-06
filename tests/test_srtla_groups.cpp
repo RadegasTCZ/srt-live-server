@@ -308,3 +308,28 @@ SLS_TEST(groups_clear)
     g.take_events(&ev);
     SLS_CHECK(ev.size() == 1 && ev[0].fd == 7 && 0 == strcmp(ev[0].reason, "stopped"));
 }
+
+SLS_TEST(groups_ack_every_10)
+{
+    CSLSSrtlaGroups g(caps(200, 4, 8, 0), fill_counter);
+    uint8_t id[SLS_SRTLA_ID_LEN];
+    struct sockaddr_in l1 = addr("10.0.0.1", 1), l2 = addr("10.0.0.2", 1);
+    join(g, l1, 0, id);
+    g.reg2(l2, id, 0);
+    uint32_t ack[SLS_SRTLA_ACK_SEQS];
+    std::vector<std::vector<uint32_t> > l1_acks;
+    int l2_acks = 0;
+    for (uint32_t s = 0; s < 25; s++) {
+        bool on_l1 = (s % 5) != 0;
+        if (g.record_ack_seq(on_l1 ? l1 : l2, s, ack)) {
+            if (on_l1) l1_acks.push_back(std::vector<uint32_t>(ack, ack + SLS_SRTLA_ACK_SEQS));
+            else l2_acks++;
+        }
+    }
+    // l1 got 20 sequence numbers (2 ACKs of its own), l2 only 5 (none yet)
+    SLS_CHECK_EQ(l1_acks.size(), 2u);
+    SLS_CHECK_EQ(l2_acks, 0);
+    SLS_CHECK(l1_acks.size() == 2 && l1_acks[0][0] == 1 && l1_acks[0][9] == 12);
+    SLS_CHECK(l1_acks.size() == 2 && l1_acks[1][0] == 13 && l1_acks[1][9] == 24);
+    SLS_CHECK(!g.record_ack_seq(addr("10.0.0.9", 1), 1, ack));   // not a link
+}

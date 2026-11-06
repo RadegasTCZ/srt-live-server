@@ -100,6 +100,16 @@ int sls_srtla_build_ack(uint8_t *out, int cap, const uint32_t *seqs);
 bool sls_srtla_parse_ack(const uint8_t *p, int len, uint32_t *seqs_out);
 
 /**
+ * The handshake type (+36: 1 = induction, 0xFFFFFFFF = conclusion, ...) and
+ * the initial data sequence number (+24) of an SRT handshake of at least
+ * SLS_SRT_HS_MIN_LEN bytes. False for anything else.
+ */
+bool sls_srt_hs_fields(const uint8_t *p, int len, uint32_t *hs_type, uint32_t *isn);
+
+#define SLS_SRT_HS_INDUCTION    1u
+#define SLS_SRT_HS_CONCLUSION   0xFFFFFFFFu
+
+/**
  * TSBPD delays from an SRT HSv5 conclusion handshake carrying an HSREQ or
  * HSRSP extension (plaintext). cmd_out gets SLS_SRT_HS_CMD_HSREQ or _HSRSP,
  * rcv_ms/snd_ms the receiver and sender TSBPD delays the packet declares.

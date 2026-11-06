@@ -252,6 +252,21 @@ uint32_t CSLSSrtlaGroups::on_packet(const struct sockaddr_in &src, int len, bool
     return handle;
 }
 
+bool CSLSSrtlaGroups::record_ack_seq(const struct sockaddr_in &src, uint32_t seq, uint32_t *ack_out)
+{
+    link *l = find_link(src, NULL);
+    if (!l) {
+        return false;
+    }
+    l->ack_seqs[l->ack_n++] = seq;
+    if (l->ack_n < SLS_SRTLA_ACK_SEQS) {
+        return false;
+    }
+    memcpy(ack_out, l->ack_seqs, sizeof(l->ack_seqs));
+    l->ack_n = 0;
+    return true;
+}
+
 uint32_t CSLSSrtlaGroups::group_of(const struct sockaddr_in &src) const
 {
     std::map<uint64_t, uint32_t>::const_iterator li = m_links.find(key_of(src));

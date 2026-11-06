@@ -127,15 +127,19 @@ case_frontdoor_unknown_data_dropped(){
     fi
 }
 
-case_frontdoor_srtla_dropped(){
+case_frontdoor_srtla_answered(){
+    # stage 2: REG1 gets REG2, an unknown REG2 gets REG_NGP; SRTLA keepalive/ACK
+    # from a source that is not a link is dropped without a reply
     write_conf; start_sls
-    local replies=$(udp_send 127.0.0.6 "$PORT" 1 258 9200)
+    local r1=$(udp_send 127.0.0.6 "$PORT" 1 258 9200)
+    local r2=$(udp_send 127.0.0.6 "$PORT" 1 258 9201)
+    local ka=$(udp_send 127.0.0.7 "$PORT" 3 10 9000)
     nap 0.5; stop_sls
     local d=$(counter dropped_srtla)
-    if [ "$d" -ge 1 ] && [ "$replies" = 0 ] && [ "$(asan_reports)" = 0 ]; then
-        pass frontdoor_srtla_dropped "dropped_srtla=$d, no reply"
+    if [ "$r1" = 1 ] && [ "$r2" = 1 ] && [ "$ka" = 0 ] && [ "$d" -ge 3 ] && [ "$(asan_reports)" = 0 ]; then
+        pass frontdoor_srtla_answered "REG1 -> $r1 reply, unknown REG2 -> $r2 reply, keepalive from a non-link dropped ($d)"
     else
-        fail frontdoor_srtla_dropped "dropped_srtla=$d replies=$replies asan=$(asan_reports)"
+        fail frontdoor_srtla_answered "REG1 replies=$r1 REG2 replies=$r2 keepalive replies=$ka dropped_srtla=$d asan=$(asan_reports)"
     fi
 }
 

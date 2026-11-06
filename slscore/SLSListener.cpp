@@ -1064,6 +1064,12 @@ int CSLSListener::start()
                 this, m_port, m_internal_port);
         // bound here, at startup, like the plain listener: a taken port stops sls
         m_front_door = new CSLSFrontDoor(m_port, m_internal_port, m_fd_max_total, m_fd_max_per_ip);
+        {
+            // stage 2 defaults; the srtla_* directives set them (Task 6)
+            sls_srtla_caps caps = {200, 4, 8, 5};
+            int lat = ((sls_conf_server_t*)m_conf)->latency;
+            m_front_door->set_srtla(caps, SLS_SRTLA_REORDER_DEFAULT_MS, lat > 0 ? lat : 120);
+        }
         if (SLS_OK != m_front_door->bind_public()) {
             delete m_front_door;
             m_front_door = NULL;

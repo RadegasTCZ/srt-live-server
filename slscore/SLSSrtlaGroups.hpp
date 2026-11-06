@@ -115,6 +115,10 @@ public:
     // data: an SRT data packet (counts towards the link's recent data).
     uint32_t on_packet(const struct sockaddr_in &src, int len, bool data, int64_t now_ms);
     uint32_t group_of(const struct sockaddr_in &src) const;
+    // collects a data sequence number that arrived on link src; when
+    // SLS_SRTLA_ACK_SEQS are collected, copies them to ack_out and returns
+    // true (send that link an SRTLA ACK)
+    bool record_ack_seq(const struct sockaddr_in &src, uint32_t seq, uint32_t *ack_out);
 
     // the group's SRT session has been seen (an SRT handshake through it)
     void mark_handshake(uint32_t group);
@@ -153,6 +157,8 @@ private:
         uint64_t rate_bytes;     // bytes at the last rate sample
         int64_t  rate_ms;
         int      kbitrate;
+        uint32_t ack_seqs[SLS_SRTLA_ACK_SEQS];
+        int      ack_n;
     };
     struct group {
         uint8_t  id[SLS_SRTLA_ID_LEN];

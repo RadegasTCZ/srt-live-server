@@ -170,7 +170,8 @@ bool CSLSPeerMap::remote_for_fd(int fd, struct sockaddr_in *remote, int64_t now_
     return true;
 }
 
-bool CSLSPeerMap::remote_for_local_port(uint16_t local_port, struct sockaddr_in *remote) const
+bool CSLSPeerMap::remote_for_local_port(uint16_t local_port, struct sockaddr_in *remote,
+                                        bool *srtla) const
 {
     CSLSLock lock(&m_mutex);
     std::map<uint16_t, uint64_t>::const_iterator p = m_by_local_port.find(local_port);
@@ -184,7 +185,40 @@ bool CSLSPeerMap::remote_for_local_port(uint16_t local_port, struct sockaddr_in 
     if (remote) {
         *remote = it->second.remote;
     }
+    if (srtla) {
+        *srtla = it->second.srtla;
+    }
     return true;
+}
+
+void CSLSPeerMap::set_srtla(int fd)
+{
+    CSLSLock lock(&m_mutex);
+    std::map<int, uint64_t>::iterator f = m_by_fd.find(fd);
+    if (f == m_by_fd.end()) {
+        return;
+    }
+    by_remote_t::iterator it = m_by_remote.find(f->second);
+    if (it != m_by_remote.end()) {
+        it->second.srtla = true;
+    }
+}
+
+int CSLSPeerMap::state_for_fd(int fd) const
+{
+    CSLSLock lock(&m_mutex);
+    std::map<int, uint64_t>::const_iterator f = m_by_fd.find(fd);
+    if (f == m_by_fd.end()) {
+        return SLS_FD_STATE_NONE;
+    }
+    by_remote_t::const_iterator it = m_by_remote.find(f->second);
+    if (it == m_by_remote.end()) {
+        return SLS_FD_STATE_NONE;
+    }
+    if (it->second.closing_ms) {
+        return SLS_FD_STATE_ENDED;
+    }
+    return it->second.established ? SLS_FD_STATE_ESTABLISHED : SLS_FD_STATE_HALFOPEN;
 }
 
 void CSLSPeerMap::erase_locked(by_remote_t::iterator it)
