@@ -458,8 +458,9 @@ static int sls_ts_whole_packets(uint8_t *buf, int len, uint8_t *carry, int *carr
 
 int CSLSRole::handler_read_data(int64_t *last_read_time)
 {
-	// room for the carried partial packet plus one SRT message
-	uint8_t szData[TS_PACK_LEN + TS_UDP_LEN];
+	// room for the carried partial packet plus one SRT message of any size
+	// (messages need not hold whole TS packets: they are realigned below)
+	uint8_t szData[TS_PACK_LEN + SLS_SRT_LIVE_PAYLOAD_MAX];
 
 	// held until the hook admits the role (polled on the worker tick)
 	if (!m_http_passed) {
@@ -480,7 +481,7 @@ int CSLSRole::handler_read_data(int64_t *last_read_time)
     if (carry > 0) {
         memcpy(szData, m_ts_carry, carry);
     }
-    int n = m_srt->libsrt_read((char *)szData + carry, TS_UDP_LEN);
+    int n = m_srt->libsrt_read((char *)szData + carry, SLS_SRT_LIVE_PAYLOAD_MAX);
 	if (n <= 0) {
         sls_log(SLS_LOG_TRACE, "[%p]CSLSRole::handler_read_data, libsrt_read returned n=%d (peer gone); cleanup will follow.", this, n);
 	    return SLS_ERROR;
@@ -498,7 +499,7 @@ int CSLSRole::handler_read_data(int64_t *last_read_time)
 	}
 
 	if (n != TS_UDP_LEN) {
-        sls_log(SLS_LOG_TRACE, "[%p]CSLSRole::handler_read_data, libsrt_read n=%d, expect %d.", this, n, TS_UDP_LEN);
+        sls_log(SLS_LOG_TRACE, "[%p]CSLSRole::handler_read_data, libsrt_read n=%d (TS senders usually send %d).", this, n, TS_UDP_LEN);
         //return SLS_ERROR;
     }
 

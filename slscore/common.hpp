@@ -77,6 +77,10 @@ using namespace std;
 
 #define TS_PACK_LEN 188
 #define TS_UDP_LEN 1316 //7*188
+// The largest SRT live-mode payload (1500 - 28 IP/UDP - 16 SRT header). A
+// publisher may send any size up to this (srt-live-transmit sends 1456):
+// reads take whole messages, so a smaller buffer would cut them short.
+#define SLS_SRT_LIVE_PAYLOAD_MAX 1456
 #define SHORT_STR_MAX_LEN 256
 #define STR_MAX_LEN 1024
 #define URL_MAX_LEN STR_MAX_LEN
