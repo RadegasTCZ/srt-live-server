@@ -255,8 +255,9 @@ private:
     bool pinned_peer(int fd, const char *libsrt_ip, int libsrt_port, char *ip, size_t ip_len, int *port,
                      bool *srtla = NULL);
     void pin_identity(int ns, const struct sockaddr_in &remote, const struct sockaddr *peeraddr, bool srtla);
-    // the front door asks before answering an SRTLA REG1/REG2 from ip
-    static bool srtla_ip_refused(void *ctx, uint32_t ip_be);
+    // the front door asks before answering an SRTLA REG1/REG2 from ip; ctx is
+    // the CSLSConnLimiter (or NULL), which outlives the front doors at stop
+    static const char *srtla_ip_refused(void *ctx, uint32_t ip_be);
 
     int  init_conf_app();
     // One accept and its admission: 1 = a socket came off the queue (admitted

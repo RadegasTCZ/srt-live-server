@@ -566,13 +566,19 @@ void CSLSFrontDoor::on_srtla_reg(int kind, const struct sockaddr_in &from, const
     int n = 0;
     int pstate = SLS_FD_STATE_NONE;
     int pfd = m_peers.peek_remote(from, &pstate);
-    if (m_ip_check && m_ip_check(m_ip_check_ctx, from.sin_addr.s_addr)) {
+    const char *why = "a cap or the registration rate";
+    // a link re-sending REG2 to its own group only refreshes it: never refused
+    bool refresh = SLS_SRTLA_TYPE_REG2 == type && m_groups->is_link_of(from, id);
+    const char *blocked = (!refresh && m_ip_check) ? m_ip_check(m_ip_check_ctx, from.sin_addr.s_addr) : NULL;
+    if (blocked) {
         // locked out (wrong passphrases) or over its handshake rate: no group, no link
         r = SLS_SRTLA_REG_ERR;
+        why = blocked;
     } else if (SLS_SRTLA_TYPE_REG2 == type && pfd >= 0 && !m_group_by_fd.count(pfd)
                && SLS_FD_STATE_ENDED != pstate) {
         // a live plain SRT peer: a REG2 "from" it may be forged to steal its traffic
         r = SLS_SRTLA_REG_ERR;
+        why = "the source is a live plain SRT peer";
     } else if (SLS_SRTLA_TYPE_REG1 == type) {
         uint8_t full[SLS_SRTLA_ID_LEN];
         r = m_groups->reg1(from, id, now_ms, full);
@@ -597,7 +603,7 @@ void CSLSFrontDoor::on_srtla_reg(int kind, const struct sockaddr_in &from, const
         sls_peer_log(SLS_LOG_INFO, "[%p]CSLSFrontDoor, refused SRTLA %s from [%s:%d]: %s.",
                      this, SLS_SRTLA_TYPE_REG1 == type ? "REG1" : "REG2", sls_fd_ip(from, ip, sizeof(ip)),
                      ntohs(from.sin_port),
-                     SLS_SRTLA_REG_NGP == r ? "unknown or expired group id" : "a cap, the rate, a lockout or a live peer");
+                     SLS_SRTLA_REG_NGP == r ? "unknown or expired group id" : why);
     }
     reply(from, out, n);
 }

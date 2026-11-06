@@ -120,6 +120,8 @@ public:
     // data: an SRT data packet (counts towards the link's recent data).
     uint32_t on_packet(const struct sockaddr_in &src, int len, bool data, int64_t now_ms);
     uint32_t group_of(const struct sockaddr_in &src) const;
+    // src is already a link of the group named by full_id (a REG2 refresh)
+    bool is_link_of(const struct sockaddr_in &src, const uint8_t *full_id) const;
     // collects a data sequence number that arrived on link src; when
     // SLS_SRTLA_ACK_SEQS are collected, copies them to ack_out and returns
     // true (send that link an SRTLA ACK)

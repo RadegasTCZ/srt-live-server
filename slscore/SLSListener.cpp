@@ -972,19 +972,24 @@ int CSLSListener::listen_callback(void *opaq, SRTSOCKET ns, int hsversion,
 
 // srtla on: the front door asks this before answering a REG1/REG2 (on its
 // thread): an address the wrong-passphrase throttle blocks, or that has used
-// up its handshake rate, registers nothing. Nothing is counted here.
-bool CSLSListener::srtla_ip_refused(void *ctx, uint32_t ip_be)
+// up its handshake rate, registers nothing. Nothing is counted here. ctx is
+// the manager's limiter, not the listener: the front door outlives the
+// listeners at stop (it relays their shutdowns) and the limiter outlives it.
+const char *CSLSListener::srtla_ip_refused(void *ctx, uint32_t ip_be)
 {
-    CSLSListener *self = static_cast<CSLSListener*>(ctx);
+    CSLSConnLimiter *limiter = static_cast<CSLSConnLimiter*>(ctx);
     struct in_addr a;
     a.s_addr = ip_be;
     char ip[INET_ADDRSTRLEN] = "";
     inet_ntop(AF_INET, &a, ip, sizeof(ip));
     int64_t now_ms = sls_monotonic_ms();
     if (sls_auth_throttle().blocked(ip, now_ms)) {
-        return true;
+        return "the address is locked out (wrong passphrases)";
     }
-    return NULL != self->m_admission_limiter && self->m_admission_limiter->handshake_exhausted(ip, now_ms);
+    if (NULL != limiter && limiter->handshake_exhausted(ip, now_ms)) {
+        return "the address used up its handshake rate";
+    }
+    return NULL;
 }
 
 // srtla on: the remote this handshake was checked as, for accept_one (on
@@ -1110,7 +1115,7 @@ int CSLSListener::start()
             caps.reg_per_ip_per_sec  = sc->srtla_reg_per_ip_per_sec;
             // until a session's latency is known: the listener's (libsrt's default 120 ms)
             m_front_door->set_srtla(caps, sc->srtla_reorder_max, sc->latency > 0 ? sc->latency : 120);
-            m_front_door->set_srtla_ip_check(CSLSListener::srtla_ip_refused, this);
+            m_front_door->set_srtla_ip_check(CSLSListener::srtla_ip_refused, m_admission_limiter);
         }
         if (SLS_OK != m_front_door->bind_public()) {
             delete m_front_door;

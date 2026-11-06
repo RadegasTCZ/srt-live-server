@@ -93,9 +93,11 @@ public:
     // SRTLA settings (before start): caps, srtla_reorder_max, and the
     // listener's latency (the hold until a session's latency is known)
     void set_srtla(const sls_srtla_caps &caps, int reorder_max_ms, int latency_ms);
-    // asked before a REG1/REG2 is answered (on this thread): true refuses it
-    // (the listener: wrong-passphrase lockout, handshake rate)
-    typedef bool (*srtla_ip_check_fn)(void *ctx, uint32_t ip_be);
+    // asked before a REG1/REG2 is answered (on this thread): a reason refuses
+    // it, NULL allows it (the listener: wrong-passphrase lockout, handshake
+    // rate). ctx must outlive this front door (it runs until the manager's
+    // stop, after the listeners are gone).
+    typedef const char *(*srtla_ip_check_fn)(void *ctx, uint32_t ip_be);
     void set_srtla_ip_check(srtla_ip_check_fn fn, void *ctx) { m_ip_check = fn; m_ip_check_ctx = ctx; }
     // work() ended on an error: the port is no longer served (the manager stops sls)
     bool failed() const { return m_failed; }

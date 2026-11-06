@@ -267,6 +267,17 @@ bool CSLSSrtlaGroups::record_ack_seq(const struct sockaddr_in &src, uint32_t seq
     return true;
 }
 
+bool CSLSSrtlaGroups::is_link_of(const struct sockaddr_in &src, const uint8_t *full_id) const
+{
+    std::map<uint64_t, uint32_t>::const_iterator li = m_links.find(key_of(src));
+    if (li == m_links.end()) {
+        return false;
+    }
+    std::map<std::string, uint32_t>::const_iterator ii =
+        m_by_id.find(std::string((const char *)full_id, SLS_SRTLA_ID_LEN));
+    return ii != m_by_id.end() && ii->second == li->second;
+}
+
 uint32_t CSLSSrtlaGroups::group_of(const struct sockaddr_in &src) const
 {
     std::map<uint64_t, uint32_t>::const_iterator li = m_links.find(key_of(src));

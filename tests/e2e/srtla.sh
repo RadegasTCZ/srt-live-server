@@ -280,18 +280,27 @@ case_forged_reg2(){
 }
 
 case_player_through_group(){
-    # a player behind a bonded sender is refused (publishers only)
+    # a player behind a bonded sender is refused (publishers only), while the
+    # stream exists (a plain publisher), so 0 bytes means refused
     write_conf; start_sls
+    ( nice ffmpeg -nostdin -loglevel error -re -stream_loop -1 -i "$SRC_TS" -c copy -f mpegts - 2>/dev/null | \
+      timeout 12 srt-live-transmit -q -chunk 1316 file://con \
+        "srt://127.0.0.1:$PORT?streamid=uplive.m/live/m1&passphrase=$(key 2)&mode=caller" ) > /dev/null 2>&1 &
+    local pp=$!
+    nap 2
     $SENDER --server 127.0.0.1:$PORT --local $LOCAL --links 127.0.0.2,127.0.0.3 --duration 8 > sender.json 2>&1 &
     local sp=$!
     nap 1
     timeout 6 srt-live-transmit -q "srt://127.0.0.1:$LOCAL?streamid=live.m/live/m1&passphrase=$(key 3)&mode=caller" file://con > play.ts 2>/dev/null
-    wait $sp; stop_sls
+    wait $sp
+    kill_cmd srt-live-transm "127.0.0.1:$PORT?streamid=uplive.m"; kill_cmd ffmpeg "$SRC_TS"; wait $pp 2>/dev/null
+    stop_sls
     local b=$(stat -c%s play.ts) ref=$(awk '/a player through an SRTLA group/' out.log | wc -l)
-    if [ "$b" = 0 ] && [ "$ref" -ge 1 ] && [ "$(awk '/session start, player/' out.log | wc -l)" = 0 ]; then
-        pass srtla_player_through_group "refused ($ref lines), 0 bytes"
+    local pubs=$(awk '/session start, publisher/' out.log | wc -l)
+    if [ "$pubs" = 1 ] && [ "$b" = 0 ] && [ "$ref" -ge 1 ] && [ "$(awk '/session start, player/' out.log | wc -l)" = 0 ]; then
+        pass srtla_player_through_group "stream live; player through a group refused ($ref lines), 0 bytes"
     else
-        fail srtla_player_through_group "player got $b bytes, refusal lines $ref"
+        fail srtla_player_through_group "publishers $pubs, player got $b bytes, refusal lines $ref"
     fi
 }
 
@@ -309,10 +318,12 @@ case_locked_out_ip(){
     local r=$(srtla_raw 127.0.0.24 reg1)
     local other=$(srtla_raw 127.0.0.25 reg1)
     stop_sls
-    if [ "$blocked" -ge 1 ] && [ "$r" = "9210" ] && [ "$other" = "9201" ]; then
+    # the refusal must name the lockout (not the rate or a cap)
+    local why=$(awk '/refused SRTLA REG1 from \[127\.0\.0\.24:/ && /locked out \(wrong passphrases\)/' out.log | wc -l)
+    if [ "$blocked" -ge 1 ] && [ "$r" = "9210" ] && [ "$why" -ge 1 ] && [ "$other" = "9201" ]; then
         pass srtla_locked_out_ip "127.0.0.24 locked out -> REG1 answered $r; 127.0.0.25 -> $other"
     else
-        fail srtla_locked_out_ip "lockout lines $blocked, locked REG1 '$r' (want 9210), other '$other' (want 9201)"
+        fail srtla_locked_out_ip "lockout lines $blocked, locked REG1 '$r' (want 9210, reason lines $why), other '$other' (want 9201)"
     fi
 }
 

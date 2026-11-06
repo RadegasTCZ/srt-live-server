@@ -201,8 +201,6 @@ void CSLSConnLimiter::release(const char *ip, int kind, const std::string &strea
     }
 }
 
-// Refill b (capacity and rate: rate per second) up to now_ms, then take one
-// token if there is one.
 bool CSLSConnLimiter::handshake_exhausted(const char *ip, int64_t now_ms) const
 {
     if (m_hs_rate <= 0) {
@@ -212,7 +210,11 @@ bool CSLSConnLimiter::handshake_exhausted(const char *ip, int64_t now_ms) const
     CSLSLock lock(&m_mutex);
     std::map<std::string, hs_bucket>::const_iterator it = m_hs_buckets.find(key);
     if (it == m_hs_buckets.end()) {
-        return false;   // untracked: a full bucket (or the shared overflow one)
+        // untracked: a full bucket. Deliberately not the shared overflow
+        // bucket: spoofed sprays fill it, and this early check must not let
+        // them block every untracked address's registration (the listen
+        // callback still enforces the rate, overflow bucket included).
+        return false;
     }
     double tokens = it->second.tokens;
     if (now_ms > it->second.last_ms) {
@@ -221,6 +223,8 @@ bool CSLSConnLimiter::handshake_exhausted(const char *ip, int64_t now_ms) const
     return tokens < 1.0;
 }
 
+// Refill b (capacity and rate: rate per second) up to now_ms, then take one
+// token if there is one.
 bool CSLSConnLimiter::take_token(hs_bucket &b, int rate, int64_t now_ms)
 {
     if (now_ms > b.last_ms) {
