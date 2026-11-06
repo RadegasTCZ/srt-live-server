@@ -509,19 +509,27 @@ by what each one delivers.
   id gets REG_NGP (the sender registers again); a cap, the rate, a locked-out
   address or a source that is a live plain SRT peer gets REG_ERR (try later).
   REG_NAK is never sent. A link moves to another group only after 3 s of
-  silence.
+  silence (its REG2s don't count as activity), or once it is *foreign*: for 3 s
+  it has carried SRT packets, but none of its group's session (packets after
+  the handshake name libsrt's socket of the session). A foreign link (one a
+  forged REG2 put into another group) gets no answers, so its sender
+  re-registers it, and that REG2 takes it back.
 - **Identity.** The group's SRT session uses the address that sent REG1: that
   is `remote=`, `remote_ip` in the stats and the webhook, and the address the
   caps and the wrong-passphrase lockout count against. REG1/REG2 from an address
   the lockout blocks, or that has used up `max_handshakes_per_ip_per_sec`, get
   REG_ERR (a link re-sending REG2 to its own group only refreshes it and is
-  never refused).
+  never refused; a REG2 with a valid id is not refused for the handshake rate,
+  only for the lockout).
 - **Publishers only.** A connection through a group must publish: a player is
   refused (`a player through an SRTLA group (publishers only)`). Anyone who
   knows a group's id can add a link with any source address, so a group never
   sends a stream out; SRT ACKs go only to links that delivered data in the last
   2 s and since the previous ACK (the most recently active link always), all
-  other SRT packets to the most recently active link. Keepalives are echoed.
+  other SRT packets to the most recently active link that has carried the
+  session's data (before any has: the most recently active link). Keepalives
+  of up to 128 bytes are echoed (longer ones are dropped). SRT packets from a
+  link for another session's socket are dropped (`srtla_foreign=`).
 - **Reorder buffer.** One per group. In-order packets go through at once; a
   packet after a gap waits until the gap fills or the oldest waiting packet has
   waited the hold, `min(srtla_reorder_max, latency / 4)`, with the session's
@@ -529,10 +537,14 @@ by what each one delivers.
   block's `latency`). Late packets (retransmissions) go through at once; a
   second copy of a waiting packet is dropped. The window is sized for about
   20 Mbit/s over the hold: up to about 2 MB per group at the default 500 ms
-  hold, 8.6 MB at 2000 ms (allocated on first use).
+  hold, 8.6 MB at 2000 ms. It is allocated on first use, only once libsrt
+  accepted the session (the streamid and passphrase passed; until then packets
+  go through unbuffered), and freed when the session ends. libsrt's own
+  receive buffer per connection is larger.
 - **Sessions.** A group lives while it has links (a link silent 10 s is
-  dropped; a group without links for 10 s ends; a group without an SRT
-  handshake 10 s after it was created ends). A new SRT connection from the
+  dropped; a group without links for 10 s ends; a group whose SRT session
+  libsrt has not accepted 10 s after it was created ends, `reason=no session`,
+  whatever its links send). A new SRT connection from the
   sender (another SRT socket) in the same group gets a fresh socket and an empty
   buffer; a refused handshake ends the session, not the group.
 - **Logs.** INFO: `SRTLA group N registered by <ip:port>`, `link <ip:port>
@@ -543,7 +555,7 @@ by what each one delivers.
   latency and hold, and every 10 s one summary line per group (links with
   kbit/s and share, the reorder counters). Never one line per packet. The stop
   line adds `srtla_groups= srtla_reg_ok= srtla_reg_refused= srtla_in=
-  srtla_acks= srtla_no_session=`.
+  srtla_acks= srtla_no_session= srtla_foreign=`.
 - **Stats.** A publisher fed by a group has an `srtla` object in its stats
   line: `{"links":[{"ip","port","kbitrate","share_pct","packets","last_ms"}],
   "reordered","gap_released","duplicates","held_max_ms"}` (`last_ms` is wall
@@ -558,13 +570,32 @@ Directives (server block, with `srtla on;`):
 | `srtla_max_links_per_group` | 1-64 | 8 | links per group |
 | `srtla_max_groups` | 1-10000 | 200 | groups on this port |
 | `srtla_max_groups_per_ip` | 1-1000 | 4 | groups per registering address |
-| `srtla_reg_per_ip_per_sec` | 1-1000 | 5 | REG1s and REG2s with an unknown id per address per second (a REG2 with a valid id, or a link re-registering, is not counted) |
+| `srtla_reg_per_ip_per_sec` | 1-1000 | 5 | REG1s per source address and port per second (and 4 times that per IP); separately, REG2s with an unknown id per IP per second. A REG2 with a valid id, or a link re-registering, is not counted |
 
-Limits: the registration rate uses a fixed table of 4096 counters (addresses
-that collide share one). A spoofed REG1 flood large enough to use up all of
-them (in the order of 20 000 counted packets per second) delays new
-registrations while it lasts; groups and links that exist are not affected,
-and a sender that already got its REG2 answer still adds its links.
+Limits:
+- The registration rates use fixed tables of 4096 counters each (keys that
+  collide share one). A spoofed REG1 flood large enough to use up all of them
+  (in the order of 20 000 counted packets per second) delays new registrations
+  while it lasts; groups and links that exist are not affected, and a sender
+  that already got its REG2 answer still adds its links. REG2s with unknown
+  ids have their own table: junk REG2s cannot use up the REG1s a sender needs.
+  REG1s spoofed "from" a sender's own address and port (or 4 times the rate
+  from its IP) still delay its REG1 while they last: srtla2 has no way to
+  tell them apart.
+- srtla2 does not prove that a link's source address can receive: REG2 proves
+  that the REG1 source can (the id), not the link. So someone who registered
+  a group of their own can add links "from" any address and port. What they
+  cannot do: take a live link of another group (3 s rule), keep a link they
+  took once its real sender uses it (it turns foreign and is taken back), get
+  any stream data (a group only publishes), or make sls send more than they
+  send (keepalive echoes are capped; one ACK per forged data packet). What
+  remains: an address added before its real owner uses it (they must know
+  its exact address and port) carries the owner's SRT handshakes into their
+  group: a publisher still connects (with their group's address as its
+  identity), a player is refused; and by sending forged traffic for the
+  address without pause they can keep it. libsrt's control for their own
+  session can be sent to an address they added (about as much as they send).
+  Closing these needs a change to the protocol (a nonce the link must echo).
 
 Senders should use a latency of 2000 ms or more (SRT takes the larger of the
 two sides'); with bonded cellular links a short latency turns ordinary
