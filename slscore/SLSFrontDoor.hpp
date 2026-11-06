@@ -171,6 +171,8 @@ private:
     void end_group_session(group_rt *rt, int64_t now_ms);
     void forget_group_fd(int fd);
     void srtla_events(int64_t now_ms);
+    void srtla_publish_stats(int64_t now_ms, bool summary);
+    int64_t m_last_srtla_summary_ms;
     void srtla_tick(int64_t now_ms);
     int  srtla_poll_timeout(int64_t now_ms) const;
     void reply(const struct sockaddr_in &to, const uint8_t *buf, int len);

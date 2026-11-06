@@ -144,6 +144,7 @@ public :
     bool        awaits_hook() const { return !m_http_passed; }
     // one JSON object for the stats document; empty for roles that are not reported (listeners)
     std::string get_stat_info();
+    std::string srtla_stat_json();
     virtual int get_peer_info(char *peer_name, int &peer_port);
 
     void        set_http_url(const char *http_url, const struct sockaddr_storage *addr, socklen_t addr_len, int timeout_ms);

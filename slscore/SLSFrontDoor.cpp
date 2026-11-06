@@ -34,6 +34,7 @@
 #include "SLSFrontDoor.hpp"
 #include "SLSFrontDoorProto.hpp"
 #include "SLSSrtlaProto.hpp"
+#include "SLSSrtlaStats.hpp"
 #include "SLSLog.hpp"
 #include "common.hpp"
 
@@ -84,7 +85,8 @@ CSLSFrontDoor::CSLSFrontDoor(int public_port, int internal_port, int max_total, 
       m_summary_seen(0), m_rcvbuf(0), m_sndbuf(0),
       m_ip_check(NULL), m_ip_check_ctx(NULL),
       m_groups(NULL), m_reorder_max_ms(SLS_SRTLA_REORDER_DEFAULT_MS), m_latency_ms(120),
-      m_last_srtla_cleanup_ms(0), m_srtla_log_window_ms(0), m_srtla_log_n(0), m_srtla_log_held(0)
+      m_last_srtla_cleanup_ms(0), m_srtla_log_window_ms(0), m_srtla_log_n(0), m_srtla_log_held(0),
+      m_last_srtla_summary_ms(0)
 {
     sls_srtla_caps caps = {200, 4, 8, 5};
     set_srtla(caps, SLS_SRTLA_REORDER_DEFAULT_MS, 120);
@@ -377,6 +379,7 @@ int CSLSFrontDoor::work()
     m_last_expire_ms = now;
     m_last_summary_ms = now;
     m_last_srtla_cleanup_ms = now;
+    m_last_srtla_summary_ms = now;
     while (!m_exit) {
         if (m_pollfds_dirty) {
             rebuild_pollfds();
@@ -406,6 +409,11 @@ int CSLSFrontDoor::work()
         if (now - m_last_srtla_cleanup_ms >= SLS_SRTLA_CLEANUP_MS) {
             m_last_srtla_cleanup_ms = now;
             m_groups->cleanup(now);
+            bool summary = now - m_last_srtla_summary_ms >= SLS_FD_SUMMARY_MS;
+            if (summary) {
+                m_last_srtla_summary_ms = now;
+            }
+            srtla_publish_stats(now, summary);
         }
         srtla_events(now);
         if (now - m_last_expire_ms >= SLS_FD_EXPIRE_EVERY_MS) {
@@ -445,6 +453,12 @@ void CSLSFrontDoor::close_all()
     release_quarantine(0, true);
     m_group_by_fd.clear();
     for (std::map<uint32_t, group_rt *>::iterator it = m_group_rt.begin(); it != m_group_rt.end(); ++it) {
+        struct sockaddr_in reg;
+        if (m_groups && m_groups->registering_addr(it->first, &reg)) {
+            char ip[INET_ADDRSTRLEN] = "";
+            inet_ntop(AF_INET, &reg.sin_addr, ip, sizeof(ip));
+            sls_srtla_stats_erase(std::string(ip) + ":" + std::to_string(ntohs(reg.sin_port)));
+        }
         delete it->second->buf;
         delete it->second;
     }
@@ -795,6 +809,7 @@ void CSLSFrontDoor::srtla_events(int64_t now_ms)
         if (SLS_SRTLA_EV_GROUP_REMOVED == e.type) {
             std::map<uint32_t, group_rt *>::iterator it = m_group_rt.find(e.group);
             bool logged = false;
+            sls_srtla_stats_erase(std::string(ip) + ":" + std::to_string(ntohs(e.addr.sin_port)));
             if (it != m_group_rt.end()) {
                 logged = it->second->logged;
                 end_group_session(it->second, now_ms);
@@ -829,6 +844,66 @@ void CSLSFrontDoor::srtla_events(int64_t now_ms)
                 sls_log(SLS_LOG_INFO, "[%p]CSLSFrontDoor, SRTLA group %u: link %s:%d left (%s).",
                         this, e.group, ip, ntohs(e.addr.sin_port), e.reason);
             }
+        }
+    }
+}
+
+// the stats object of every group with a session (for its publisher's stats
+// line), and, every SLS_FD_SUMMARY_MS, one DEBUG line per group
+void CSLSFrontDoor::srtla_publish_stats(int64_t now_ms, bool summary)
+{
+    int64_t wall = sls_gettime_ms();
+    std::vector<sls_srtla_link_stats> ls;
+    for (std::map<uint32_t, group_rt *>::iterator it = m_group_rt.begin(); it != m_group_rt.end(); ++it) {
+        group_rt *rt = it->second;
+        struct sockaddr_in reg;
+        if (!m_groups->registering_addr(rt->handle, &reg)) {
+            continue;
+        }
+        char rip[INET_ADDRSTRLEN];
+        sls_fd_ip(reg, rip, sizeof(rip));
+        std::string key = std::string(rip) + ":" + std::to_string(ntohs(reg.sin_port));
+        if (rt->fd < 0) {
+            sls_srtla_stats_erase(key);
+            continue;
+        }
+        m_groups->links(rt->handle, &ls);
+        int64_t total = 0;
+        uint64_t total_pk = 0;
+        for (size_t i = 0; i < ls.size(); i++) {
+            total += ls[i].kbitrate;
+            total_pk += ls[i].packets;
+        }
+        const sls_srtla_reorder_stats &st = rt->buf->stats();
+        std::string j = "{\"links\":[";
+        std::string dbg;
+        for (size_t i = 0; i < ls.size(); i++) {
+            char ip[INET_ADDRSTRLEN];
+            sls_fd_ip(ls[i].addr, ip, sizeof(ip));
+            int share = total > 0 ? (int)(ls[i].kbitrate * 100 / total)
+                      : (total_pk ? (int)(ls[i].packets * 100 / total_pk) : 0);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "%s{\"ip\":\"%s\",\"port\":%d,\"kbitrate\":%d,\"share_pct\":%d,"
+                     "\"packets\":%llu,\"last_ms\":%lld}",
+                     i ? "," : "", ip, ntohs(ls[i].addr.sin_port), ls[i].kbitrate, share,
+                     (unsigned long long)ls[i].packets, (long long)(wall - (now_ms - ls[i].last_ms)));
+            j += buf;
+            snprintf(buf, sizeof(buf), " %s:%d=%dkbps/%d%%", ip, ntohs(ls[i].addr.sin_port), ls[i].kbitrate, share);
+            dbg += buf;
+        }
+        char tail[256];
+        snprintf(tail, sizeof(tail), "],\"reordered\":%llu,\"gap_released\":%llu,\"duplicates\":%llu,\"held_max_ms\":%d}",
+                 (unsigned long long)st.reordered, (unsigned long long)st.gap_released,
+                 (unsigned long long)st.duplicates, st.held_max_ms);
+        j += tail;
+        sls_srtla_stats_set(key, j);
+        if (summary) {
+            sls_log(SLS_LOG_DEBUG, "[%p]CSLSFrontDoor, SRTLA group %u (%s): hold %d ms, links%s; reordered=%llu "
+                    "held=%llu gap_released=%llu late=%llu duplicates=%llu cap_released=%llu resets=%llu held_max_ms=%d.",
+                    this, rt->handle, key.c_str(), rt->buf->hold_ms(), dbg.c_str(),
+                    (unsigned long long)st.reordered, (unsigned long long)st.held, (unsigned long long)st.gap_released,
+                    (unsigned long long)st.late, (unsigned long long)st.duplicates,
+                    (unsigned long long)st.cap_released, (unsigned long long)st.resets, st.held_max_ms);
         }
     }
 }

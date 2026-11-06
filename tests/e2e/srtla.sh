@@ -31,6 +31,7 @@ write_conf(){ # extra server lines...
     {
         printf 'srt {\n    worker_threads 1;\n    log_file logs-error.log;\n    log_level %s;\n' "${LOG_LEVEL:-info}"
         printf '    pid_file %s/sls.pid;\n' "$WORK"
+        [ -n "$STAT_URL" ] && printf '    stat_post_url %s;\n    stat_post_interval 1;\n' "$STAT_URL"
         printf '    server {\n        listen %s;\n        latency 120;\n' "$PORT"
         printf '        domain_publisher uplive.m;\n        domain_player live.m;\n'
         printf '        idle_streams_timeout 10;\n        user_file %s/users.conf;\n        srtla on;\n' "$WORK"
@@ -100,6 +101,26 @@ pub_stat(){ # column -> sum over pub.csv
 sender_field(){ python3 -I -c 'import json,sys; d=json.load(open("sender.json")); print(eval(sys.argv[1]))' "$1" 2>/dev/null; }
 decode_errors(){ nice ffmpeg -nostdin -v error -i play.ts -f null - 2>&1 | awk '!/co located POCs|reference picture missing|Missing reference picture/' | wc -l; }
 
+start_sink(){ # port -> POST bodies appended to stats.jsonl
+    rm -f stats.jsonl
+    python3 -I - "$1" "$WORK/stats.jsonl" > sink.log 2>&1 <<'EOF2' &
+import http.server, sys
+port, out = int(sys.argv[1]), sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(n)
+        with open(out, 'ab') as f:
+            f.write(body.replace(b'\n', b' ') + b'\n')
+        self.send_response(200); self.send_header('Content-Length', '0'); self.end_headers()
+    def log_message(self, *a): pass
+http.server.HTTPServer(('127.0.0.1', port), H).serve_forever()
+EOF2
+    SINK_PID=$!
+    nap 0.5
+}
+stop_sink(){ [ -n "$SINK_PID" ] && { kill "$SINK_PID" 2>/dev/null; wait "$SINK_PID" 2>/dev/null; }; SINK_PID=; }
+
 # raw srtla2 messages from one source: prints the reply types
 srtla_raw(){ # src_ip script
     python3 -I - "$PORT" "$@" <<'PYEOF'
@@ -150,6 +171,35 @@ case_reorder_clean(){
         fail srtla_reorder_clean "player $b B, sent=$s retrans=$r naked=$l, acks=$acks, noisy=$n, decode=$de, asan=$(asan_reports)"
     fi
     REORDER_ON_RETRANS=$r
+}
+
+case_stats(){
+    # the publisher's stats line carries the group: links and reorder counters
+    start_sink 18602
+    STAT_URL=http://127.0.0.1:18602/sls/stat write_conf; start_sls
+    bonded_publish 14 --links 127.0.0.2,127.0.0.3 --delay 1:30
+    nap 10; bonded_wait; stop_sls; stop_sink
+    local last=$(awk '/"srtla"/' stats.jsonl 2>/dev/null | tail -1)
+    local ok=$(printf '%s' "$last" | python3 -I -c '
+import json, sys
+d = json.loads(sys.stdin.read() or "{}")
+def roles(x):
+    if isinstance(x, dict):
+        if "srtla" in x: yield x
+        for v in x.values(): yield from roles(v)
+    elif isinstance(x, list):
+        for v in x: yield from roles(v)
+r = next(roles(d), None)
+s = r["srtla"] if r else {}
+ls = s.get("links", [])
+good = r and r.get("kind") == "publisher" and len(ls) == 2 and all(l["kbitrate"] > 0 and l["packets"] > 0 for l in ls) \
+    and 95 <= sum(l["share_pct"] for l in ls) <= 100 and s.get("reordered", 0) > 0 and "held_max_ms" in s
+print("ok" if good else "bad", json.dumps(s)[:300])' 2>&1)
+    if [ "${ok%% *}" = ok ] && [ "$(asan_reports)" = 0 ]; then
+        pass srtla_stats "${ok#ok }"
+    else
+        fail srtla_stats "$ok"
+    fi
 }
 
 case_reorder_off_compare(){
@@ -289,7 +339,7 @@ case_stock_srtla_send(){
     fi
 }
 
-ALL="reorder_clean reorder_off_compare link_dies dup_and_drop caps reg_rate forged_reg2 player_through_group locked_out_ip stock_srtla_send"
+ALL="reorder_clean stats reorder_off_compare link_dies dup_and_drop caps reg_rate forged_reg2 player_through_group locked_out_ip stock_srtla_send"
 for c in ${*:-$ALL}; do
     c=${c#srtla_}
     "case_$c"

@@ -55,6 +55,7 @@ OBJS = $(OUTPUT_PATH)/SLSLog.o \
 	$(OUTPUT_PATH)/SLSSrtlaProto.o\
 	$(OUTPUT_PATH)/SLSSrtlaGroups.o\
 	$(OUTPUT_PATH)/SLSSrtlaReorder.o\
+	$(OUTPUT_PATH)/SLSSrtlaStats.o\
 	$(OUTPUT_PATH)/SLSPeerMap.o\
 	$(OUTPUT_PATH)/SLSFrontDoor.o
 	

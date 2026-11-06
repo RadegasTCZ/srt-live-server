@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include "SLSRole.hpp"
+#include "SLSSrtlaStats.hpp"
 #include "SLSLog.hpp"
 #include "SLSStreamId.hpp"   // sls_escape_for_log
 
@@ -642,6 +643,17 @@ void   CSLSRole::set_stat_identity(const char *stream, const char *remote_ip, in
 	m_stat_start_ms    = sls_gettime_ms();
 }
 
+// srtla on: a publisher fed by an SRTLA group gets its links and reorder
+// counters (published by the front door under the registering address)
+std::string   CSLSRole::srtla_stat_json()
+{
+	if (0 != strcmp(m_role_name, "publisher")) {
+		return std::string();
+	}
+	std::string j = sls_srtla_stats_get(m_stat_remote_ip + ":" + std::to_string(m_stat_remote_port));
+	return j.empty() ? j : ",\"srtla\":" + j;
+}
+
 std::string   CSLSRole::get_stat_info()
 {
 	// a role still waiting for the hook's 200 is not a session yet (S2):
@@ -654,7 +666,7 @@ std::string   CSLSRole::get_stat_info()
 		"\",\"remote_ip\":\"" + sls_json_escape(m_stat_remote_ip) +
 		"\",\"remote_port\":" + std::to_string(m_stat_remote_port) +
 		",\"start_ms\":" + std::to_string(m_stat_start_ms) +
-		",\"kbitrate\":" + std::to_string(m_kbitrate) + "}";
+		",\"kbitrate\":" + std::to_string(m_kbitrate) + srtla_stat_json() + "}";
 }
 
 
