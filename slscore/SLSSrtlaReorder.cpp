@@ -291,6 +291,7 @@ void CSLSSrtlaReorder::reset()
     for (size_t i = 0; i < m_slot.size(); i++) {
         m_slot[i].used = false;
     }
+    std::vector<uint8_t>().swap(m_data);   // allocated again on the next hold
     m_held = 0;
     m_arrivals.clear();
     m_started = false;

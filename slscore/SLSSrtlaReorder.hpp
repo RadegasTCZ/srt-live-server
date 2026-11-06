@@ -97,7 +97,9 @@ public:
     int  next_deadline(int64_t now_ms) const;
     // releases everything held, in order, then forgets the sequence (a new SRT session)
     void flush();
+    // drops everything held and frees the packet memory (a session ended)
     void reset();
+    size_t bytes_allocated() const { return m_data.capacity(); }
 
     size_t held_count() const { return m_held; }
     const sls_srtla_reorder_stats &stats() const { return m_stats; }

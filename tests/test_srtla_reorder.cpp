@@ -360,3 +360,22 @@ SLS_TEST(reorder_start_at_latest_until_data)
     push(r, 102, 3);
     SLS_CHECK_EQ(out.size(), 3u);
 }
+
+// the packet memory exists only while a session holds packets: reset() frees it
+SLS_TEST(reorder_reset_frees_memory)
+{
+    std::vector<uint32_t> out;
+    CSLSSrtlaReorder r(100, collect, &out);
+    push(r, 10, 0);
+    SLS_CHECK_EQ(r.bytes_allocated(), 0u);    // in order: nothing held, nothing allocated
+    push(r, 12, 1);
+    SLS_CHECK(r.bytes_allocated() >= (size_t)r.slots() * SLS_SRTLA_REORDER_SLOT_LEN);
+    r.reset();
+    SLS_CHECK_EQ(r.bytes_allocated(), 0u);
+    SLS_CHECK_EQ(r.held_count(), 0u);
+    push(r, 500, 2);
+    push(r, 502, 3);                           // usable again after the reset
+    SLS_CHECK_EQ(r.held_count(), 1u);
+    push(r, 501, 4);
+    SLS_CHECK_EQ(r.held_count(), 0u);
+}
