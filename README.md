@@ -86,6 +86,16 @@ Changes in 1.6.0 (in development)
   stats line. New directives `srtla_reorder_max`, `srtla_max_links_per_group`,
   `srtla_max_groups`, `srtla_max_groups_per_ip`, `srtla_reg_per_ip_per_sec`.
   See "SRTLA (srtla on)" in `doc/Directives.md`.
+  Senders should set an SRT latency of 2000 ms or more: the reorder hold is a
+  quarter of it, capped at `srtla_reorder_max` (500 ms).
+  **IRL Pro:** its bonded mode sends no passphrase (it has no field for one), so
+  a bonded IRL Pro publisher needs a user with no publish passphrase (`-` in the
+  `user_file`). Its plain SRT mode does send one.
+- **Refused handshakes are named at INFO.** With the front door on, a handshake
+  libsrt refuses logs the peer's real address, libsrt's reason and the
+  streamid (`refused by libsrt: reason=11 (...)`), one line per attempt and at
+  most one per second; before, a refused bonded sender only showed as
+  `reason=no session`.
 - **`srt_lossmaxttl N;`** sets `SRTO_LOSSMAXTTL` on a server block's listener
   (default 0 = off).
 - **On/off directives** also accept `on` and `off`.

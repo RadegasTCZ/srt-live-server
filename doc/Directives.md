@@ -478,6 +478,18 @@ What changes with `srtla on;` in a server block:
   evicted= relayed_in= relayed_out= dropped_srtla= dropped_unknown= refused_cap=
   send_errors= local_errors=`. `local_errors` counts relay sockets that could not
   be opened (fd limit); they also log an ERROR at most every 10 s.
+- **Refused handshakes.** When libsrt refuses a handshake that came through the
+  front door (plain SRT or an SRTLA group), one INFO line names it with the
+  peer's real address, libsrt's reason and the streamid:
+  `handshake from [<ip:port>] refused by libsrt: reason=11 (Password required
+  or unexpected), streamid='<sid>'` (`, SRTLA group N` for a group). One line
+  per attempt (libsrt answers each repeated conclusion), at most one per second
+  per front door, then a held-back count; the rest at DEBUG. The streamid is
+  cut at 128 characters, bytes outside printable ASCII show as `?`, and it is
+  empty for a refusal before the streamid was sent. Common reasons: 10 (the
+  passphrase does not match), 11 (one side encrypts and the other does not:
+  e.g. a sender without a passphrase for a user with one, or the reverse).
+  libsrt's own WARNING about the same refusal shows only `127.0.0.1`.
 
 File descriptors: each srtla block may use up to 2 x the connection cap (relay
 sockets plus quarantined ones) under a flood. With a front door sls raises its
@@ -552,7 +564,9 @@ by what each one delivers.
 - **Logs.** INFO: `SRTLA group N registered by <ip:port>`, `link <ip:port>
   joined` / `left (<reason>)`, `SRTLA group N ended: ... reason=, duration=,
   peak links=, last session end=`; at most 20 such lines per 10 s, then a
-  held-back count.
+  held-back count. A group whose handshake libsrt refused (the streamid, the
+  passphrase) also has the front door's `refused by libsrt: reason=` line (see
+  "Front door"); without it only `reason=no session` shows at the group's end.
   Refused registrations go through the refusal budget. DEBUG: the session's
   latency and hold, and every 10 s one summary line per group (links with
   kbit/s and share, the reorder counters). Never one line per packet. The stop
@@ -601,7 +615,18 @@ Limits:
 
 Senders should use a latency of 2000 ms or more (SRT takes the larger of the
 two sides'); with bonded cellular links a short latency turns ordinary
-reordering and retransmission delays into drops.
+reordering and retransmission delays into drops. The reorder hold is a quarter
+of the latency, capped at `srtla_reorder_max` (500 ms by default): at 1000 ms
+it is 250 ms, and a first test with IRL Pro over two carriers at 1000 ms kept
+hitting that cap (`held_max_ms` 256, a steadily growing `gap_released`).
+2000 ms gives the full 500 ms.
+
+**IRL Pro.** Its bonded (SRTLA) mode has no passphrase field and sends no
+passphrase: libsrt refuses it for a user with a publish passphrase (reason 11)
+and the group ends `reason=no session`. A bonded IRL Pro publisher needs a user
+whose publish passphrase is `-` (see `user_file`; players can keep theirs).
+Its plain SRT mode does send a passphrase, so a user with `-` refuses that mode
+when a passphrase is set in it (reason 11 the other way round).
 
 ## max_pull_streams (relay block), pull relay lifetime
 
