@@ -390,6 +390,26 @@ case_refused_session_expires(){
     fi
 }
 
+case_refused_reason_logged(){
+    # at log_level info a bonded publisher that libsrt refuses (a passphrase
+    # the user does not have) is named with libsrt's reason, its real address,
+    # the streamid and the group, and a sender retrying in a loop stays within
+    # the peer-line budget (one per second)
+    LOG_LEVEL=info write_conf; start_sls
+    PUB_PASS=wrongwrongwrong1 PUB_OPTS="-a no" bonded_publish 8 --links 127.0.0.2,127.0.0.3
+    bonded_wait; stop_sls
+    local line=$(awk '/ INFO: .*refused by libsrt: reason=/' out.log | head -1)
+    local n=$(awk '/ INFO: .*refused by libsrt: reason=/' out.log | wc -l)
+    local all=$(awk '/refused by libsrt: reason=/' out.log | wc -l)
+    local lo=$(awk '/refused by libsrt/ && /\[127\.0\.0\.1:/' out.log | wc -l)
+    if echo "$line" | grep -q -E "\[127\.0\.0\.[23]:[0-9]+\] refused by libsrt: reason=[0-9]+ \(.+\), streamid='uplive\.m/live/m1', SRTLA group [0-9]+\." \
+       && [ "$n" -le 10 ] && [ "$lo" = 0 ] && [ "$(asan_reports)" = 0 ]; then
+        pass srtla_refused_reason_logged "$n INFO line(s) for $all refusal(s): ${line#*CSLSFrontDoor, }"
+    else
+        fail srtla_refused_reason_logged "first='$line' info=$n (want 1-10) all=$all from 127.0.0.1=$lo asan=$(asan_reports)"
+    fi
+}
+
 case_stock_srtla_send(){
     # BELABOX srtla_send as a black-box second sender (if built)
     if [ ! -x "$SRTLA_SEND" ]; then pass srtla_stock_srtla_send "skipped: no $SRTLA_SEND"; return; fi

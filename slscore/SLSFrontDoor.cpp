@@ -31,6 +31,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <srt/srt.h>
+
 #include "SLSFrontDoor.hpp"
 #include "SLSFrontDoorProto.hpp"
 #include "SLSSrtlaProto.hpp"
@@ -84,6 +86,7 @@ CSLSFrontDoor::CSLSFrontDoor(int public_port, int internal_port, int max_total, 
       m_peers(max_total, max_per_ip), m_pollfds_dirty(true),
       m_last_expire_ms(0), m_last_summary_ms(0), m_last_cap_log_ms(0), m_last_local_error_log_ms(-100000),
       m_summary_seen(0), m_rcvbuf(0), m_sndbuf(0),
+      m_reject_log_ms(-100000), m_reject_held(0),
       m_ip_check(NULL), m_ip_check_ctx(NULL),
       m_groups(NULL), m_reorder_max_ms(SLS_SRTLA_REORDER_DEFAULT_MS), m_latency_ms(120),
       m_last_srtla_cleanup_ms(0), m_srtla_due_ms(INT64_MAX), m_srtla_log_window_ms(0), m_srtla_log_n(0), m_srtla_log_held(0),
@@ -271,12 +274,85 @@ void CSLSFrontDoor::on_public_readable(int64_t now_ms)
                 continue;
             }
         }
+        if (SLS_FD_SRT_HANDSHAKE == kind) {
+            note_handshake(fd, buf, (int)len);
+        }
         if (send(fd, buf, len, 0) < 0) {
             m_send_errors++;
         } else {
             m_relayed_in++;
         }
     }
+}
+
+void CSLSFrontDoor::note_handshake(int fd, const uint8_t *buf, int len)
+{
+    uint32_t hs_type = 0;
+    if (!sls_srt_hs_fields(buf, len, &hs_type, NULL)) {
+        return;
+    }
+    if (SLS_SRT_HS_INDUCTION == hs_type) {
+        std::map<int, hs_note>::iterator it = m_hs_notes.find(fd);
+        if (it != m_hs_notes.end()) {
+            it->second.reject_logged = false;   // a new attempt on the same socket
+        }
+        return;
+    }
+    char sid[SLS_FD_SID_LOG_MAX + 1];
+    if (SLS_SRT_HS_CONCLUSION == hs_type && sls_srt_hs_streamid(buf, len, sid, sizeof(sid))) {
+        hs_note &note = m_hs_notes[fd];   // created zeroed: reject_logged = false
+        memcpy(note.sid, sid, sizeof(sid));
+    }
+}
+
+void CSLSFrontDoor::log_reject(int fd, const struct sockaddr_in &remote, const uint8_t *buf, int len, int64_t now_ms)
+{
+    int reason = 0;
+    if (!sls_srt_hs_reject(buf, len, &reason)) {
+        return;
+    }
+    // libsrt answers every repeated conclusion of the attempt: one line per
+    // attempt here, and its budget (m_reject_log_ms) bounds a peer that
+    // retries in a loop
+    std::map<int, hs_note>::iterator it = m_hs_notes.find(fd);
+    if (it != m_hs_notes.end()) {
+        if (it->second.reject_logged) {
+            return;
+        }
+        it->second.reject_logged = true;
+    } else {
+        hs_note &note = m_hs_notes[fd];   // a refused induction: no streamid seen
+        note.sid[0] = '\0';
+        note.reject_logged = true;
+        it = m_hs_notes.find(fd);
+    }
+    char ip_str[INET_ADDRSTRLEN] = "";
+    inet_ntop(AF_INET, &remote.sin_addr, ip_str, sizeof(ip_str));
+    char group[32] = "";
+    std::map<int, uint32_t>::iterator g = m_group_by_fd.find(fd);
+    if (g != m_group_by_fd.end()) {
+        snprintf(group, sizeof(group), ", SRTLA group %u", g->second);
+    }
+    const char *text = srt_rejectreason_str(reason);
+    if (now_ms - m_reject_log_ms < 1000) {
+        m_reject_held++;
+        sls_log(SLS_LOG_DEBUG, "[%p]CSLSFrontDoor, handshake from [%s:%d] refused by libsrt: reason=%d (%s), streamid='%s'%s.",
+                this, ip_str, ntohs(remote.sin_port), reason, text ? text : "?", it->second.sid, group);
+        return;
+    }
+    m_reject_log_ms = now_ms;
+    char held[64] = "";
+    if (m_reject_held > 0) {
+        snprintf(held, sizeof(held), " [%u more refusal(s) held back, see log_level debug]", m_reject_held);
+        m_reject_held = 0;
+    }
+    sls_log(SLS_LOG_INFO, "[%p]CSLSFrontDoor, handshake from [%s:%d] refused by libsrt: reason=%d (%s), streamid='%s'%s.%s",
+            this, ip_str, ntohs(remote.sin_port), reason, text ? text : "?", it->second.sid, group, held);
+}
+
+void CSLSFrontDoor::forget_fd(int fd)
+{
+    m_hs_notes.erase(fd);
 }
 
 void CSLSFrontDoor::on_mapping_readable(int fd, int64_t now_ms)
@@ -295,6 +371,9 @@ void CSLSFrontDoor::on_mapping_readable(int fd, int64_t now_ms)
         if (!m_peers.remote_for_fd(fd, &remote, now_ms, confirms, sls_fd_is_shutdown(buf, (int)len))) {
             return;   // expired meanwhile
         }
+        if (!confirms) {
+            log_reject(fd, remote, buf, (int)len, now_ms);   // a handshake answer: a refusal is named at INFO
+        }
         std::map<int, uint32_t>::iterator g = m_group_by_fd.find(fd);
         if (g != m_group_by_fd.end()) {
             on_group_readable(fd, g->second, buf, (int)len, now_ms);
@@ -310,6 +389,7 @@ void CSLSFrontDoor::on_mapping_readable(int fd, int64_t now_ms)
 
 void CSLSFrontDoor::quarantine(int fd, int64_t now_ms)
 {
+    forget_fd(fd);   // no more relaying through it
     if ((int)m_quarantine.size() >= m_peers.max_total()) {
         close(m_quarantine.front().second);   // bounded: the oldest goes early
         m_quarantine.pop_front();
@@ -336,6 +416,7 @@ void CSLSFrontDoor::expire(int64_t now_ms)
     m_peers.expire(now_ms, SLS_FD_HALFOPEN_MS, SLS_FD_IDLE_MS, &fds);
     for (size_t i = 0; i < fds.size(); i++) {
         forget_group_fd(fds[i]);
+        forget_fd(fds[i]);
         close(fds[i]);
     }
     if (!fds.empty()) {
@@ -454,6 +535,7 @@ void CSLSFrontDoor::close_all()
         close(fds[i]);
     }
     release_quarantine(0, true);
+    m_hs_notes.clear();
     m_group_by_fd.clear();
     for (std::map<uint32_t, group_rt *>::iterator it = m_group_rt.begin(); it != m_group_rt.end(); ++it) {
         struct sockaddr_in reg;
@@ -803,6 +885,9 @@ void CSLSFrontDoor::on_link_packet(uint32_t handle, const struct sockaddr_in &fr
         }
         if (SLS_SRT_HS_CONCLUSION == hs_type) {
             rt->buf->start_at(isn);
+        }
+        if (rt->fd >= 0) {
+            note_handshake(rt->fd, buf, len);
         }
     }
     if (rt->fd < 0) {

@@ -121,6 +121,27 @@ bool sls_srt_hs_fields(const uint8_t *p, int len, uint32_t *hs_type, uint32_t *i
  */
 bool sls_srt_hs_tsbpd(const uint8_t *p, int len, int *cmd_out, int *rcv_ms, int *snd_ms);
 
+#define SLS_SRT_HS_CMD_SID      5
+#define SLS_SRT_HS_REJECT_BASE  1000u   // libsrt's URQ_FAILURE_TYPE: a refusal's type is 1000 + the reason
+
+/**
+ * The reason libsrt refused a handshake: its answer carries 1000 + the
+ * SRT_REJECT_REASON (or SRT_REJC_* code) as the handshake type (+36), in any
+ * handshake version. False for anything else, including every handshake type
+ * of a connection that goes ahead.
+ */
+bool sls_srt_hs_reject(const uint8_t *p, int len, int *reason);
+
+/**
+ * The streamid of an SRT HSv5 conclusion carrying an SID extension, for a log
+ * line: libsrt sends it in 32-bit words with the bytes of each word reversed.
+ * out gets at most cap - 1 characters and a NUL; bytes outside printable ASCII
+ * become '?' (the text comes from the network). Returns false (out = "") for
+ * anything else: not a v5 conclusion, no SID extension, a truncated
+ * extension, or an empty streamid.
+ */
+bool sls_srt_hs_streamid(const uint8_t *p, int len, char *out, int cap);
+
 /**
  * SipHash-2-4 (Aumasson & Bernstein) with a 128-bit key: a keyed PRF for the
  * stateless group ids and the registration-rate table. 64-bit output.

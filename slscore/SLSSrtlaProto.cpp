@@ -192,6 +192,58 @@ bool sls_srt_hs_tsbpd(const uint8_t *p, int len, int *cmd_out, int *rcv_ms, int 
     return false;
 }
 
+bool sls_srt_hs_reject(const uint8_t *p, int len, int *reason)
+{
+    if (NULL == p || len < SLS_SRT_HS_MIN_LEN || rd16(p) != SLS_SRT_TYPE_HANDSHAKE) {
+        return false;
+    }
+    // the other types are small (0 wave-a-hand, 1 induction) or negative
+    // (conclusion, agreement, done)
+    uint32_t type = rd32(p + HS_OFF_TYPE);
+    if (type < SLS_SRT_HS_REJECT_BASE || type >= 0x80000000u) {
+        return false;
+    }
+    if (reason) *reason = (int)(type - SLS_SRT_HS_REJECT_BASE);
+    return true;
+}
+
+bool sls_srt_hs_streamid(const uint8_t *p, int len, char *out, int cap)
+{
+    if (NULL == out || cap < 1) {
+        return false;
+    }
+    out[0] = '\0';
+    if (NULL == p || len < HS_OFF_EXT || rd16(p) != SLS_SRT_TYPE_HANDSHAKE) {
+        return false;
+    }
+    if (rd32(p + HS_OFF_VERSION) != HS_VERSION_5 || rd32(p + HS_OFF_TYPE) != HS_CONCLUSION) {
+        return false;
+    }
+    int off = HS_OFF_EXT;
+    for (int n = 0; n < HS_EXT_MAX && off + 4 <= len; n++) {
+        int type = rd16(p + off);
+        int words = rd16(p + off + 2);
+        int body = off + 4;
+        if (words > (len - body) / 4) {
+            return false;   // truncated
+        }
+        if (SLS_SRT_HS_CMD_SID == type) {
+            int k = 0;
+            for (int i = 0; i < 4 * words && k < cap - 1; i++) {
+                uint8_t c = p[body + (i & ~3) + 3 - (i & 3)];   // reversed within each word
+                if (0 == c) {
+                    break;   // padding up to the word
+                }
+                out[k++] = (c >= 0x20 && c < 0x7F) ? (char)c : '?';
+            }
+            out[k] = '\0';
+            return k > 0;
+        }
+        off = body + 4 * words;
+    }
+    return false;
+}
+
 static inline uint64_t rotl64(uint64_t x, int b) { return (x << b) | (x >> (64 - b)); }
 static inline uint64_t rd64le(const uint8_t *p)
 {

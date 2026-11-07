@@ -50,6 +50,8 @@
 // sls stop: how long the front doors keep relaying after every libsrt socket
 // closed, so its shutdowns reach the peers
 #define SLS_FD_STOP_DRAIN_MS   200
+// the longest streamid quoted in a line about a refused handshake (SRT allows 512)
+#define SLS_FD_SID_LOG_MAX     128
 // SRTLA: SRT ACKs go to every link that delivered data this recently
 #define SLS_SRTLA_ACK_FANOUT_MS 2000
 #define SLS_SRTLA_REORDER_DEFAULT_MS 500
@@ -142,6 +144,25 @@ private:
     uint64_t m_summary_seen;   // the sum of the moving counters at the last summary
     int  m_rcvbuf;             // the public socket's buffers as the kernel granted them
     int  m_sndbuf;
+
+    // per mapping socket, for the line naming a handshake libsrt refused: the
+    // streamid of the last conclusion relayed to libsrt, and whether this
+    // attempt's refusal was logged (libsrt answers each repeated conclusion).
+    // An entry lives only while its socket does (forget_fd, quarantine, close_all).
+    struct hs_note {
+        char sid[SLS_FD_SID_LOG_MAX + 1];
+        bool reject_logged;
+    };
+    std::map<int, hs_note> m_hs_notes;
+    // these lines have their own budget, one per second per front door: the
+    // shared peer-line one is taken by libsrt's own warning about the same
+    // refusal, which comes first and names neither the peer nor the streamid.
+    // Lines over it go to DEBUG and are counted into the next one.
+    int64_t  m_reject_log_ms;
+    uint32_t m_reject_held;
+    void note_handshake(int fd, const uint8_t *buf, int len);
+    void log_reject(int fd, const struct sockaddr_in &remote, const uint8_t *buf, int len, int64_t now_ms);
+    void forget_fd(int fd);
 
     // SRTLA
     struct group_rt {

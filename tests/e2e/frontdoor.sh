@@ -210,6 +210,25 @@ case_frontdoor_lockout_real_ip(){
     fi
 }
 
+case_frontdoor_refused_reason_logged(){
+    # a plain SRT caller without encryption for a user with a passphrase: at
+    # log_level info, one line names libsrt's reason (11, unsecure), the real
+    # address and the streamid; srt-live-transmit retrying for 4 s stays
+    # within the peer-line budget (one per second)
+    LOG_LEVEL=info write_conf; start_sls
+    play nokey.ts "srt://127.0.0.1:$PORT?streamid=live.x/live/s1&mode=caller&adapter=127.0.0.6" 4 > /dev/null
+    nap 0.5; stop_sls
+    local line=$(awk '/ INFO: .*refused by libsrt: reason=/' out.log | head -1)
+    local n=$(awk '/ INFO: .*refused by libsrt: reason=/' out.log | wc -l)
+    local lo=$(awk '/refused by libsrt/ && /\[127\.0\.0\.1:/' out.log | wc -l)
+    if echo "$line" | grep -q -E "\[127\.0\.0\.6:[0-9]+\] refused by libsrt: reason=11 \(.+\), streamid='live\.x/live/s1'\.$" \
+       && [ "$n" -le 6 ] && [ "$lo" = 0 ] && [ "$(asan_reports)" = 0 ]; then
+        pass frontdoor_refused_reason_logged "$n INFO line(s): ${line#*CSLSFrontDoor, }"
+    else
+        fail frontdoor_refused_reason_logged "first='$line' info=$n (want 1-6) from 127.0.0.1=$lo asan=$(asan_reports)"
+    fi
+}
+
 case_internal_port_direct(){
     write_conf; start_sls
     publish_from s1 20 127.0.0.2; nap 3

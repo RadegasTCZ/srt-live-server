@@ -23,6 +23,7 @@
 
 
 #include <string.h>
+#include <string>
 #include <vector>
 #include "sls_test.hpp"
 #include "SLSSrtlaProto.hpp"
@@ -209,6 +210,75 @@ SLS_TEST(srt_hs_fields)
     SLS_CHECK(!sls_srt_hs_fields(&h[0], 63, &type, &isn));
     h[1] = 2;   // an ACK, not a handshake
     SLS_CHECK(!sls_srt_hs_fields(&h[0], (int)h.size(), &type, &isn));
+}
+
+SLS_TEST(srt_hs_reject)
+{
+    std::vector<uint8_t> h = conclusion(SLS_SRT_HS_CMD_HSRSP, 1, 1);
+    int reason = -1;
+    put32(h, 36, 1011);   // what libsrt answers to a plaintext caller of an encrypted listener
+    SLS_CHECK(sls_srt_hs_reject(&h[0], (int)h.size(), &reason));
+    SLS_CHECK_EQ(reason, 11);
+    put32(h, 16, 4);      // any handshake version
+    put32(h, 36, 1000 + 2000 + 7);   // an application-defined code
+    SLS_CHECK(sls_srt_hs_reject(&h[0], 64, &reason));
+    SLS_CHECK_EQ(reason, 2007);
+    // the types of a connection that goes ahead
+    const uint32_t ok[] = {0u, 1u, 0xFFFFFFFFu, 0xFFFFFFFEu, 0xFFFFFFFDu, 999u};
+    for (size_t i = 0; i < sizeof(ok) / sizeof(ok[0]); i++) {
+        put32(h, 36, ok[i]);
+        SLS_CHECK(!sls_srt_hs_reject(&h[0], (int)h.size(), &reason));
+    }
+    put32(h, 36, 1011);
+    SLS_CHECK(!sls_srt_hs_reject(&h[0], 63, &reason));
+    h[1] = 2;   // an ACK
+    SLS_CHECK(!sls_srt_hs_reject(&h[0], (int)h.size(), &reason));
+    SLS_CHECK(!sls_srt_hs_reject(NULL, 64, &reason));
+}
+
+// a v5 conclusion with HSREQ, then an SID extension as libsrt sends it:
+// the string in 32-bit words, each word's bytes reversed, NUL-padded
+static std::vector<uint8_t> with_sid(const std::string &sid)
+{
+    std::vector<uint8_t> b = conclusion(SLS_SRT_HS_CMD_HSREQ, 1, 1);
+    int words = (int)(sid.size() + 3) / 4;
+    size_t at = b.size();
+    b.resize(at + 4 + 4 * words, 0);
+    put32(b, (int)at, ((uint32_t)SLS_SRT_HS_CMD_SID << 16) | (uint32_t)words);
+    for (size_t i = 0; i < sid.size(); i++) {
+        b[at + 4 + (i & ~(size_t)3) + 3 - (i & 3)] = (uint8_t)sid[i];
+    }
+    return b;
+}
+
+SLS_TEST(srt_hs_streamid)
+{
+    char out[64];
+    std::vector<uint8_t> h = with_sid("uplive.sls.com/live/irltest");
+    SLS_CHECK(sls_srt_hs_streamid(&h[0], (int)h.size(), out, sizeof(out)));
+    SLS_CHECK(0 == strcmp(out, "uplive.sls.com/live/irltest"));
+    h = with_sid("abcd");   // exactly one word, no padding
+    SLS_CHECK(sls_srt_hs_streamid(&h[0], (int)h.size(), out, sizeof(out)));
+    SLS_CHECK(0 == strcmp(out, "abcd"));
+    // cut to the buffer; non-printable bytes are replaced
+    h = with_sid("a\x01" "b\x7f" "cdefgh");
+    SLS_CHECK(sls_srt_hs_streamid(&h[0], (int)h.size(), out, 5));
+    SLS_CHECK(0 == strcmp(out, "a?b?"));
+    // truncated SID, no SID, not a conclusion, v4, empty
+    h = with_sid("uplive.x/live/s1");
+    SLS_CHECK(!sls_srt_hs_streamid(&h[0], (int)h.size() - 1, out, sizeof(out)));
+    SLS_CHECK(0 == strcmp(out, ""));
+    std::vector<uint8_t> none = conclusion(SLS_SRT_HS_CMD_HSREQ, 1, 1);
+    SLS_CHECK(!sls_srt_hs_streamid(&none[0], (int)none.size(), out, sizeof(out)));
+    put32(h, 36, 1);
+    SLS_CHECK(!sls_srt_hs_streamid(&h[0], (int)h.size(), out, sizeof(out)));
+    h = with_sid("uplive.x/live/s1");
+    put32(h, 16, 4);
+    SLS_CHECK(!sls_srt_hs_streamid(&h[0], (int)h.size(), out, sizeof(out)));
+    h = with_sid("");
+    SLS_CHECK(!sls_srt_hs_streamid(&h[0], (int)h.size(), out, sizeof(out)));
+    SLS_CHECK(!sls_srt_hs_streamid(NULL, 100, out, sizeof(out)));
+    SLS_CHECK(!sls_srt_hs_streamid(&h[0], (int)h.size(), NULL, 10));
 }
 
 SLS_TEST(siphash24_vectors)
